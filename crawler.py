@@ -20,7 +20,7 @@ def crawling()->List[dict]:
         list_page.goto(url, wait_until="networkidle")
 
         # ❗ with 블록 안으로 들여쓰기 되었습니다.
-        for page_num in range(1, 2):
+        for page_num in range(1):
             if page_num != 1:
                 # 1. "다음 페이지" 대신 "2페이지", "3페이지"를 명확히 찾아 클릭
                 # (상/하단 2개일 수 있으니 .first를 붙여 무조건 첫 번째 것을 클릭)
