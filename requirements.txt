@@ -1,0 +1,13 @@
+streamlit
+psycopg[binary,pool]
+langchain
+langchain-google-genai
+langchain-postgres
+langchain-core
+langchain-community
+langgraph
+pgvector
+python-dotenv
+playwright
+typing
+pydantic
