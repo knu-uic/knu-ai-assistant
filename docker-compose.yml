@@ -1,0 +1,39 @@
+# docker-compose.yml
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: knu-uic-db  
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-knu-uic}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-knu-uic}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - bot_network
+
+  app:
+    build: .  
+    container_name: knu_bot_app
+    restart: always
+    ports:
+      - "8501:8501"  
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - DATABASE_URL=postgresql+psycopg://${DB_USER:-knu-uic}:${DB_PASSWORD}@db:5432/${DB_NAME:-knu-uic}
+    volumes:
+      - .:/app
+    depends_on:
+      - db  
+    networks:
+      - bot_network 
+
+volumes:
+  pgdata:
+
+networks:
+  bot_network:
+    driver: bridge
