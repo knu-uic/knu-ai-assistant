@@ -1,17 +1,19 @@
 from typing import List
+import os
 from dotenv import load_dotenv
 from langchain_ollama import OllamaEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from schema import MetadataSchema
 
-PERSIST_DIR = "./chroma_db"
-COLLECTION_NAME = "knu_notices"
 
 
-def get_embeddings() -> OllamaEmbeddings:
+def get_embeddings():
     load_dotenv()
-    return OllamaEmbeddings(model = 'nomic-embed-text-v2-moe')
+    return GoogleGenerativeAIEmbeddings(
+        model="gemini-embedding-2-preview",
+        )
 
 
 def to_document(item: MetadataSchema) -> Document:
@@ -19,11 +21,15 @@ def to_document(item: MetadataSchema) -> Document:
     metadata = {
         "title": item.title,
         "target": ", ".join(item.target),
-        "deadline": item.deadline or "",
+        "start_date": item.start_date,
+        "end_date": item.end_date,
         "category": item.category,
         "url": item.url,
     }
     return Document(page_content=page_content, metadata=metadata)
+
+def load_from_local()->FAISS:
+    return FAISS.load_local("./exp-faiss", get_embeddings(), allow_dangerous_deserialization= True)
 
 
 def embed_and_store(refined_data: List[MetadataSchema]) -> FAISS:
@@ -37,6 +43,18 @@ def embed_and_store(refined_data: List[MetadataSchema]) -> FAISS:
     
     return vectorstore
 
+def retrieve(query: str):
+    if os.path.exists("./exp-faiss"):
+        retriever = load_from_local().as_retriever(
+            search_type = "mmr",
+            search_kwargs = {
+                "k": 3,
+                "fetch_k": 10,
+                "lambda_mult": 0.5,
+            }
+        )
+        
+        return retriever.invoke(f'{query}')
 
 
 
