@@ -9,7 +9,4 @@ def get_model():
         model="gemini-2.5-flash",
         google_api_key = os.getenv("GOOGLE_API_KEY"),
     )
-    # model = ChatGroq(
-    #     model="openai/gpt-oss-20b", temperature=0
-    # )
     return model

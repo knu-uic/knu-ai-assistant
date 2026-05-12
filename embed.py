@@ -28,33 +28,6 @@ def to_document(item: MetadataSchema) -> Document:
     }
     return Document(page_content=page_content, metadata=metadata)
 
-def load_from_local()->FAISS:
-    return FAISS.load_local("./exp-faiss", get_embeddings(), allow_dangerous_deserialization= True)
-
-
-def embed_and_store(refined_data: List[MetadataSchema]) -> FAISS:
-    documents = [to_document(item) for item in refined_data]
-    vectorstore = FAISS.from_documents(
-        documents=documents,
-        embedding=get_embeddings(),
-    )
-    
-    vectorstore.save_local("./exp-faiss")
-    
-    return vectorstore
-
-def retrieve(query: str):
-    if os.path.exists("./exp-faiss"):
-        retriever = load_from_local().as_retriever(
-            search_type = "mmr",
-            search_kwargs = {
-                "k": 3,
-                "fetch_k": 10,
-                "lambda_mult": 0.5,
-            }
-        )
-        
-        return retriever.invoke(f'{query}')
 
 
 

@@ -1,16 +1,28 @@
-# 파이썬 3.10 버전을 가벼운(slim) 버전으로 가져옵니다.
-FROM python:3.10-slim
+# db.py에서 f-string 안에 중첩 쌍따옴표를 쓰고 있어서 Python 3.12 이상 필요 (PEP 701)
+FROM python:3.12-slim
 
-# 컨테이너 안에서 작업할 기준 폴더를 /app 으로 설정합니다.
 WORKDIR /app
 
-# 필요한 파이썬 패키지 목록을 컨테이너로 복사합니다.
-COPY requirements.txt .
+# 시스템 패키지:
+#   - poppler-utils: pdf2image가 PDF 페이지를 이미지로 렌더링할 때 필요 (스캔 PDF VLM 폴백 경로)
+#   - fonts-noto-cjk: PDF 안에 한글 폰트가 임베드 안 돼 있을 때 렌더링 깨짐 방지
+# playwright는 아래에서 --with-deps로 자체 시스템 의존성을 설치하므로 여기서는 PDF 쪽만 챙긴다.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        poppler-utils \
+        fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
 
-# 패키지들을 설치합니다.
+# 파이썬 패키지 설치
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN playwright install --with-deps chromium
+# playwright 브라우저 + 시스템 의존성 설치 (크롬리움만)
+RUN python -m playwright install --with-deps chromium
 
-# Streamlit 웹 서버를 실행합니다.
+# 앱 소스 복사 (docker-compose에서 bind mount로 덮어쓰지만, mount 없이 단독 실행해도 동작하게)
+COPY . .
+
+EXPOSE 8501
+
+# Streamlit 웹 서버 실행
 CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]

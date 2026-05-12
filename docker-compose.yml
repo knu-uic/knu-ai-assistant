@@ -2,7 +2,7 @@
 services:
   db:
     image: pgvector/pgvector:pg16
-    container_name: knu-uic-db  
+    container_name: knu-uic-db
     restart: always
     environment:
       POSTGRES_USER: ${DB_USER:-knu-uic}
@@ -12,24 +12,37 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-knu-uic} -d ${DB_NAME:-knu-uic}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - bot_network
 
   app:
-    build: .  
+    build: .
     container_name: knu_bot_app
     restart: always
     ports:
-      - "8501:8501"  
+      - "8501:8501"
     environment:
+      # LLM / 임베딩
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}        # attachments.py가 둘 중 잡히는 키 사용          
+      # DB: db.py가 DB_PASSWORD를 직접 읽어 DB_URL을 조립한다
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_USER=${DB_USER:-knu-uic}
+      - DB_NAME=${DB_NAME:-knu-uic}
       - DATABASE_URL=postgresql+psycopg://${DB_USER:-knu-uic}:${DB_PASSWORD}@db:5432/${DB_NAME:-knu-uic}
     volumes:
       - .:/app
+      # 크롤링 결과(이미지 자산 등)는 호스트의 프로젝트 디렉터리에 그대로 남음 (위 bind mount로 커버)
     depends_on:
-      - db  
+      db:
+        condition: service_healthy   # pg_isready 통과 후에만 app 기동
     networks:
-      - bot_network 
+      - bot_network
 
 volumes:
   pgdata:

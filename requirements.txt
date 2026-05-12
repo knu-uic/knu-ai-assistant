@@ -1,13 +1,23 @@
 streamlit
 psycopg[binary,pool]
-langchain
-langchain-google-genai
-langchain-postgres
-langchain-core
-langchain-community
-langgraph
 pgvector
 python-dotenv
-playwright
-typing
 pydantic
+
+# LangChain
+langchain
+langchain-core
+langchain-community
+langchain-postgres
+langchain-google-genai
+langchain-groq
+langchain-ollama
+langgraph
+
+# 크롤링
+playwright
+
+# 첨부파일 처리 (attachments.py)
+pdfplumber
+openpyxl
+pdf2image
