@@ -4,10 +4,11 @@ from embed import get_embeddings
 from dotenv import load_dotenv
 import os
 load_dotenv()
-DB_URL = f"postgresql://knu-uic:{os.getenv('DB_PASSWORD')}@db:5432/knu-uic"
+DB_URL = f"postgresql://knu-uic:{os.getenv("DB_PASSWORD")}@db:5432/knu-uic"
 
 def init_db():
     with psycopg.connect(DB_URL) as conn:
+        conn.execute("DROP TABLE notice;")
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         conn.execute("""
                 CREATE TABLE IF NOT EXISTS notice (
@@ -19,10 +20,10 @@ def init_db():
                 category VARCHAR(50),
                 target VARCHAR(100)[],
                 keywords VARCHAR(50)[],
-                embedding vector(3072)
+                embedding vector(3072) 
             );
         """)
-
+        
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 student_id VARCHAR(20) PRIMARY KEY,
@@ -32,24 +33,6 @@ def init_db():
                 courses TEXT
             );
         """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS notice_asset (
-                id BIGSERIAL PRIMARY KEY,
-                notice_url VARCHAR(500) NOT NULL REFERENCES notice(url) ON DELETE CASCADE,
-                kind VARCHAR(30) NOT NULL,
-                filename VARCHAR(300),
-                source_url VARCHAR(800) NOT NULL,
-                storage_path VARCHAR(800),
-                mime_type VARCHAR(80),
-                extracted_text TEXT,
-                order_idx INT NOT NULL DEFAULT 0,
-                created_at TIMESTAMPTZ DEFAULT now()
-            );
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_notice_asset_notice ON notice_asset(notice_url);")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_notice_asset_kind   ON notice_asset(kind);")
-
         conn.commit()
         print("✅ 데이터베이스 테이블 생성 완료!")
         
@@ -95,72 +78,6 @@ def insert_notice(url, title, content, start_date, end_date, category, target, k
         
         conn.commit()
         print(f"✅ [{title}] DB 저장(임베딩) 완료!")
-
-def insert_asset(notice_url, asset_meta):
-    """
-    asset_meta keys:
-        kind (str, required)         — inline_image | attachment_image | attachment_pdf | attachment_hwpx | attachment_xlsx | attachment_other
-        source_url (str, required)
-        filename (str | None)
-        storage_path (str | None)
-        mime_type (str | None)
-        extracted_text (str | None)
-        order_idx (int, default 0)
-    """
-    with psycopg.connect(DB_URL) as conn:
-        conn.execute("""
-            INSERT INTO notice_asset
-                (notice_url, kind, filename, source_url, storage_path, mime_type, extracted_text, order_idx)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            notice_url,
-            asset_meta["kind"],
-            asset_meta.get("filename"),
-            asset_meta["source_url"],
-            asset_meta.get("storage_path"),
-            asset_meta.get("mime_type"),
-            asset_meta.get("extracted_text"),
-            asset_meta.get("order_idx", 0),
-        ))
-        conn.commit()
-
-def search_recommend_notice(interest: str):
-    with psycopg.connect(DB_URL) as conn:
-        register_vector(conn)
-        
-        cursor = conn.execute("""
-            select title, category, target, url
-            from notice
-            order by embedding <=> %s::vector
-            limit 4
-        """, (interest))
-        
-        result = cursor.fetchall()
-        
-        if result is None:
-            return "추천 할만한 공지가 없습니다"
-        else:
-            return result
-
-def search_close_to_deadline():
-    with psycopg.connect(DB_URL) as conn:
-        register_vector(conn)
-        
-        cursor = conn.execute("""
-            select title, category, target, url
-            from notice
-            where end_data - current_data <= 3
-            order by embedding <=> %s::vector
-            limit 4
-        """, )
-        
-        result = cursor.fetchall()
-        
-        if result is None:
-            return "추천 할만한 공지가 없습니다"
-        else:
-            return result
-        
         
 def search_notice(query: str, student_major: str = "전체", limit: int = 5):
     """
@@ -242,3 +159,4 @@ def get_notices(category: str | None = None, major: str | None = None, limit: in
         params.append(limit)
         cursor = conn.execute(sql, params)
         return cursor.fetchall()
+

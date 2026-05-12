@@ -171,14 +171,18 @@ def crawling() -> List[dict]:
 
                 print(title)
                 print(date)
-                print(content[:300] + ("..." if len(content) > 300 else ""))
-
-                crawled_data.append({
-                    "title": title,
-                    "date": date,
-                    "content": content,
-                    "url": post_url,
-                    "assets": assets,
-                })
-
+                print(content)
+                
+                crawled_data.append(
+                    {
+                        'title':title,
+                        'date': date,
+                        'content': content,
+                        'url': post_url
+                    }
+                )
+            
         return crawled_data
+                
+                
+                
