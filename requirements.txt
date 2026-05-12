@@ -10,7 +10,6 @@ langchain-core
 langchain-community
 langchain-postgres
 langchain-google-genai
-langchain-groq
 langchain-ollama
 langgraph
 
