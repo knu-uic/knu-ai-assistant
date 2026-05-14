@@ -1,3 +1,4 @@
+import os
 from datetime import date, datetime
 
 from crawlers import CRAWLERS
@@ -31,9 +32,19 @@ def _parse_posted_date(raw: str | None) -> date | None:
 
 
 if __name__ == "__main__":
-    init_db()
+    # ONLY_SOURCE=<code> 로 단일 소스만 재크롤링. 이 모드에선 init_db()를 건너뛰어
+    # 다른 소스의 기존 데이터가 보존된다. (init_db는 모든 document/chunk를 DROP한다.)
+    only = os.getenv("ONLY_SOURCE")
+    if only:
+        crawlers = [m for m in CRAWLERS if m.SOURCE_CODE == only]
+        if not crawlers:
+            raise SystemExit(f"ONLY_SOURCE={only!r} 에 해당하는 크롤러 없음")
+        print(f"단일 소스 모드: {only} (init_db 스킵)")
+    else:
+        crawlers = list(CRAWLERS)
+        init_db()
 
-    for mod in CRAWLERS:
+    for mod in crawlers:
         source_id = upsert_source(
             code=mod.SOURCE_CODE,
             name=mod.SOURCE_NAME,

@@ -222,3 +222,5 @@ CLAUDE.md
 .DS_store
 state.json
 crawl_result
+.hf_cache/
+.claude/
