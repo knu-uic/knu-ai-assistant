@@ -12,7 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-# 파이썬 패키지 설치
+# BGE-reranker 모델 캐시 경로. bind mount(.:/app)로 호스트에 보존되어
+# 컨테이너 재빌드/재기동에도 모델 재다운로드(~600MB) 발생 안 함.
+ENV HF_HOME=/app/.hf_cache
+
+# torch는 CPU-only 휠을 먼저 설치한다. torch 2.12부터 기본 manylinux 휠이
+# CUDA 라이브러리(cuBLAS/cuDNN/nccl 등 ~2GB)를 dep로 끌어와서, 그냥 pip install
+# torch 하면 이미지가 ~3GB 부풀고 우리한테는 무용지물(CPU 추론만 함).
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch
+
+# 파이썬 패키지 설치 (위에서 torch가 이미 깔려 있어 sentence-transformers는 CPU torch를 재사용)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

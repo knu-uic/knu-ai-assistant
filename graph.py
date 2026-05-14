@@ -7,9 +7,10 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END
 from langsmith import traceable
 
-from db import search_chunks
+from db import search_chunks, get_document_content
 from embed import embed_query
 from model import get_model
+from rerank import rerank_scores
 
 
 Category = Literal["장학/등록", "학사/수업", "진로/취업", "행사/공모전", "일반/기타"]
@@ -117,22 +118,42 @@ def router_node(state: ChatState) -> dict:
     }
 
 
+RERANK_CANDIDATES = 30  # vector 1차 후보 수
+RERANK_TOP_N = 5        # cross-encoder 통과 후 최종 컨텍스트 수
+
+
 @traceable(run_type="retriever", name="search_chunks")
 def _retrieve(
     query: str,
     major: str | None,
     categories: List[str] | None,
 ) -> List[Dict[str, Any]]:
-    """LangSmith retriever 카드 시각화용 래퍼."""
+    """vector top-N → BGE-reranker로 재정렬 → top-K 반환.
+
+    score 필드는 cross-encoder 점수(0~1)로 덮어쓴다.
+    원래의 임베딩 코사인 점수는 디버깅 외 용도가 없어 보존하지 않는다.
+    """
     q_vec = embed_query(query)
-    rows = search_chunks(q_vec, major=major, categories=categories, limit=5)
-    return [
-        {
-            "url": r[0], "title": r[1], "snippet": r[2], "score": r[3],
+    rows = search_chunks(q_vec, major=major, categories=categories, limit=RERANK_CANDIDATES)
+    if not rows:
+        return []
+    snippets = [r[2] for r in rows]
+    scores = rerank_scores(query, snippets)
+    ranked = sorted(zip(rows, scores), key=lambda pair: pair[1], reverse=True)[:RERANK_TOP_N]
+    contexts: List[Dict[str, Any]] = []
+    for r, s in ranked:
+        # academic 소스(커리큘럼·장학정보 등)는 표가 chunk 경계에서 잘려 정보 손실 →
+        # 매칭된 청크 대신 document 전체 content를 LLM에 넘긴다.
+        if r[12] == "academic":
+            full = get_document_content(r[7], r[0])
+            snippet = full or r[2]
+        else:
+            snippet = r[2]
+        contexts.append({
+            "url": r[0], "title": r[1], "snippet": snippet, "score": s,
             "posted_at": r[4], "start_date": r[5], "end_date": r[6],
-        }
-        for r in (rows or [])
-    ]
+        })
+    return contexts
 
 
 def retriever_node(state: ChatState) -> dict:

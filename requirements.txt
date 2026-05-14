@@ -21,3 +21,7 @@ playwright
 pdfplumber
 openpyxl
 pdf2image
+
+# 재정렬 (rerank.py) — BGE-reranker-v2-m3 cross-encoder.
+# torch는 Dockerfile에서 CPU-only 휠로 먼저 설치한다 (CUDA libs ~2GB 회피).
+sentence-transformers

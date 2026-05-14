@@ -377,6 +377,16 @@ def search_chunks(
         return cursor.fetchall()
 
 
+def get_document_content(category: str, url: str) -> str | None:
+    """url로 document 전체 content 조회. small-to-big용 — academic 소스처럼 표가 통째로 필요할 때 사용."""
+    slug = _slug(category)
+    q = sql.SQL("SELECT content FROM {doc} WHERE url = %s").format(doc=_doc_ident(slug))
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute(q, (url,))
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
 def _list_subquery(slug: str, where: sql.Composable) -> sql.Composable:
     """get_documents용 카테고리 단위 서브쿼리."""
     return sql.SQL("""

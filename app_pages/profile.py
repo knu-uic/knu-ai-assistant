@@ -28,7 +28,7 @@ with st.container(border=True):
     )
     new_major = cols[0].selectbox("소속 학과", major_options, index=default_major_idx)
     new_year = cols[1].number_input(
-        "학년", min_value=1, max_value=6, step=1, value=user.get("year") or 1
+        "학년", min_value=1, max_value=4, step=1, value=user.get("year") or 1
     )
     new_name = cols[2].text_input("이름", value=user.get("name") or "")
 
