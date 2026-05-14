@@ -1,8 +1,18 @@
-from typing import List, cast
+import time
+from typing import Any, List, Tuple, cast
+import httpx
 from langchain_core.messages import SystemMessage, HumanMessage
 from model import get_model
 from schema import MetadataSchema
 from dotenv import load_dotenv
+
+
+# Gemini API가 가끔 응답 전 connection을 drop. 재시도로 흡수.
+_RETRYABLE_EXC = (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError)
+_MAX_ATTEMPTS = 4
+_BACKOFF_BASE = 2.0  # 2s, 4s, 8s
+# Gemini Tier 1 RPM 1000 — 동시성 10이면 RPM 600 정도라 안전 마진.
+_BATCH_CONCURRENCY = 10
 
 
 SYSTEM_PROMPT = """
@@ -69,16 +79,78 @@ def _user_prompt(item: dict) -> str:
 """
 
 
-def refine(crawled_data: List[dict]) -> List[MetadataSchema]:
+def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], dict | None]]:
+    """크롤링 결과를 LLM으로 구조화 + 원본 assets + extra(JSONB)를 동행시켜 반환.
+
+    반환: [(MetadataSchema, assets, extra), ...]  (입력 순서 유지)
+      - MetadataSchema: LLM이 추출한 정규화 메타데이터 (pre_refined면 크롤러가 직접 채움)
+      - assets: crawler가 모은 asset 메타 리스트
+      - extra: document.extra(JSONB)로 저장할 비정형 데이터 dict (없으면 None)
+
+    크롤러가 `pre_refined=True`를 세팅하면 LLM 호출 없이 `metadata` dict를 그대로 사용.
+    정형 데이터(교과과정표 등)는 LLM 환각 피하려고 이 경로 사용.
+
+    LLM 호출이 필요한 항목은 model.batch()로 병렬 처리 후, 실패한 항목만 단건 재시도.
+    """
     load_dotenv()
-    model = get_model().with_structured_output(MetadataSchema)
     system_msg = SystemMessage(content=SYSTEM_PROMPT)
 
-    refined: List[MetadataSchema] = []
-    for item in crawled_data[:2]:
-        result = cast(
-            MetadataSchema,
-            model.invoke([system_msg, HumanMessage(content=_user_prompt(item))]),
+    # 인덱스를 보존해서 batch 결과를 원래 순서에 다시 꽂는다.
+    needs_llm: List[Tuple[int, dict]] = []
+    results: List[MetadataSchema | None] = [None] * len(crawled_data)
+
+    for idx, item in enumerate(crawled_data):
+        if item.get("pre_refined"):
+            results[idx] = MetadataSchema(**item["metadata"])
+        else:
+            needs_llm.append((idx, item))
+
+    if needs_llm:
+        model = get_model().with_structured_output(MetadataSchema)
+        prompts = [
+            [system_msg, HumanMessage(content=_user_prompt(item))]
+            for _, item in needs_llm
+        ]
+        # return_exceptions=True: 한 항목 실패해도 batch 전체가 죽지 않고 자리에 예외 객체가 들어옴.
+        batch_out = model.batch(
+            cast(Any, prompts),
+            config={"max_concurrency": _BATCH_CONCURRENCY},
+            return_exceptions=True,
         )
-        refined.append(result)
+        for (idx, item), out in zip(needs_llm, batch_out):
+            if isinstance(out, Exception):
+                # batch에서 죽은 항목만 단건 retry로 흡수 (네트워크 흔들림 대부분 여기서 회복)
+                print(f"  ↻ batch 실패 항목 단건 재시도 [{item.get('url')}] — {type(out).__name__}")
+                out = _invoke_with_retry(model, system_msg, item)
+                if out is None:
+                    continue  # 끝까지 실패 → 이 항목만 드롭
+            result = cast(MetadataSchema, out)
+            # LLM이 content를 요약/축약하면 RAG 청크화 시 정보 손실 → 항상 원본 덮어쓰기.
+            result.content = item["content"]
+            result.title = item["title"]
+            result.url = item["url"]
+            results[idx] = result
+
+    refined: List[Tuple[MetadataSchema, List[dict], dict | None]] = []
+    for idx, item in enumerate(crawled_data):
+        result = results[idx]
+        if result is None:
+            continue  # LLM 끝까지 실패한 항목은 스킵
+        refined.append((result, item.get("assets", []), item.get("extra")))
     return refined
+
+
+def _invoke_with_retry(model, system_msg: SystemMessage, item: dict) -> MetadataSchema | None:
+    """Gemini API 호출에 지수 백오프 재시도. 모든 시도 실패 시 None 반환."""
+    user_msg = HumanMessage(content=_user_prompt(item))
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            return cast(MetadataSchema, model.invoke([system_msg, user_msg]))
+        except _RETRYABLE_EXC as e:
+            if attempt == _MAX_ATTEMPTS:
+                print(f"  ⚠️ refine 실패 [{item.get('url')}] — {type(e).__name__}: {e}")
+                return None
+            wait = _BACKOFF_BASE ** attempt
+            print(f"  ↻ refine 재시도 {attempt}/{_MAX_ATTEMPTS} ({type(e).__name__}) — {wait:.0f}s 대기")
+            time.sleep(wait)
+    return None

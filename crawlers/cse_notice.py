@@ -1,12 +1,28 @@
+"""컴퓨터공학과 학과공지 게시판 크롤러.
+
+CLAUDE.md §3/§4 컨벤션 준수. SubPortal CMS의 `?page=N` GET이 통하므로
+페이지 순회는 직접 URL 변경. 첨부/이미지 처리는 attachments.py 재사용.
+고정글(tr.notice)도 포함하되 페이지마다 반복되므로 URL set으로 dedup.
+"""
+
 import hashlib
 from pathlib import Path
-from playwright.sync_api import sync_playwright
-from typing import List
+from typing import Callable, List, Optional
 from urllib.parse import urljoin
 
-from attachments import attachment_to_text, inline_image_to_text
+from playwright.sync_api import sync_playwright
 
-BASE = "https://www.kongju.ac.kr"
+from attachments import attachment_to_text, inline_image_to_text, xlsx_relevant
+
+SOURCE_CODE = "cse_notice"
+SOURCE_NAME = "컴퓨터공학과 학과공지"
+DEPARTMENT = "컴퓨터공학과"
+KIND = "notice"
+BASE_URL = "https://computer.kongju.ac.kr"
+
+LIST_URL = "https://computer.kongju.ac.kr/bbs/ZD1140/1410/artclList.do?page={page}"
+PAGES = 5
+
 ASSETS_DIR = Path("crawl_result/assets")
 
 
@@ -15,11 +31,10 @@ def _abs(url: str) -> str:
         return ""
     if url.startswith("http"):
         return url
-    return urljoin(BASE, url)
+    return urljoin(BASE_URL, url)
 
 
 def _save_image_asset(raw_bytes: bytes, mime) -> str:
-    """이미지 bytes를 crawl_result/assets/<sha1>.<ext>에 저장하고 경로를 돌려준다."""
     ASSETS_DIR.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha1(raw_bytes).hexdigest()
     if mime == "image/png":
@@ -66,42 +81,53 @@ def _collect_inline_images(detail_page) -> List[str]:
     return urls
 
 
-def crawling() -> List[dict]:
+def _collect_post_urls(list_page) -> List[str]:
+    """고정글(tr.notice) + 일반글(tr) 모두에서 글 URL 수집."""
+    rows = list_page.locator(".board-table tbody tr").all()
+    urls: List[str] = []
+    for row in rows:
+        link = row.locator(".td-subject a").first
+        try:
+            href = link.get_attribute("href")
+        except Exception:
+            continue
+        if href:
+            urls.append(_abs(href))
+    return urls
+
+
+def crawling(should_skip: Optional[Callable[[str], bool]] = None) -> List[dict]:
+    """should_skip(url): True면 그 글의 상세 진입·첨부 OCR 모두 건너뜀.
+    main.py가 db.document_exists를 주입해 DB에 이미 있는 글을 미리 차단한다.
+    """
     crawled_data: List[dict] = []
+    seen_urls: set[str] = set()  # 고정글이 페이지마다 반복 노출 → 중복 처리 방지
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context()
         list_page = context.new_page()
         detail_page = context.new_page()
-
         list_page.on("dialog", lambda dialog: dialog.accept())
-        url = "https://www.kongju.ac.kr/KNU/16909/subview.do"
-        list_page.goto(url, wait_until="networkidle")
 
-        for page_num in range(1, 3):
-            if page_num != 1:
-                list_page.get_by_title(f"{page_num}페이지").first.click()
-                list_page.wait_for_load_state("networkidle")
+        for page_num in range(1, PAGES + 1):
+            url = LIST_URL.format(page=page_num)
+            print(f"\n=== {page_num}페이지 수집: {url} ===")
+            list_page.goto(url, wait_until="networkidle")
+            list_page.wait_for_selector(".board-table tbody tr")
 
-            list_page.wait_for_selector(".td-subject a")
-            row_selector = (
-                "tr:has(.td-subject a)"
-                if page_num == 1
-                else "tr:not(.notice):has(.td-subject a)"
-            )
-            rows = list_page.locator(row_selector).all()
+            post_urls = _collect_post_urls(list_page)
+            new_urls = [u for u in post_urls if u not in seen_urls]
+            seen_urls.update(new_urls)
+            print(f"  → 게시글 {len(post_urls)}건 (신규 {len(new_urls)}건)")
 
-            post_urls = []
-            for row in rows:
-                href = row.locator(".td-subject a").first.get_attribute("href")
-                if href:
-                    post_urls.append(_abs(href))
+            if should_skip:
+                before = len(new_urls)
+                new_urls = [u for u in new_urls if not should_skip(u)]
+                print(f"     ↳ DB 중복 제외: {before - len(new_urls)}건 스킵, {len(new_urls)}건 처리")
 
-            print(f"\n=== {page_num}페이지: 총 {len(post_urls)}개의 게시글 링크 수집 완료 ===")
-
-            for j, post_url in enumerate(post_urls):
-                print(f"[{j+1}/{len(post_urls)}] {post_url} 접속 중...")
+            for j, post_url in enumerate(new_urls, 1):
+                print(f"[{j}/{len(new_urls)}] {post_url} 접속 중...")
                 detail_page.goto(post_url, wait_until="networkidle")
 
                 try:
@@ -110,9 +136,9 @@ def crawling() -> List[dict]:
                     title = "제목을 찾을 수 없음"
 
                 try:
-                    date = detail_page.locator(".write dd").first.inner_text().strip()
+                    date = detail_page.locator("dl.write dd").first.inner_text().strip()
                 except Exception:
-                    date = "등록일을 찾을 수 없음"
+                    date = ""
 
                 try:
                     body_text = detail_page.locator(".view-con").first.inner_text().strip()
@@ -147,9 +173,11 @@ def crawling() -> List[dict]:
                         })
                         order += 1
 
+                # 수강신청·교양·편성 등 키워드가 제목/본문에 있으면 XLSX도 본문 추출 (검색 대상에 포함)
+                include_xlsx = xlsx_relevant(title, body_text)
                 for att in attachments:
                     print(f"  - 첨부 처리: {att['filename']}")
-                    txt, meta = attachment_to_text(att, context)
+                    txt, meta = attachment_to_text(att, context, include_xlsx=include_xlsx)
                     if txt:
                         content_parts.append(txt)
                     if meta.get("raw_bytes") is not None:
@@ -171,7 +199,7 @@ def crawling() -> List[dict]:
 
                 print(title)
                 print(date)
-                print(content[:300] + ("..." if len(content) > 300 else ""))
+                print(content[:200] + ("..." if len(content) > 200 else ""))
 
                 crawled_data.append({
                     "title": title,

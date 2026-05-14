@@ -142,6 +142,17 @@ def _preview_failed(text: str) -> bool:
     return len(text.strip()) < 30
 
 
+# XLSX 첨부는 노이즈가 많아 기본은 임베딩 제외. 단 아래 키워드가 제목/본문에 보이면 활성화.
+# 수강신청·교양·교과목 편성 같은 표 데이터가 핵심인 공지에서만 켜진다.
+XLSX_KEYWORDS = ("교양", "수강신청", "교과목", "편성", "시간표", "강의계획", "개설")
+
+
+def xlsx_relevant(*texts: str) -> bool:
+    """제목·본문 등을 합쳐 XLSX_KEYWORDS 중 하나라도 포함하면 True."""
+    blob = "\n".join(t for t in texts if t)
+    return any(kw in blob for kw in XLSX_KEYWORDS)
+
+
 def xlsx_to_text(data: bytes) -> str:
     """XLSX 시트의 모든 셀을 탭으로 구분된 텍스트로 직렬화."""
     # data_only=True: 수식(=A1+B1) 대신 마지막으로 계산된 값을 가져옴
@@ -220,8 +231,11 @@ def inline_image_to_text(image_url: str, context):
     return text, data, mime
 
 
-def attachment_to_text(att: dict, context):
+def attachment_to_text(att: dict, context, include_xlsx: bool = False):
     """att = {'filename', 'download_url', 'preview_url' | None}.
+
+    include_xlsx: 기본 False. True면 XLSX 본문도 추출해 임베딩 대상에 포함.
+                  호출자(crawler)가 xlsx_relevant(title, body)로 판정해 전달.
 
     반환: (text, asset_meta)
       text: '[첨부: <파일명>]\\n<본문>' (기존 호환, 실패 시 본문 자리에 사유)
@@ -259,15 +273,20 @@ def attachment_to_text(att: dict, context):
             data = _download(source_url, context)
             body = _pdf_bytes_full(data)   # 텍스트 1차 → 실패 시 이미지 OCR 폴백 (위 함수 참고)
 
-        # ───────── 분기 2: 엑셀 (현재는 변환 안 함) ─────────
+        # ───────── 분기 2: 엑셀 ─────────
         elif ext in (".xlsx", ".xls"):
             meta["kind"] = "attachment_xlsx"
             meta["mime_type"] = (
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 if ext == ".xlsx" else "application/vnd.ms-excel"
             )
-            # 엑셀은 노이즈가 많아 RAG 품질을 깎는다고 판단 → 임베딩에서 제외하고 안내문만 남김
-            body = f"(엑셀 첨부 — 임베딩 제외. 원본 다운로드: {source_url})"
+            if include_xlsx and ext == ".xlsx":
+                # 키워드 매칭(수강신청·교양·편성 등)이 걸린 공지 → 표 전체를 텍스트화해서 임베딩 대상에 포함.
+                data = _download(source_url, context)
+                body = xlsx_to_text(data)
+            else:
+                # 기본: 노이즈 많은 엑셀은 임베딩 제외하고 안내문만 남김 (.xls는 openpyxl 미지원이라 항상 제외)
+                body = f"(엑셀 첨부 — 임베딩 제외. 원본 다운로드: {source_url})"
 
         # ───────── 분기 3: HWPX / HWP ─────────
         elif ext in (".hwpx", ".hwp"):

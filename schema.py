@@ -3,7 +3,7 @@ from typing import List, Optional, Literal
 
 class MetadataSchema(BaseModel):
     title: str = Field(description='게시판 글 제목')
-    content: str = Field(description='게시판 글의 본문 내용을 한 문단으로 요약한 텍스트')
+    content: str = Field(description='게시판 글의 본문 원본 텍스트 (요약/축약 금지, 입력 그대로)')
     
     # [수정 1] 타겟은 무조건 '소속(자격)'만 엄격하게! (관심사 섞기 금지)
     target: List[str] = Field(

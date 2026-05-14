@@ -12,6 +12,7 @@ langchain-postgres
 langchain-google-genai
 langchain-ollama
 langgraph
+langsmith
 
 # 크롤링
 playwright

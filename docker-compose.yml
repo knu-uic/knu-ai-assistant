@@ -22,19 +22,24 @@ services:
 
   app:
     build: .
-    container_name: knu_bot_app
+    container_name: knu-uic-app
     restart: always
     ports:
       - "8501:8501"
     environment:
       # LLM / 임베딩
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}        # attachments.py가 둘 중 잡히는 키 사용          
+      - GEMINI_API_KEY=${GEMINI_API_KEY}        # attachments.py가 둘 중 잡히는 키 사용
       # DB: db.py가 DB_PASSWORD를 직접 읽어 DB_URL을 조립한다
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_USER=${DB_USER:-knu-uic}
       - DB_NAME=${DB_NAME:-knu-uic}
       - DATABASE_URL=postgresql+psycopg://${DB_USER:-knu-uic}:${DB_PASSWORD}@db:5432/${DB_NAME:-knu-uic}
+      # LangSmith 트레이싱 (LANGSMITH_TRACING이 비어있거나 false면 비활성화)
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-knu-ai-assistant}
+      - LANGSMITH_ENDPOINT=${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
     volumes:
       - .:/app
       # 크롤링 결과(이미지 자산 등)는 호스트의 프로젝트 디렉터리에 그대로 남음 (위 bind mount로 커버)
