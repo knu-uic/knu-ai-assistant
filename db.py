@@ -146,10 +146,13 @@ def init_db():
                 student_id VARCHAR(20) PRIMARY KEY,
                 major VARCHAR(50),
                 name VARCHAR(50),
+                year INT,
                 interests TEXT,
                 courses TEXT
             );
         """)
+        # year 컬럼이 없는 기존 dev DB도 흡수.
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
         conn.commit()
         print(f"✅ source + {len(SLUGS)}개 category 테이블({', '.join(SLUGS)}) + asset/users 생성 완료")
 
@@ -445,3 +448,58 @@ def get_documents(
     with psycopg.connect(DB_URL) as conn:
         cursor = conn.execute(final_q, params)
         return cursor.fetchall()
+
+
+# ── user profile ────────────────────────────────────────────────
+
+def ensure_users_schema():
+    """init_db를 거치지 않고 app만 띄운 환경도 흡수. 멱등하므로 매 호출 안전."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                student_id VARCHAR(20) PRIMARY KEY,
+                major VARCHAR(50),
+                name VARCHAR(50),
+                year INT,
+                interests TEXT,
+                courses TEXT
+            );
+        """)
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
+        conn.commit()
+
+
+def get_user(student_id: str) -> dict | None:
+    """users 테이블에서 student_id 조회. interests는 콤마문자열을 list로 풀어서 돌려준다."""
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute(
+            "SELECT student_id, name, major, year, interests FROM users WHERE student_id = %s;",
+            (student_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    sid, name, major, year, interests = row
+    return {
+        "student_id": sid,
+        "name": name,
+        "major": major,
+        "year": year,
+        "interests": [s.strip() for s in (interests or "").split(",") if s.strip()],
+    }
+
+
+def upsert_user(student_id: str, name: str, major: str, year: int | None, interests: list[str]):
+    """profile UPSERT. interests는 콤마 문자열로 저장."""
+    interests_csv = ",".join(interests or [])
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("""
+            INSERT INTO users (student_id, name, major, year, interests)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (student_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                major = EXCLUDED.major,
+                year = EXCLUDED.year,
+                interests = EXCLUDED.interests;
+        """, (student_id, name, major, year, interests_csv))
+        conn.commit()
