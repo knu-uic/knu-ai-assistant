@@ -1,7 +1,34 @@
+from datetime import date, datetime
+
 from crawlers import CRAWLERS
 from refine import refine
 from db import init_db, upsert_source, insert_document, insert_assets, insert_chunks, document_exists
 from embed import embed_chunks
+
+
+def _parse_posted_date(raw: str | None) -> date | None:
+    """크롤러가 수집한 원본 등록일 문자열을 date로 변환. 실패하면 None.
+
+    공주대 사이트들이 흔히 쓰는 'YYYY.MM.DD', 'YYYY-MM-DD', 'YYYY/MM/DD'(+ 선택적 시각) 형태를 흡수한다.
+    """
+    if not raw:
+        return None
+    s = raw.strip()
+    if not s or "찾을 수 없음" in s:
+        return None
+    # 시각이 붙어 있으면 날짜 부분만 사용
+    s = s.split()[0]
+    s = s.replace(".", "-").replace("/", "-").rstrip("-")
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except ValueError:
+        pass
+    try:
+        y, m, d = (int(p) for p in s.split("-"))
+        return date(y, m, d)
+    except (ValueError, TypeError):
+        return None
+
 
 if __name__ == "__main__":
     init_db()
@@ -31,10 +58,14 @@ if __name__ == "__main__":
 
         refined_data = refine(fresh)
 
+        # refine은 일부 항목을 드롭할 수 있으므로 url로 원본 등록일을 다시 매핑.
+        posted_by_url = {item["url"]: _parse_posted_date(item.get("date")) for item in fresh}
+
         for doc, assets, extra in refined_data:
             print(f'제목: {doc.title}')
             print(f'카테고리: {doc.category}')
             print(f'대상: {doc.target}')
+            print(f'등록일: {posted_by_url.get(doc.url)}')
             print(f'접수 시작일: {doc.start_date}')
             print(f'접수 마감일: {doc.end_date}')
             print(f'url: {doc.url}')
@@ -52,6 +83,7 @@ if __name__ == "__main__":
                 target=doc.target,
                 keywords=doc.keywords,
                 extra=extra,
+                posted_at=posted_by_url.get(doc.url),
             )
             insert_assets(doc.category, document_id, assets)
 

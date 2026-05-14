@@ -75,6 +75,7 @@ def init_db():
                     url VARCHAR(500) UNIQUE NOT NULL,
                     title VARCHAR(255) NOT NULL,
                     content TEXT NOT NULL,
+                    posted_at DATE,
                     start_date DATE,
                     end_date DATE,
                     target VARCHAR(100)[],
@@ -90,6 +91,10 @@ def init_db():
             ))
             conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {doc}(end_date);").format(
                 idx=sql.Identifier(f"idx_document_{slug}_end_date"),
+                doc=_doc_ident(slug),
+            ))
+            conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {doc}(posted_at);").format(
+                idx=sql.Identifier(f"idx_document_{slug}_posted_at"),
                 doc=_doc_ident(slug),
             ))
 
@@ -193,6 +198,7 @@ def insert_document(
     target,
     keywords,
     extra: dict | None = None,
+    posted_at=None,
 ) -> int:
     """category에 해당하는 document_{slug} 테이블에 UPSERT 후 id 반환."""
     slug = _slug(category)
@@ -201,18 +207,21 @@ def insert_document(
         start_date = None
     if not end_date or str(end_date).strip() == "":
         end_date = None
+    if not posted_at or str(posted_at).strip() == "":
+        posted_at = None
 
     extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
 
     query = sql.SQL("""
         INSERT INTO {doc}
-            (source_id, url, title, content, start_date, end_date,
+            (source_id, url, title, content, posted_at, start_date, end_date,
              target, keywords, extra, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
         ON CONFLICT (url) DO UPDATE SET
             source_id = EXCLUDED.source_id,
             title = EXCLUDED.title,
             content = EXCLUDED.content,
+            posted_at = EXCLUDED.posted_at,
             start_date = EXCLUDED.start_date,
             end_date = EXCLUDED.end_date,
             target = EXCLUDED.target,
@@ -223,7 +232,8 @@ def insert_document(
     """).format(doc=_doc_ident(slug))
 
     with psycopg.connect(DB_URL) as conn:
-        cur = conn.execute(query, (source_id, url, title, content, start_date, end_date,
+        cur = conn.execute(query, (source_id, url, title, content, posted_at,
+                                   start_date, end_date,
                                    target, keywords, extra_json))
         row = cur.fetchone()
         assert row is not None
@@ -303,7 +313,7 @@ def _search_subquery(slug: str, major_filter: bool) -> tuple[sql.Composable, lis
         SELECT DISTINCT ON (d.id)
                d.url, d.title, c.content,
                1 - (c.embedding <=> %s::vector) AS score,
-               d.start_date, d.end_date,
+               d.posted_at, d.start_date, d.end_date,
                {cat_lit}::text AS category,
                d.target, d.keywords,
                s.code, s.name, s.kind, s.department
@@ -332,7 +342,7 @@ def search_chunks(
     categories: 검색 대상 카테고리 리스트(한글). None 또는 빈 리스트면 5개 전부 검색.
 
     반환 튜플:
-    (url, title, snippet, score, start_date, end_date, category, target, keywords,
+    (url, title, snippet, score, posted_at, start_date, end_date, category, target, keywords,
      source_code, source_name, source_kind, source_department)
     """
     target_slugs = [_slug(c) for c in categories] if categories else list(SLUGS)
@@ -350,7 +360,7 @@ def search_chunks(
 
     union = sql.SQL(" UNION ALL ").join(subs)
     final_q = sql.SQL("""
-        SELECT url, title, content, score, start_date, end_date,
+        SELECT url, title, content, score, posted_at, start_date, end_date,
                category, target, keywords,
                code, name, kind, department
         FROM ({union}) merged
@@ -367,10 +377,11 @@ def search_chunks(
 def _list_subquery(slug: str, where: sql.Composable) -> sql.Composable:
     """get_documents용 카테고리 단위 서브쿼리."""
     return sql.SQL("""
-        SELECT d.url, d.title, d.content, d.start_date, d.end_date,
+        SELECT d.url, d.title, d.content, d.posted_at, d.start_date, d.end_date,
                {cat_lit}::text AS category,
                d.target, d.keywords,
-               s.code, s.name, s.kind, s.department
+               s.code, s.name, s.kind, s.department,
+               d.crawled_at
         FROM {doc} d
         JOIN source s ON s.id = d.source_id
         {where}
@@ -391,8 +402,10 @@ def get_documents(
     """document_{slug} + source join. category None이면 5개 UNION ALL.
 
     반환 튜플:
-    (url, title, content, start_date, end_date, category, target, keywords,
+    (url, title, content, posted_at, start_date, end_date, category, target, keywords,
      source_code, source_name, source_kind, source_department)
+
+    정렬: posted_at(원본 등록일) 내림차순. NULL은 crawled_at(크롤링 시각)으로 fallback.
     """
     target_slugs = [_slug(category)] if category else list(SLUGS)
 
@@ -418,10 +431,13 @@ def get_documents(
         params.extend(base_params)
 
     union = sql.SQL(" UNION ALL ").join(subs)
+    # crawled_at은 정렬 보조용으로만 쓰고 최종 SELECT에서는 제외 (반환 튜플 안정성 유지).
     final_q = sql.SQL("""
-        SELECT *
+        SELECT url, title, content, posted_at, start_date, end_date,
+               category, target, keywords,
+               code, name, kind, department
         FROM ({union}) merged
-        ORDER BY end_date ASC NULLS LAST
+        ORDER BY COALESCE(posted_at::timestamp, crawled_at) DESC NULLS LAST
         LIMIT %s
     """).format(union=union)
     params.append(limit)

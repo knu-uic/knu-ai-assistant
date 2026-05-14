@@ -1,3 +1,5 @@
+from datetime import date
+
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -75,11 +77,12 @@ tab_board, tab_chat = st.tabs(["📋 공지사항 게시판", "🤖 AI 챗봇"])
 
 def _row_to_notice_search(row):
     """search_chunks 결과 row → notice dict."""
-    (url, title, snippet, score, start_date, end_date,
+    (url, title, snippet, score, posted_at, start_date, end_date,
      category, target, keywords,
      _source_code, source_name, _source_kind, _source_department) = row
     return {
         "url": url, "title": title, "content": snippet, "score": score,
+        "posted_at": posted_at,
         "start_date": start_date, "end_date": end_date, "category": category,
         "target": target, "keywords": keywords,
         "source_name": source_name,
@@ -88,15 +91,22 @@ def _row_to_notice_search(row):
 
 def _row_to_notice_list(row):
     """get_documents 결과 row → notice dict."""
-    (url, title, content, start_date, end_date,
+    (url, title, content, posted_at, start_date, end_date,
      category, target, keywords,
      _source_code, source_name, _source_kind, _source_department) = row
     return {
         "url": url, "title": title, "content": content, "score": None,
+        "posted_at": posted_at,
         "start_date": start_date, "end_date": end_date, "category": category,
         "target": target, "keywords": keywords,
         "source_name": source_name,
     }
+
+
+def _is_expired(notice: dict, today: date) -> bool:
+    """end_date가 있고 오늘 이전이면 마감된 공지."""
+    ed = notice.get("end_date")
+    return ed is not None and ed < today
 
 
 # ── Tab 1: 공지사항 게시판 ─────────────────────────────────────
@@ -109,6 +119,8 @@ with tab_board:
         )
     with col_cat:
         selected_category = st.selectbox("카테고리", CATEGORIES)
+
+    show_expired = st.toggle("마감된 공지 표시", value=False)
 
     notices = []
     is_search_mode = bool(search_query)
@@ -133,34 +145,51 @@ with tab_board:
     except Exception as e:
         st.error(f"검색 실패: {e}")
 
+    today = date.today()
+    total_count = len(notices)
+    if not show_expired:
+        notices = [n for n in notices if not _is_expired(n, today)]
+    expired_hidden = total_count - len(notices)
+    if expired_hidden > 0:
+        st.caption(f"🙈 마감된 공지 {expired_hidden}건 숨김 — 토글을 켜면 함께 표시됩니다.")
+
     if not notices:
         st.info("표시할 공지사항이 없습니다. 데이터를 수집하려면 `main.py`를 먼저 실행하세요.")
 
     for n in notices:
+        expired = _is_expired(n, today)
         with st.container(border=True):
             left, right = st.columns([5, 1])
             cat = n.get("category") or ""
             with left:
-                st.markdown(f"**[{n['title']}]({n['url']})**")
+                title_md = f"**[{n['title']}]({n['url']})**"
+                if expired:
+                    title_md = f"🔒 ~~{title_md}~~"
+                st.markdown(title_md)
             with right:
                 st.caption(f"{CATEGORY_ICON.get(cat, '📌')} {cat}")
 
-            meta = st.columns(3)
+            meta = st.columns(4)
+            posted_at = n.get("posted_at")
+            if posted_at:
+                meta[0].caption(f"🗓️ 등록: {posted_at}")
+
             target_list = n.get("target") or []
             if isinstance(target_list, str):
                 target_list = [target_list]
             if target_list:
-                meta[0].caption(f"👥 {', '.join(target_list)}")
+                meta[1].caption(f"👥 {', '.join(target_list)}")
 
             end_date = n.get("end_date")
             if end_date:
-                meta[1].caption(f"📅 마감: {end_date}")
+                deadline_label = "마감됨" if expired else "마감"
+                meta[2].caption(f"📅 {deadline_label}: {end_date}")
 
             keywords = n.get("keywords") or []
             if isinstance(keywords, str):
                 keywords = [keywords]
             if keywords:
-                meta[2].caption(" ".join(f"#{k}" for k in keywords))
+                meta[3].caption(" ".join(f"#{k}" for k in keywords))
 
             score = n.get("score")
             if score is not None:
