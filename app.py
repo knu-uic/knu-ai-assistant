@@ -1,5 +1,7 @@
 """KNU 지능형 학생 비서 진입점. st.navigation으로 4페이지 라우팅."""
 
+import sitecustomize  # noqa: F401  # project-level pycache routing
+
 import streamlit as st
 from dotenv import load_dotenv
 

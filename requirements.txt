@@ -16,6 +16,7 @@ langsmith
 
 # 크롤링
 playwright
+(이후 playwright install chromium도 해야함)
 
 # 첨부파일 처리 (attachments.py)
 pdfplumber

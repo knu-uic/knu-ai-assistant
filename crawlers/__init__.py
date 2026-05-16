@@ -1,3 +1,3 @@
-from crawlers import main_notice, cse_curriculum, cse_notice, scholarship_info
+from crawlers.registry import CRAWLERS
 
-CRAWLERS = [main_notice, cse_curriculum, cse_notice, scholarship_info]
+__all__ = ["CRAWLERS"]

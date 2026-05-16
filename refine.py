@@ -2,7 +2,7 @@ import time
 from typing import Any, List, Tuple, cast
 import httpx
 from langchain_core.messages import SystemMessage, HumanMessage
-from model import get_model
+from model import get_llm
 from schema import MetadataSchema
 from dotenv import load_dotenv
 
@@ -106,7 +106,7 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
             needs_llm.append((idx, item))
 
     if needs_llm:
-        model = get_model().with_structured_output(MetadataSchema)
+        model = get_llm().with_structured_output(MetadataSchema)
         prompts = [
             [system_msg, HumanMessage(content=_user_prompt(item))]
             for _, item in needs_llm

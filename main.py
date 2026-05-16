@@ -1,3 +1,5 @@
+import sitecustomize  # noqa: F401  # project-level pycache routing
+
 from datetime import date, datetime
 
 from crawlers import CRAWLERS
@@ -44,28 +46,33 @@ if __name__ == "__main__":
         print(f"[{mod.SOURCE_CODE}] source 등록 완료 (id={source_id})")
 
         print(f"1. 크롤링 시작: {mod.SOURCE_NAME}")
-        # should_skip을 넘기면 크롤러가 페이지 단위에서 DB에 이미 있는 글의 상세 진입·OCR 자체를 건너뜀.
-        crawled = mod.crawling(should_skip=document_exists)
-        print(f"2. 크롤링 완료: {len(crawled)}개")
+        # should_skip을 넘기면 크롤러가 DB에 이미 있는 글의 상세 진입·OCR 자체를 건너뜀.
+        crawled_count = 0
+        inserted_count = 0
+        skipped_count = 0
+        dropped_count = 0
 
-        # 이중 안전망 — 크롤러가 should_skip을 무시해도 여기서 한 번 더 거름.
-        fresh = [item for item in crawled if not document_exists(item["url"])]
-        skipped = len(crawled) - len(fresh)
-        if skipped:
-            print(f"   ↳ 이미 적재된 {skipped}개 건너뜀, 신규 {len(fresh)}개만 처리")
-        if not fresh:
-            continue
+        for item in mod.crawling(should_skip=document_exists):
+            crawled_count += 1
 
-        refined_data = refine(fresh)
+            # 이중 안전망 — 크롤러가 should_skip을 무시해도 여기서 한 번 더 거름.
+            if document_exists(item["url"]):
+                skipped_count += 1
+                print(f"   ↳ 이미 적재됨: {item['url']}")
+                continue
 
-        # refine은 일부 항목을 드롭할 수 있으므로 url로 원본 등록일을 다시 매핑.
-        posted_by_url = {item["url"]: _parse_posted_date(item.get("date")) for item in fresh}
+            posted_at = _parse_posted_date(item.get("date"))
+            refined_data = refine([item])
+            if not refined_data:
+                dropped_count += 1
+                print(f"   ↳ refine 실패로 스킵: {item['url']}")
+                continue
 
-        for doc, assets, extra in refined_data:
+            doc, assets, extra = refined_data[0]
             print(f'제목: {doc.title}')
             print(f'카테고리: {doc.category}')
             print(f'대상: {doc.target}')
-            print(f'등록일: {posted_by_url.get(doc.url)}')
+            print(f'등록일: {posted_at}')
             print(f'접수 시작일: {doc.start_date}')
             print(f'접수 마감일: {doc.end_date}')
             print(f'url: {doc.url}')
@@ -83,9 +90,15 @@ if __name__ == "__main__":
                 target=doc.target,
                 keywords=doc.keywords,
                 extra=extra,
-                posted_at=posted_by_url.get(doc.url),
+                posted_at=posted_at,
             )
             insert_assets(doc.category, document_id, assets)
 
             chunks = embed_chunks(f"{doc.title}\n\n{doc.content}")
             insert_chunks(doc.category, document_id, chunks)
+            inserted_count += 1
+
+        print(
+            f"2. 크롤링/적재 완료: 수집 {crawled_count}개, "
+            f"신규 저장 {inserted_count}개, 중복 스킵 {skipped_count}개, refine 드롭 {dropped_count}개"
+        )

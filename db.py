@@ -6,7 +6,7 @@ from pgvector.psycopg import register_vector
 from dotenv import load_dotenv
 
 load_dotenv()
-DB_URL = f"postgresql://knu-uic:{os.getenv("DB_PASSWORD")}@db:5432/knu-uic"
+DB_URL = f"postgresql://knu-uic:{os.getenv('DB_PASSWORD')}@localhost:5432/knu-uic"
 
 
 # schema.py의 category Literal과 1:1 매핑 — SQL 식별자에 한글/슬래시 못 쓰므로 영문 슬러그로 변환.
