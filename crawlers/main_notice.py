@@ -11,7 +11,7 @@ SOURCE_NAME = "공주대학교 일반 공지"
 DEPARTMENT: str | None = None
 KIND = "notice"
 BASE_URL = "https://www.kongju.ac.kr"
-
+PAGES = 1
 ASSETS_DIR = Path("crawl_result/assets")
 
 
@@ -87,7 +87,7 @@ def crawling(should_skip: Optional[Callable[[str], bool]] = None) -> List[dict]:
         url = "https://www.kongju.ac.kr/KNU/16909/subview.do"
         list_page.goto(url, wait_until="networkidle")
 
-        for page_num in range(1, 6):
+        for page_num in range(1, PAGES + 1):
             if page_num != 1:
                 list_page.get_by_title(f"{page_num}페이지").first.click()
                 list_page.wait_for_load_state("networkidle")

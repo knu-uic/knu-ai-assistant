@@ -28,20 +28,25 @@ def get_embeddings():
     )
 
 
+@lru_cache(maxsize=4)
+def _get_splitter(chunk_size: int, overlap: int):
+    """RecursiveCharacterTextSplitter 싱글톤. lazy import로 cold start 영향 회피."""
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    return RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=overlap,
+        # 우선순위: 단락(\n\n) → 줄(\n) → 한국/일본식 문장경계(。) → 영문 문장(. ) → 공백 → 글자.
+        # 표/번호리스트가 임의 글자에서 잘리던 단순 sliding window 대비 의미 단위 보존.
+        separators=["\n\n", "\n", "。", ". ", " ", ""],
+        length_function=len,
+    )
+
+
 def chunk_text(content: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
-    """800자 슬라이딩 윈도우 + 100자 overlap. 한국어 공지 기준."""
+    """한국어 공지 기준 의미 단위 분할. CHUNK_SIZE 자 상한, CHUNK_OVERLAP 자 overlap."""
     if not content:
         return []
-    chunks: List[str] = []
-    start = 0
-    n = len(content)
-    while start < n:
-        end = start + chunk_size
-        chunks.append(content[start:end])
-        if end >= n:
-            break
-        start = end - overlap
-    return chunks
+    return _get_splitter(chunk_size, overlap).split_text(content)
 
 
 def embed_chunks(content: str) -> List[Tuple[int, str, List[float]]]:

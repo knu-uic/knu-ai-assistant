@@ -55,13 +55,14 @@ try:
         q_vec = embed_query(search_query)
         cats = None if selected_category == "전체" else [selected_category]
         raw = search_chunks(
-            q_vec, major=major_filter, categories=cats, limit=30,
+            q_vec, major=major_filter, categories=cats, kind="notice", limit=30,
         )
         notices = [row_to_notice_search(r) for r in (raw or [])]
     else:
         raw = get_documents(
             category=None if selected_category == "전체" else selected_category,
             major=major_filter,
+            kind="notice",
         )
         notices = [row_to_notice_list(r) for r in (raw or [])]
 except Exception as e:

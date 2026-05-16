@@ -8,6 +8,8 @@
 import io           # 바이트 데이터를 "파일처럼" 다루기 위한 BytesIO 용도 (pdfplumber/openpyxl/zipfile이 파일객체를 요구함)
 import base64       # 이미지 바이트를 VLM에 보낼 때 base64 문자열로 인코딩
 import logging
+import os
+import tempfile
 import time
 import zipfile      # HWPX 파일은 사실상 ZIP 컨테이너라서 직접 열어서 내부 XML을 꺼냄
 from pathlib import Path                       # 파일 확장자(.pdf, .hwpx 등) 추출용
@@ -54,6 +56,30 @@ def hwpx_bytes_to_text(data: bytes) -> str:
 
     # 줄바꿈으로 이어붙여 단일 문자열로 반환 (앞뒤 공백 정리)
     return "\n".join(parts).strip()
+
+
+def hwp_bytes_to_text(data: bytes) -> str:
+    """구버전 .hwp(OLE 컴파운드 바이너리) 텍스트 추출.
+
+    .hwpx와 달리 ZIP이 아니라 olefile + zlib 압축 해제가 필요해서 LlamaIndex의 HWPReader에 의존.
+    무거운 dep라 lazy import — 첨부에 .hwp가 실제로 나올 때만 로드.
+
+    HWPReader.load_data는 Path를 요구해서 bytes를 임시 파일로 풀고 끝나면 unlink.
+    """
+    from llama_index.readers.file import HWPReader
+
+    # delete=False + 수동 unlink: with block 안에서 reader가 다시 path로 open할 수 있게.
+    tmp = tempfile.NamedTemporaryFile(suffix=".hwp", delete=False)
+    try:
+        tmp.write(data)
+        tmp.close()
+        docs = HWPReader().load_data(file=Path(tmp.name))
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+    return "\n".join((d.text or "") for d in docs).strip()
 
 
 # VLM(Gemini)에게 OCR을 시킬 때 쓰는 고정 프롬프트.
@@ -353,15 +379,13 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
 
             # 1차가 실패면 폴백 분기
             if _preview_failed(body):
+                file_data = _download(source_url, context)
                 if ext == ".hwpx":
                     # .hwpx는 ZIP 구조라 직접 까서 XML 텍스트 노드를 뽑을 수 있다
-                    file_data = _download(source_url, context)
                     body = hwpx_bytes_to_text(file_data)
                 else:
-                    # .hwp(구버전 바이너리)는 ZIP이 아니라서 여기서는 파싱 포기 → 사유만 남기고 early return
-                    body = "(synapView 변환 실패, .hwp 바이너리는 직접 파싱 미지원)"
-                    meta["extracted_text"] = body
-                    return f"{label}\n{body}", meta
+                    # .hwp(구버전 OLE 바이너리): LlamaIndex HWPReader fallback
+                    body = hwp_bytes_to_text(file_data)
 
         # ───────── 분기 4: 이미지 첨부 ─────────
         elif ext in (".jpg", ".jpeg", ".png", ".gif"):

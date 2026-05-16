@@ -43,7 +43,7 @@ def _connect_with_vector():
     return conn
 
 
-def init_db():
+def reset_db():
     """category별 document/chunk 물리 분리 스키마 생성. 기존 단일 document 잔재는 DROP."""
     with psycopg.connect(DB_URL) as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
@@ -321,16 +321,21 @@ def insert_chunks(category: str, document_id: int, chunks: list[tuple[int, str, 
         logger.info("  ↳ chunk %d건 저장 완료 (→ document_%s_chunk)", len(chunks), slug)
 
 
-def _search_subquery(slug: str, major_filter: bool) -> tuple[sql.Composable, list]:
+def _search_subquery(slug: str, major_filter: bool, kind_filter: bool) -> tuple[sql.Composable, list]:
     """카테고리 하나에 대한 DISTINCT ON 서브쿼리 Composable + placeholder 순서대로의 params.
 
-    placeholder 순서: [vec, (major, major)?, vec]
+    placeholder 순서: [vec, (major, major)?, (kind)?, vec]
     """
     category_literal = SLUG_TO_CATEGORY[slug]
 
+    conds: list[sql.Composable] = []
+    if major_filter:
+        conds.append(sql.SQL("(s.department = %s OR %s = ANY(d.target) OR '전체' = ANY(d.target))"))
+    if kind_filter:
+        conds.append(sql.SQL("s.kind = %s"))
     where_clause = (
-        sql.SQL(" WHERE (s.department = %s OR %s = ANY(d.target) OR '전체' = ANY(d.target)) ")
-        if major_filter else sql.SQL(" ")
+        sql.SQL(" WHERE ") + sql.SQL(" AND ").join(conds)
+        if conds else sql.SQL(" ")
     )
 
     sub = sql.SQL("""
@@ -359,11 +364,13 @@ def search_chunks(
     query_embedding: list[float],
     major: str | None = None,
     categories: list[str] | None = None,
+    kind: str | None = None,
     limit: int = 10,
 ):
     """HNSW 코사인 유사도 검색. 각 document당 가장 좋은 청크 1개만 추려서 반환.
 
     categories: 검색 대상 카테고리 리스트(한글). None 또는 빈 리스트면 5개 전부 검색.
+    kind: source.kind 필터('notice' 또는 'academic'). None이면 전체.
 
     반환 튜플:
     (url, title, snippet, score, posted_at, start_date, end_date, category, target, keywords,
@@ -374,12 +381,14 @@ def search_chunks(
     subs: list[sql.Composable] = []
     params: list = []
     for slug in target_slugs:
-        sub, _ = _search_subquery(slug, major_filter=bool(major))
+        sub, _ = _search_subquery(slug, major_filter=bool(major), kind_filter=bool(kind))
         subs.append(sql.SQL("(") + sub + sql.SQL(")"))
-        # subquery placeholder 순서: 1st vec, (major, major)?, 2nd vec(ORDER BY)
+        # subquery placeholder 순서: 1st vec, (major, major)?, (kind)?, 2nd vec(ORDER BY)
         params.append(query_embedding)
         if major:
             params.extend([major, major])
+        if kind:
+            params.append(kind)
         params.append(query_embedding)
 
     union = sql.SQL(" UNION ALL ").join(subs)

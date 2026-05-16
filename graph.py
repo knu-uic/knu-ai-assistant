@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END
 from langsmith import traceable
-
+from config import RERANK_CANDIDATES, RERANK_TOP_N
 from db import search_chunks, get_document_content
 from embed import embed_query
 from model import get_model
@@ -117,10 +117,19 @@ def router_node(state: ChatState) -> dict:
         "route_rationale": decision.rationale,  # type: ignore[union-attr]
     }
 
-
-RERANK_CANDIDATES = 30  # vector 1차 후보 수
-RERANK_TOP_N = 5        # cross-encoder 통과 후 최종 컨텍스트 수
-
+@traceable(run_type="retriever", name="vector_search")                                          
+def _vector_search(q_vec, major, categories):                                                   
+    """trace 노출용 wrapper. output: vector top-N 후보 row 리스트(reranker 입력)."""            
+    return search_chunks(q_vec, major=major, categories=categories, limit=RERANK_CANDIDATES)    
+                                                                                                
+                                                                                                
+@traceable(name="rerank")                                                                       
+def _rerank(query: str, rows):                                                                  
+    """trace 노출용 wrapper. output: (row, cross-encoder score) 내림차순 정렬 리스트."""        
+    scores = rerank_scores(query, [r[2] for r in rows])                                         
+    return sorted(zip(rows, scores), key=lambda pair: pair[1], reverse=True)                    
+                                                                                                
+                                                                                               
 
 @traceable(run_type="retriever", name="search_chunks")
 def _retrieve(
@@ -134,21 +143,14 @@ def _retrieve(
     원래의 임베딩 코사인 점수는 디버깅 외 용도가 없어 보존하지 않는다.
     """
     q_vec = embed_query(query)
-    rows = search_chunks(q_vec, major=major, categories=categories, limit=RERANK_CANDIDATES)
+    rows = _vector_search(q_vec, major, categories)
     if not rows:
         return []
-    snippets = [r[2] for r in rows]
-    scores = rerank_scores(query, snippets)
-    ranked = sorted(zip(rows, scores), key=lambda pair: pair[1], reverse=True)[:RERANK_TOP_N]
+    ranked = _rerank(query, rows)[:RERANK_TOP_N]
     contexts: List[Dict[str, Any]] = []
     for r, s in ranked:
-        # academic 소스(커리큘럼·장학정보 등)는 표가 chunk 경계에서 잘려 정보 손실 →
-        # 매칭된 청크 대신 document 전체 content를 LLM에 넘긴다.
-        if r[12] == "academic":
-            full = get_document_content(r[7], r[0])
-            snippet = full or r[2]
-        else:
-            snippet = r[2]
+        full = get_document_content(r[7], r[0])
+        snippet = full or r[2]
         contexts.append({
             "url": r[0], "title": r[1], "snippet": snippet, "score": s,
             "posted_at": r[4], "start_date": r[5], "end_date": r[6],

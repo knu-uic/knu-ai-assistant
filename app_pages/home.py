@@ -130,8 +130,8 @@ st.caption(
 
 # ── 추천 3건 ───────────────────────────────────────────────────
 try:
-    # 후보를 넉넉히(전 카테고리 60건) 가져와 점수 매김.
-    raw = get_documents(major=major if major else None, limit=60)
+    # 후보를 넉넉히(전 카테고리 60건) 가져와 점수 매김. academic(교과과정표·장학안내)은 제외.
+    raw = get_documents(major=major if major else None, kind="notice", limit=60)
 except Exception as e:
     st.error(f"공지 조회 실패: {e}")
     raw = []

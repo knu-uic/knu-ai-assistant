@@ -10,7 +10,7 @@ langchain-core
 langchain-community
 langchain-postgres
 langchain-google-genai
-langchain-ollama
+langchain-openai
 langgraph
 langsmith
 
@@ -21,6 +21,8 @@ playwright
 pdfplumber
 openpyxl
 pdf2image
+# .hwp(구버전 OLE 바이너리) 텍스트 추출용 — synapView 실패 시 fallback. .hwpx는 자체 ZIP 파서로 처리.
+llama-index-readers-file
 
 # 재정렬 (rerank.py) — BGE-reranker-v2-m3 cross-encoder.
 # torch는 Dockerfile에서 CPU-only 휠로 먼저 설치한다 (CUDA libs ~2GB 회피).

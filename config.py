@@ -54,5 +54,5 @@ RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 RERANKER_MAX_LENGTH = 512
 
 # ── Retrieval (graph.py) ─────────────────────────────────────────────────
-RERANK_CANDIDATES = 30        # vector 1차 후보 수
-RERANK_TOP_N = 5              # cross-encoder 통과 후 최종 컨텍스트 수
+RERANK_CANDIDATES = 15        # vector 1차 후보 수
+RERANK_TOP_N = 3            # cross-encoder 통과 후 최종 컨텍스트 수

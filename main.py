@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from crawlers import CRAWLERS
 from refine import refine
-from db import init_db, upsert_source, insert_document, insert_assets, insert_chunks, document_exists
+from db import reset_db, upsert_source, insert_document, insert_assets, insert_chunks, document_exists
 from embed import embed_chunks
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ if __name__ == "__main__":
     )
 
     # ONLY_SOURCE=<code> 로 단일 소스만 재크롤링. 이 모드에선 init_db()를 건너뛰어
-    # 다른 소스의 기존 데이터가 보존된다. (init_db는 모든 document/chunk를 DROP한다.)
+    # 다른 소스의 기존 데이터가 보존된다. (reset_db는 모든 document/chunk를 DROP한다.)
     only = os.getenv("ONLY_SOURCE")
     if only:
         crawlers = [m for m in CRAWLERS if m.SOURCE_CODE == only]
@@ -51,7 +51,7 @@ if __name__ == "__main__":
     else:
         crawlers = list(CRAWLERS)
         # 스키마 실패는 즉시 fail-fast — try 밖에서 호출.
-        init_db()
+        reset_db()
 
     failed_sources: list[tuple[str, str]] = []
     failed_docs: list[tuple[str, str]] = []
