@@ -11,7 +11,7 @@ import math
 from functools import lru_cache
 from typing import List
 
-MODEL_NAME = "BAAI/bge-reranker-v2-m3"
+from config import RERANKER_MODEL, RERANKER_MAX_LENGTH
 
 
 @lru_cache(maxsize=1)
@@ -19,7 +19,7 @@ def _get_reranker():
     # import을 lazy 하게: 다른 코드 경로(예: 크롤러)는 torch를 안 쓰는데
     # 모듈 top-level import면 매번 ~수 초 페널티가 붙는다.
     from sentence_transformers import CrossEncoder
-    return CrossEncoder(MODEL_NAME, max_length=512)
+    return CrossEncoder(RERANKER_MODEL, max_length=RERANKER_MAX_LENGTH)
 
 
 def rerank_scores(query: str, passages: List[str]) -> List[float]:

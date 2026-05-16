@@ -1,14 +1,30 @@
 """KNU 지능형 학생 비서 진입점. st.navigation으로 4페이지 라우팅."""
 
+import threading
+
 import streamlit as st
 from dotenv import load_dotenv
 
 from db import ensure_users_schema
+from rerank import _get_reranker
 from ui import get_current_user, render_sidebar_user_card
 
 load_dotenv()
 
 st.set_page_config(page_title="KNU 학생 비서", page_icon="🎓", layout="wide")
+
+
+# 첫 챗봇 질문 응답이 느린 원인: rerank.py의 BGE-reranker가 lazy 패턴이라
+# 첫 호출(=첫 질문) 시 메모리 로드. streamlit 부팅 직후 daemon thread로 미리 올려둠.
+# cache_resource로 모든 rerun/세션 사이 1회만 실행 보장.
+@st.cache_resource(show_spinner=False)
+def _warmup_reranker():
+    t = threading.Thread(target=_get_reranker, daemon=True, name="reranker-warmup")
+    t.start()
+    return t
+
+
+_warmup_reranker()
 
 # DB에 users 테이블/year 컬럼이 없는 환경(이미 init_db된 구버전 DB)도 흡수.
 # 세션 내 한 번만 실행.

@@ -1,12 +1,12 @@
 import json
-import os
+import logging
 import psycopg
 from psycopg import sql
 from pgvector.psycopg import register_vector
-from dotenv import load_dotenv
 
-load_dotenv()
-DB_URL = f"postgresql://knu-uic:{os.getenv("DB_PASSWORD")}@db:5432/knu-uic"
+from config import DB_URL, EMBEDDING_DIM
+
+logger = logging.getLogger(__name__)
 
 
 # schema.py의 category Literal과 1:1 매핑 — SQL 식별자에 한글/슬래시 못 쓰므로 영문 슬러그로 변환.
@@ -105,11 +105,15 @@ def init_db():
                     chunk_idx INT NOT NULL,
                     content TEXT NOT NULL,
                     source_asset_id BIGINT,
-                    embedding vector(768) NOT NULL,
+                    embedding vector({dim}) NOT NULL,
                     created_at TIMESTAMPTZ DEFAULT now(),
                     UNIQUE(document_id, chunk_idx)
                 );
-            """).format(chunk=_chunk_ident(slug), doc=_doc_ident(slug)))
+            """).format(
+                chunk=_chunk_ident(slug),
+                doc=_doc_ident(slug),
+                dim=sql.SQL(str(EMBEDDING_DIM)),
+            ))
             conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {chunk}(document_id);").format(
                 idx=sql.Identifier(f"idx_document_{slug}_chunk_document"),
                 chunk=_chunk_ident(slug),
@@ -154,7 +158,8 @@ def init_db():
         # year 컬럼이 없는 기존 dev DB도 흡수.
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
         conn.commit()
-        print(f"✅ source + {len(SLUGS)}개 category 테이블({', '.join(SLUGS)}) + asset/users 생성 완료")
+        logger.info("✅ source + %d개 category 테이블(%s) + asset/users 생성 완료",
+                    len(SLUGS), ", ".join(SLUGS))
 
 
 def upsert_source(code: str, name: str, kind: str, department: str | None, base_url: str | None) -> int:
@@ -190,6 +195,23 @@ def document_exists(url: str) -> bool:
         return bool(row and row[0])
 
 
+_DATE_SENTINELS = {"", "null", "none", "n/a", "na", "미정", "미상", "없음", "-"}
+
+
+def _normalize_date(value):
+    """LLM이 'null'/'미정' 같은 sentinel 문자열을 반환해도 None으로 흡수.
+
+    date/datetime 객체는 그대로 통과. Postgres date 컬럼이 sentinel을 거부하는 문제 차단.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return value
+    if value.strip().lower() in _DATE_SENTINELS:
+        return None
+    return value
+
+
 def insert_document(
     source_id: int,
     url: str,
@@ -206,12 +228,9 @@ def insert_document(
     """category에 해당하는 document_{slug} 테이블에 UPSERT 후 id 반환."""
     slug = _slug(category)
 
-    if not start_date or str(start_date).strip() == "":
-        start_date = None
-    if not end_date or str(end_date).strip() == "":
-        end_date = None
-    if not posted_at or str(posted_at).strip() == "":
-        posted_at = None
+    start_date = _normalize_date(start_date)
+    end_date = _normalize_date(end_date)
+    posted_at = _normalize_date(posted_at)
 
     extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
 
@@ -242,7 +261,7 @@ def insert_document(
         assert row is not None
         document_id = row[0]
         conn.commit()
-        print(f"✅ [{title}] document_{slug} 저장 완료 (id={document_id})")
+        logger.info("✅ [%s] document_%s 저장 완료 (id=%d)", title, slug, document_id)
         return document_id
 
 
@@ -275,7 +294,7 @@ def insert_assets(category: str, document_id: int, assets: list[dict]):
                 a.get("order_idx", 0),
             ))
         conn.commit()
-        print(f"  ↳ asset {len(assets)}건 저장 완료")
+        logger.info("  ↳ asset %d건 저장 완료", len(assets))
 
 
 def insert_chunks(category: str, document_id: int, chunks: list[tuple[int, str, list[float]]]):
@@ -292,12 +311,14 @@ def insert_chunks(category: str, document_id: int, chunks: list[tuple[int, str, 
         "INSERT INTO {} (document_id, chunk_idx, content, embedding) VALUES (%s, %s, %s, %s)"
     ).format(_chunk_ident(slug))
 
+    # chunks 튜플의 순서는 SQL의 (document_id, chunk_idx, content, embedding)와 맞춰 재구성.
+    rows = [(document_id, idx, content, vector) for idx, content, vector in chunks]
     with _connect_with_vector() as conn:
         conn.execute(del_q, (document_id,))
-        for idx, content, vector in chunks:
-            conn.execute(ins_q, (document_id, idx, content, vector))
+        with conn.cursor() as cur:
+            cur.executemany(ins_q, rows)
         conn.commit()
-        print(f"  ↳ chunk {len(chunks)}건 저장 완료 (→ document_{slug}_chunk)")
+        logger.info("  ↳ chunk %d건 저장 완료 (→ document_%s_chunk)", len(chunks), slug)
 
 
 def _search_subquery(slug: str, major_filter: bool) -> tuple[sql.Composable, list]:
