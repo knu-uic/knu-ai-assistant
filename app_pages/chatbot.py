@@ -51,10 +51,13 @@ if user_input:
 
     with st.chat_message("assistant"):
         try:
+            # 방금 append한 사용자 질문은 question으로 따로 보내므로 slice에서 제외.
+            recent_history = st.session_state.chat_history[:-1][-4:]
             result = GRAPH.invoke(
                 {
                     "question": user_input,
                     "major": major,
+                    "history": recent_history,
                 },
                 config={
                     "metadata": {"major": major, "question": user_input},
@@ -72,6 +75,7 @@ if user_input:
                 st.caption(f"{badge}{score_str} — {result.get('verifier_note', '')}")
 
             with st.expander("🔍 검색·라우팅 디버그"):
+                st.caption(f"의도: **{result.get('intent', '?')}**")
                 cats = result.get("categories") or []
                 st.caption(f"카테고리: **{', '.join(cats) if cats else '(없음)'}**")
                 st.caption(f"확장 쿼리: `{result.get('expanded_query', '')}`")
