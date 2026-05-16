@@ -8,6 +8,10 @@ from langgraph.graph import StateGraph, END
 from langsmith import traceable
 
 from db import search_chunks
+# === [seungwon/bge-reranker] 시작 ===
+from db import get_document_content
+from rerank import rerank_scores
+# === [seungwon/bge-reranker] 끝 ===
 from embed import embed_query
 from model import get_model
 
@@ -135,11 +139,59 @@ def _retrieve(
     ]
 
 
+# === [seungwon/bge-reranker] 시작 ===
+# 원래 seungwon/bge-reranker 브랜치는 config.py에서 import하던 상수.
+# 한정우 환경(설정 파일 보호)을 위해 모듈 상수로 인라인.
+RERANK_CANDIDATES = 15  # vector 1차 후보 수
+RERANK_TOP_N = 3        # cross-encoder 통과 후 최종 컨텍스트 수
+
+
+@traceable(run_type="retriever", name="vector_search")
+def _vector_search(q_vec, major, categories):
+    """trace 노출용 wrapper. output: vector top-N 후보 row 리스트(reranker 입력)."""
+    return search_chunks(q_vec, major=major, categories=categories, limit=RERANK_CANDIDATES)
+
+
+@traceable(name="rerank")
+def _rerank(query: str, rows):
+    """trace 노출용 wrapper. output: (row, cross-encoder score) 내림차순 정렬 리스트."""
+    scores = rerank_scores(query, [r[2] for r in rows])
+    return sorted(zip(rows, scores), key=lambda pair: pair[1], reverse=True)
+
+
+@traceable(run_type="retriever", name="search_chunks_reranked")
+def _retrieve_with_rerank(
+    query: str,
+    major: str | None,
+    categories: List[str] | None,
+) -> List[Dict[str, Any]]:
+    """vector top-N → BGE-reranker로 재정렬 → top-K → 각 doc 풀문서 전달.
+
+    score 필드는 cross-encoder 점수(0~1)로 덮어쓴다.
+    snippet은 매칭 청크가 아닌 document 전체 content (표 등 정보 손실 방지).
+    """
+    q_vec = embed_query(query)
+    rows = _vector_search(q_vec, major, categories)
+    if not rows:
+        return []
+    ranked = _rerank(query, rows)[:RERANK_TOP_N]
+    contexts: List[Dict[str, Any]] = []
+    for r, s in ranked:
+        full = get_document_content(r[7], r[0])
+        snippet = full or r[2]
+        contexts.append({
+            "url": r[0], "title": r[1], "snippet": snippet, "score": s,
+            "posted_at": r[4], "start_date": r[5], "end_date": r[6],
+        })
+    return contexts
+# === [seungwon/bge-reranker] 끝 ===
+
+
 def retriever_node(state: ChatState) -> dict:
     # 라우터가 확장한 쿼리로 임베딩. 빈 문자열이면 원본 질문으로 폴백.
     query = state.get("expanded_query") or state["question"]
     categories = list(state.get("categories") or []) or None
-    contexts = _retrieve(query, state.get("major"), categories)
+    contexts = _retrieve_with_rerank(query, state.get("major"), categories)  # [seungwon/bge-reranker] _retrieve → _retrieve_with_rerank
     return {"contexts": contexts}
 
 

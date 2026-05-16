@@ -377,6 +377,18 @@ def search_chunks(
         return cursor.fetchall()
 
 
+# === [seungwon/bge-reranker] 시작 ===
+def get_document_content(category: str, url: str) -> str | None:
+    """url로 document 전체 content 조회. small-to-big — reranker 통과한 top-N에 풀 문서 전달용."""
+    slug = _slug(category)
+    q = sql.SQL("SELECT content FROM {doc} WHERE url = %s").format(doc=_doc_ident(slug))
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute(q, (url,))
+        row = cur.fetchone()
+        return row[0] if row else None
+# === [seungwon/bge-reranker] 끝 ===
+
+
 def _list_subquery(slug: str, where: sql.Composable) -> sql.Composable:
     """get_documents용 카테고리 단위 서브쿼리."""
     return sql.SQL("""

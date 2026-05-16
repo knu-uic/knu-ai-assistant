@@ -22,3 +22,8 @@ playwright
 pdfplumber
 openpyxl
 pdf2image
+
+# === [seungwon/bge-reranker] BGE-reranker cross-encoder (rerank.py) ===
+# CPU-only torch를 원하면 사전에:
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch
+sentence-transformers
