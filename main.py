@@ -69,7 +69,8 @@ if __name__ == "__main__":
 
             logger.info("1. 크롤링 시작: %s", mod.SOURCE_NAME)
             # should_skip을 넘기면 크롤러가 페이지 단위에서 DB에 이미 있는 글의 상세 진입·OCR 자체를 건너뜀.
-            crawled = mod.crawling(should_skip=document_exists)
+            # BoardNoticeCrawler가 generator라 list()로 흡수 — batch refine 흐름 유지 위해.
+            crawled = list(mod.crawling(should_skip=document_exists))
             logger.info("2. 크롤링 완료: %d개", len(crawled))
 
             # 이중 안전망 — 크롤러가 should_skip을 무시해도 여기서 한 번 더 거름.

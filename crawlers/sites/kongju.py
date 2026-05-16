@@ -10,7 +10,7 @@ KONGJU_CRAWLERS = {
         base_url="https://www.kongju.ac.kr",
         list_url="https://www.kongju.ac.kr/KNU/16909/subview.do",
         page_title_template="{page}페이지",
-        pages=5,
+        pages=1,
         row_selector="tr:has(.td-subject a)",
         row_selector_after_first="tr:not(.notice):has(.td-subject a)",
     )),
