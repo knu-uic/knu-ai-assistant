@@ -21,12 +21,15 @@ ENV HF_HOME=/app/.hf_cache
 # torch 하면 이미지가 ~3GB 부풀고 우리한테는 무용지물(CPU 추론만 함).
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch
 
+# playwright(파이썬 패키지 + 시스템 deps + chromium)를 requirements.txt보다 먼저 설치한다.
+# 이 순서로 두면 requirements.txt에 패키지 한 줄 추가해도 chromium(~400MB) 다운로드 레이어가
+# 그대로 캐시 hit. requirements.txt에도 playwright가 있지만 이미 설치돼 있어 pip가 skip.
+RUN pip install --no-cache-dir playwright \
+    && python -m playwright install --with-deps chromium
+
 # 파이썬 패키지 설치 (위에서 torch가 이미 깔려 있어 sentence-transformers는 CPU torch를 재사용)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# playwright 브라우저 + 시스템 의존성 설치 (크롬리움만)
-RUN python -m playwright install --with-deps chromium
 
 # 앱 소스 복사 (docker-compose에서 bind mount로 덮어쓰지만, mount 없이 단독 실행해도 동작하게)
 COPY . .

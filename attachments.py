@@ -204,19 +204,161 @@ def xlsx_relevant(*texts: str) -> bool:
     return any(kw in blob for kw in XLSX_KEYWORDS)
 
 
-def xlsx_to_text(data: bytes) -> str:
-    """XLSX 시트의 모든 셀을 탭으로 구분된 텍스트로 직렬화."""
-    # data_only=True: 수식(=A1+B1) 대신 마지막으로 계산된 값을 가져옴
+def _detect_header_row(rows: list[list[str]]) -> int | None:
+    """헤더 행 인덱스를 추정. 못 찾으면 None.
+
+    휴리스틱: 첫 15행 중 비어있지 않은 셀이 5개 이상이고, 그 중 80% 이상이
+    길이 40자 이하의 짧은 텍스트인 행 — 가장 셀 수가 많은 것을 선택.
+    그 다음 행도 비슷한 셀 수를 가져야 헤더로 인정(데이터 행이 뒤따라야 함).
+    """
+    best_idx = None
+    best_score = 0
+    for i, row in enumerate(rows[:15]):
+        non_empty = [c for c in row if c]
+        if len(non_empty) < 5:
+            continue
+        short = [c for c in non_empty if len(c) <= 40]
+        if len(short) < len(non_empty) * 0.8:
+            continue
+        # 다음 행도 충분히 채워져야 데이터 행으로 인정
+        if i + 1 >= len(rows):
+            continue
+        next_non_empty = sum(1 for c in rows[i + 1] if c)
+        if next_non_empty < len(non_empty) * 0.5:
+            continue
+        score = len(non_empty)
+        if score > best_score:
+            best_score = score
+            best_idx = i
+    return best_idx
+
+
+def xlsx_to_text_prefixed(data: bytes) -> str:
+    """XLSX 시트를 LLM 친화적 형식으로 직렬화 (full-prefix 변형).
+
+    각 데이터 행을 `헤더1=값1 | 헤더2=값2 | ...`로 변환. 한 행만 봐도 컬럼 의미가
+    명확하지만, 헤더가 행마다 반복되어 토큰 비용이 schema 방식보다 ~2배 크다.
+    gpt-5-mini처럼 컨텍스트 윈도우가 큰 모델에서 비교 테스트 용도.
+
+    헤더 탐지 실패 시 [Schema] 없이 탭 구분으로 fallback.
+    """
     wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
     out = []
     for sheet in wb.worksheets:
-        out.append(f"[Sheet: {sheet.title}]")  # 시트 경계 표시
+        out.append(f"[Sheet: {sheet.title}]")
+        rows: list[list[str]] = []
         for row in sheet.iter_rows(values_only=True):
-            # None은 빈 문자열로, 나머지는 str로 일괄 변환
-            cells = ["" if v is None else str(v) for v in row]
-            # 완전히 빈 행은 스킵 (엑셀에 흔한 공백 행 제거)
-            if any(c.strip() for c in cells):
-                out.append("\t".join(cells))  # 탭 구분 → 표 구조 어느 정도 보존
+            # '~'는 단순 범위 구분자(예: 2011~2016)인데 일부 markdown 렌더러에서 strikethrough처럼
+            # 해석돼 LLM/뷰어 혼동을 유발 → '-'로 정규화.
+            cells = [
+                "" if v is None else " ".join(str(v).split()).replace("~", "-")
+                for v in row
+            ]
+            if any(cells):
+                rows.append(cells)
+        if not rows:
+            continue
+
+        header_idx = _detect_header_row(rows)
+        if header_idx is None:
+            for r in rows:
+                out.append("\t".join(r))
+            continue
+
+        headers = list(rows[header_idx])
+        for upper_idx in range(header_idx - 1, -1, -1):
+            upper = rows[upper_idx]
+            non_empty_count = sum(1 for c in upper if c)
+            if non_empty_count <= 1:
+                break
+            filled = []
+            cur = ""
+            for c in upper:
+                if c:
+                    cur = c
+                filled.append(cur)
+            for i, c in enumerate(filled):
+                if c and i < len(headers) and headers[i]:
+                    headers[i] = f"{c}/{headers[i]}"
+
+        out.append("[Headers] " + " | ".join(h for h in headers if h))
+
+        for r in rows[header_idx + 1:]:
+            parts = []
+            for i, c in enumerate(r):
+                if not c:
+                    continue
+                h = headers[i] if i < len(headers) and headers[i] else f"col{i + 1}"
+                parts.append(f"{h}={c}")
+            if parts:
+                out.append(" | ".join(parts))
+    return "\n".join(out).strip()
+
+
+def xlsx_to_text(data: bytes) -> str:
+    """XLSX 시트를 LLM 친화적 형식으로 직렬화 (schema 방식, 기본).
+
+    헤더 행을 탐지해 [Schema] 라인에 컬럼명을 한 번 명시한 뒤, 데이터 행은
+    탭 구분 (= 스키마 순서대로)으로 출력. LLM은 [Schema]를 보고 각 컬럼 위치를
+    매핑하면 된다. row 단위 토큰 비용 최소화.
+
+    헤더 탐지 실패 시 [Schema] 없이 모든 행을 탭 구분으로 fallback.
+    """
+    # data_only=True: 수식 대신 계산된 값을 가져옴
+    wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+    out = []
+    for sheet in wb.worksheets:
+        out.append(f"[Sheet: {sheet.title}]")
+        # 1) 비어있지 않은 행만 모음 (개행/공백은 단일 공백으로 정규화 — 헤더의 줄바꿈 제거)
+        #    '~'는 범위 구분자(2011~2016)인데 markdown 렌더러 일부가 strikethrough로 해석 → '-'로 정규화.
+        rows: list[list[str]] = []
+        for row in sheet.iter_rows(values_only=True):
+            cells = [
+                "" if v is None else " ".join(str(v).split()).replace("~", "-")
+                for v in row
+            ]
+            if any(cells):
+                rows.append(cells)
+        if not rows:
+            continue
+
+        header_idx = _detect_header_row(rows)
+        if header_idx is None:
+            # 헤더 탐지 실패 — 기존 탭 fallback
+            for r in rows:
+                out.append("\t".join(r))
+            continue
+
+        # 2) 헤더 위쪽 행에 머지된 super-header가 있으면 prefix로 결합
+        headers = list(rows[header_idx])
+        for upper_idx in range(header_idx - 1, -1, -1):
+            upper = rows[upper_idx]
+            non_empty_count = sum(1 for c in upper if c)
+            # 셀이 1개뿐(타이틀 행)이거나 모두 비면 중단
+            if non_empty_count <= 1:
+                break
+            # 머지셀은 가장 왼쪽 셀에만 값이 있음 — forward-fill
+            filled = []
+            cur = ""
+            for c in upper:
+                if c:
+                    cur = c
+                filled.append(cur)
+            for i, c in enumerate(filled):
+                if c and i < len(headers) and headers[i]:
+                    headers[i] = f"{c}/{headers[i]}"
+
+        # 3) [Schema] 라인: 컬럼명을 1회 명시 (col1, col2, ... 인덱스 표기로 LLM이 행과 매핑)
+        out.append(
+            "[Schema] "
+            + " | ".join(
+                f"col{i + 1}={h}" for i, h in enumerate(headers) if h
+            )
+        )
+
+        # 4) 데이터 행: 스키마 순서대로 탭 구분 (헤더 prefix 미포함 — 토큰 절약)
+        for r in rows[header_idx + 1:]:
+            out.append("\t".join(r))
     return "\n".join(out).strip()
 
 
@@ -359,8 +501,10 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             )
             if include_xlsx and ext == ".xlsx":
                 # 키워드 매칭(수강신청·교양·편성 등)이 걸린 공지 → 표 전체를 텍스트화해서 임베딩 대상에 포함.
+                # prefixed 방식: 행마다 `헤더=값` 명시. 토큰 비용 ~2배지만 LLM이 컬럼 의미 혼동 없이
+                # 라벨 매칭만 하면 되어 추출 정확도 우월. gpt-5-mini 컨텍스트로 감당.
                 data = _download(source_url, context)
-                body = xlsx_to_text(data)
+                body = xlsx_to_text_prefixed(data)
             else:
                 # 기본: 노이즈 많은 엑셀은 임베딩 제외하고 안내문만 남김 (.xls는 openpyxl 미지원이라 항상 제외)
                 body = f"(엑셀 첨부 — 임베딩 제외. 원본 다운로드: {source_url})"

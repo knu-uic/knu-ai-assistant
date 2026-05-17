@@ -4,7 +4,7 @@ import psycopg
 from psycopg import sql
 from pgvector.psycopg import register_vector
 
-from config import DB_URL, EMBEDDING_DIM
+from config import DB_URL, EMBEDDING_DIM, HNSW_EF_SEARCH
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +195,37 @@ def document_exists(url: str) -> bool:
         return bool(row and row[0])
 
 
+def delete_document_by_url(url: str) -> int:
+    """URL로 5개 category 테이블을 훑어 일치하는 문서·청크·자산을 삭제.
+
+    chunks는 FK ON DELETE CASCADE로 자동 정리되지만, document_asset은 FK가 없어서
+    (category, document_id)로 직접 지운 뒤 document를 지운다.
+
+    재크롤 테스트 전 기존 레코드를 깔끔히 비울 용도.
+    """
+    total = 0
+    with psycopg.connect(DB_URL) as conn:
+        for slug in SLUGS:
+            sel_q = sql.SQL("SELECT id FROM {} WHERE url = %s;").format(_doc_ident(slug))
+            cur = conn.execute(sel_q, (url,))
+            rows = cur.fetchall()
+            if not rows:
+                continue
+            category = SLUG_TO_CATEGORY[slug]
+            for (doc_id,) in rows:
+                conn.execute(
+                    "DELETE FROM document_asset WHERE category = %s AND document_id = %s;",
+                    (category, doc_id),
+                )
+            del_q = sql.SQL("DELETE FROM {} WHERE url = %s;").format(_doc_ident(slug))
+            cur = conn.execute(del_q, (url,))
+            total += cur.rowcount or 0
+        conn.commit()
+    if total:
+        logger.info("🗑  url 삭제 완료 — %d개 document + 종속 chunk/asset 제거", total)
+    return total
+
+
 _DATE_SENTINELS = {"", "null", "none", "n/a", "na", "미정", "미상", "없음", "-"}
 
 
@@ -322,9 +353,10 @@ def insert_chunks(category: str, document_id: int, chunks: list[tuple[int, str, 
 
 
 def _search_subquery(slug: str, major_filter: bool, kind_filter: bool) -> tuple[sql.Composable, list]:
-    """카테고리 하나에 대한 DISTINCT ON 서브쿼리 Composable + placeholder 순서대로의 params.
+    """카테고리 하나에 대한 청크 단위 서브쿼리 Composable.
 
-    placeholder 순서: [vec, (major, major)?, (kind)?, vec]
+    placeholder 순서: [vec, (major, major)?, (kind)?]
+    바깥 쿼리에서 score DESC 로 정렬·LIMIT 하므로 여기서는 ORDER BY 하지 않는다.
     """
     category_literal = SLUG_TO_CATEGORY[slug]
 
@@ -339,8 +371,7 @@ def _search_subquery(slug: str, major_filter: bool, kind_filter: bool) -> tuple[
     )
 
     sub = sql.SQL("""
-        SELECT DISTINCT ON (d.id)
-               d.url, d.title, c.content,
+        SELECT d.url, d.title, c.content,
                1 - (c.embedding <=> %s::vector) AS score,
                d.posted_at, d.start_date, d.end_date,
                {cat_lit}::text AS category,
@@ -350,7 +381,6 @@ def _search_subquery(slug: str, major_filter: bool, kind_filter: bool) -> tuple[
         JOIN {doc} d ON d.id = c.document_id
         JOIN source s ON s.id = d.source_id
         {where}
-        ORDER BY d.id, c.embedding <=> %s::vector
     """).format(
         cat_lit=sql.Literal(category_literal),
         chunk=_chunk_ident(slug),
@@ -367,7 +397,7 @@ def search_chunks(
     kind: str | None = None,
     limit: int = 10,
 ):
-    """HNSW 코사인 유사도 검색. 각 document당 가장 좋은 청크 1개만 추려서 반환.
+    """HNSW 코사인 유사도 검색. 청크 단위로 score 상위 N개 반환 (문서 중복 허용).
 
     categories: 검색 대상 카테고리 리스트(한글). None 또는 빈 리스트면 5개 전부 검색.
     kind: source.kind 필터('notice' 또는 'academic'). None이면 전체.
@@ -383,13 +413,12 @@ def search_chunks(
     for slug in target_slugs:
         sub, _ = _search_subquery(slug, major_filter=bool(major), kind_filter=bool(kind))
         subs.append(sql.SQL("(") + sub + sql.SQL(")"))
-        # subquery placeholder 순서: 1st vec, (major, major)?, (kind)?, 2nd vec(ORDER BY)
+        # subquery placeholder 순서: vec, (major, major)?, (kind)?
         params.append(query_embedding)
         if major:
             params.extend([major, major])
         if kind:
             params.append(kind)
-        params.append(query_embedding)
 
     union = sql.SQL(" UNION ALL ").join(subs)
     final_q = sql.SQL("""
@@ -403,6 +432,11 @@ def search_chunks(
     params.append(limit)
 
     with _connect_with_vector() as conn:
+        # HNSW 후보 큐 크기 — 트랜잭션 한정으로 적용. 기본 40 → recall 보강.
+        # SET은 파라미터 placeholder 미지원이라 int 검증 후 인라인.
+        conn.execute(sql.SQL("SET LOCAL hnsw.ef_search = {n};").format(
+            n=sql.SQL(str(int(HNSW_EF_SEARCH)))
+        ))
         cursor = conn.execute(final_q, params)
         return cursor.fetchall()
 

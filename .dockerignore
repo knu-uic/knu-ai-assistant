@@ -1,0 +1,46 @@
+# 이미지/빌드 컨텍스트 비대화 방지. bind mount(.:/app)로 호스트에서 보이는 파일은
+# 런타임엔 어차피 호스트 본이 노출되므로, COPY 단계 결과는 단독 실행 fallback용일 뿐.
+
+.git
+.gitignore
+.github
+
+# Python 캐시
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# venv / 로컬 환경
+.venv
+venv
+.env
+.env.*
+
+# HuggingFace 모델 캐시 — Dockerfile에서 ENV HF_HOME=/app/.hf_cache로 잡혀 있어
+# 실행 중 호스트에 누적되는데, 빌드 컨텍스트로 끌고 가면 이미지가 수백 MB 부풀음.
+.hf_cache
+
+# 1회성 테스트 스크립트 — 운영 이미지에 들어갈 필요 없음 (필요 시 bind mount로 접근).
+scripts
+
+# 데이터·로그·도구 메타
+data
+logs
+*.log
+state.json
+CLAUDE.md
+docs
+
+# IDE
+.idea
+.vscode
+.DS_Store
+
+# 도커 자체 (자기참조 회피)
+Dockerfile
+docker-compose.yml
+.dockerignore

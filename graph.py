@@ -168,7 +168,11 @@ def _retrieve(
     major: str | None,
     categories: List[str] | None,
 ) -> List[Dict[str, Any]]:
-    """vector top-N → BGE-reranker로 재정렬 → top-K 반환.
+    """vector top-N(청크 단위) → BGE-reranker로 재정렬 → top-K 청크 → 부모 문서 dedupe.
+
+    같은 url의 청크가 top-K 안에 여러 개 들어오면 가장 높은 rerank score 1개만 남기고
+    그 문서의 fulldoc만 LLM에 전달한다. 한 문서가 정답인 질문에서 컨텍스트 비대로 인한
+    할루시네이션을 피한다.
 
     score 필드는 cross-encoder 점수(0~1)로 덮어쓴다.
     원래의 임베딩 코사인 점수는 디버깅 외 용도가 없어 보존하지 않는다.
@@ -179,11 +183,16 @@ def _retrieve(
         return []
     ranked = _rerank(query, rows)[:RERANK_TOP_N]
     contexts: List[Dict[str, Any]] = []
+    seen_urls: set[str] = set()
     for r, s in ranked:
-        full = get_document_content(r[7], r[0])
+        url = r[0]
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        full = get_document_content(r[7], url)
         snippet = full or r[2]
         contexts.append({
-            "url": r[0], "title": r[1], "snippet": snippet, "score": s,
+            "url": url, "title": r[1], "snippet": snippet, "score": s,
             "posted_at": r[4], "start_date": r[5], "end_date": r[6],
         })
     return contexts
@@ -286,8 +295,8 @@ def build_graph():
         {"rag": "retriever", "casual": "casual_answerer"},
     )
     g.add_edge("retriever", "answerer")
-    g.add_edge("answerer", "verifier")
-    g.add_edge("verifier", END)
+    g.add_edge("answerer", END)
+    # g.add_edge("verifier", END)
     g.add_edge("casual_answerer", END)
     return g.compile()
 

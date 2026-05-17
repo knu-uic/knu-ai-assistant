@@ -24,6 +24,9 @@ services:
     build: .
     container_name: knu-uic-app
     restart: always
+    # BGE-reranker CPU 추론은 BLAS 스레드 수에 비례해 빨라진다. Docker Desktop의
+    # Settings → Resources → CPUs 슬라이더를 8 이상으로 올린 뒤에야 이 값이 의미를 가짐.
+    cpus: '8.0'
     ports:
       - "8501:8501"
     environment:
@@ -35,6 +38,10 @@ services:
       - DB_USER=${DB_USER:-knu-uic}
       - DB_NAME=${DB_NAME:-knu-uic}
       - DATABASE_URL=postgresql+psycopg://${DB_USER:-knu-uic}:${DB_PASSWORD}@db:5432/${DB_NAME:-knu-uic}
+      # torch / BLAS 스레드 풀 — rerank.py가 OMP_NUM_THREADS를 읽어 set_num_threads 호출.
+      - OMP_NUM_THREADS=8
+      - MKL_NUM_THREADS=8
+      - TOKENIZERS_PARALLELISM=false
       # LangSmith 트레이싱 (LANGSMITH_TRACING이 비어있거나 false면 비활성화)
       - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
