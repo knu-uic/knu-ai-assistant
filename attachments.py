@@ -217,7 +217,7 @@ def _pdf_to_text_via_vlm(data: bytes) -> str:
     from pdf2image import convert_from_bytes
     
     # 200 DPI: 품질과 메모리/속도의 최적 타협점
-    page_images = convert_from_bytes(data, dpi=200)
+    page_images = convert_from_bytes(data, dpi=300)
 
     def _process_page(page_tuple) -> str:
         page_num, page_image = page_tuple

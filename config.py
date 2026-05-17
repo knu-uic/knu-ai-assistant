@@ -36,13 +36,13 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 # 차원은 두 provider 모두 1536으로 통일 — OpenAI text-embedding-3-small 네이티브 차원.
 # Gemini는 Matryoshka로 3072→1536 truncate. HNSW vector(EMBEDDING_DIM)도 이 값을 참조한다.
 EMBEDDING_DIM = 1536
-CHUNK_SIZE = 800              # 한국어 공지 기준 sliding window.
-CHUNK_OVERLAP = 100
+CHUNK_SIZE = 400              # 한국어 공지 기준 sliding window.
+CHUNK_OVERLAP = 200
 
 if LLM_PROVIDER == "openai":
     EMBEDDING_MODEL = "text-embedding-3-small"
     LLM_MODEL = "gpt-5-mini"
-    VLM_MODEL = "gpt-5-mini"
+    VLM_MODEL = "gpt-4o-mini"
 else:  # gemini
     EMBEDDING_MODEL = "gemini-embedding-2-preview"
     LLM_MODEL = "gemini-2.5-flash"
@@ -51,7 +51,7 @@ else:  # gemini
 # ── Reranker (rerank.py) ─────────────────────────────────────────────────
 # 사용자 결정: BGE-reranker-v2-m3 유지 (이전 다운그레이드를 되돌림).
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
-RERANKER_MAX_LENGTH = 512
+RERANKER_MAX_LENGTH = 256
 
 # ── Retrieval (graph.py) ─────────────────────────────────────────────────
 RERANK_CANDIDATES = 30        # vector 1차 후보 수 (DISTINCT 제거로 청크 단위 후보 → 풀 확대)
