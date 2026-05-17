@@ -61,4 +61,4 @@ RERANK_TOP_N = 3          # cross-encoder 통과 후 최종 컨텍스트 수
 # ef_search: HNSW 탐색 시 후보 큐 크기. 크면 recall↑ latency↑.
 # pgvector 기본 40. RERANK_CANDIDATES=15 기준 2~4배가 sweet spot.
 # 100은 안전한 상한 — UNION ALL 5 카테고리에서도 latency 영향 미미 추정.
-HNSW_EF_SEARCH = 100
+HNSW_EF_SEARCH = 200

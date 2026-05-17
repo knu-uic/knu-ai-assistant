@@ -17,12 +17,14 @@ langsmith
 # 크롤링
 playwright
 
-# 첨부파일 처리 (attachments.py)
+# 첨부파일 처리 (attachments.py, curriculum_parser.py)
+# - pdfplumber: 텍스트 PDF 1차 추출 + 교과과정 표 추출
+# - openpyxl: XLSX 파싱 (xlsx_to_text / xlsx_to_text_prefixed)
+# - pdf2image: 스캔 PDF → 이미지 변환 (VLM OCR fallback, poppler-utils 필요)
+# - llama-index-readers-file: 구버전 .hwp (OLE 바이너리) HWPReader. .hwpx는 자체 ZIP 파서.
 pdfplumber
 openpyxl
-pandas  # xlsx → CSV 직렬화 (xlsx_to_csv_text 테스트, 성공 시 attachments.py로 이전 예정)
 pdf2image
-# .hwp(구버전 OLE 바이너리) 텍스트 추출용 — synapView 실패 시 fallback. .hwpx는 자체 ZIP 파서로 처리.
 llama-index-readers-file
 
 # 재정렬 (rerank.py) — BGE-reranker-v2-m3 cross-encoder.
