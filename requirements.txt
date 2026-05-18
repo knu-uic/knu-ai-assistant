@@ -17,15 +17,13 @@ langsmith
 # 크롤링
 playwright
 
-# 첨부파일 처리 (attachments.py, curriculum_parser.py)
-# - pdfplumber: 텍스트 PDF 1차 추출 + 교과과정 표 추출
-# - openpyxl: XLSX 파싱 (xlsx_to_text / xlsx_to_text_prefixed)
-# - pdf2image: 스캔 PDF → 이미지 변환 (VLM OCR fallback, poppler-utils 필요)
-# - llama-index-readers-file: 구버전 .hwp (OLE 바이너리) HWPReader. .hwpx는 자체 ZIP 파서.
-pdfplumber
+# 첨부파일 처리 (parsers/document_parser.py, parsers/curriculum_parser.py)
+# - openpyxl: XLSX 파싱 (_xlsx_to_text)
+# - pdf2image: PDF → 이미지 변환 (공지 PDF VLM 파이프라인 + 커리큘럼 VLM 정규화 파이프라인, poppler-utils 필요)
+# 정책 변경(2026-05-18): 커리큘럼도 VLM 범용 파서로 전환되어 pdfplumber 의존 제거.
+# .hwp는 synapView preview 전용. .hwpx는 자체 ZIP+XML 파서 사용 (외부 의존성 0).
 openpyxl
 pdf2image
-llama-index-readers-file
 
 # 재정렬 (rerank.py) — BGE-reranker-v2-m3 cross-encoder.
 # torch는 Dockerfile에서 CPU-only 휠로 먼저 설치한다 (CUDA libs ~2GB 회피).

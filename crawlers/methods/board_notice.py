@@ -6,7 +6,7 @@ from urllib.parse import urljoin
 
 from playwright.sync_api import sync_playwright
 
-from attachments import attachment_to_text, inline_image_to_text, xlsx_relevant
+from parsers.document_parser import attachment_to_text, inline_image_to_text, xlsx_relevant
 
 ASSETS_DIR = Path("crawl_result/assets")
 

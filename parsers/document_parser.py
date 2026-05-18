@@ -6,24 +6,19 @@
 """
 
 # --- 표준 라이브러리 ---
-import base64                                      # 이미지 바이트 → VLM data URL
-import io                                          # bytes → BytesIO (zipfile/pdfplumber/openpyxl)
+import io                                          # bytes → BytesIO (zipfile/openpyxl)
 import logging
-import os
-import tempfile
 import time
 import zipfile                                     # HWPX = ZIP 컨테이너
 from concurrent.futures import ThreadPoolExecutor  # PDF 페이지 병렬 VLM 처리
 from dataclasses import asdict, dataclass
-from functools import lru_cache                    # VLM 클라이언트 싱글톤
 from pathlib import Path                           # 파일 확장자 추출
 from xml.etree import ElementTree as ET            # HWPX 내부 XML 파싱
 
 # --- 외부 라이브러리 ---
 import openpyxl                                    # XLSX 시트 파싱
-from langchain_core.messages import HumanMessage   # 멀티모달 메시지
 
-from config import LLM_PROVIDER, VLM_MODEL, OPENAI_API_KEY, GOOGLE_API_KEY
+from parsers._vlm import image_to_text             # 공용 VLM 호출 유틸
 
 logger = logging.getLogger(__name__)
 
@@ -92,19 +87,6 @@ def _download(url: str, context) -> bytes:
     raise last_exception
 
 
-def _is_preview_failed(text: str) -> bool:
-    """synapView 미리보기 결과가 "실패"인지 판정.
-
-    공주대 synapView는 변환 실패 시 안내 문구를 페이지에 박아둬서 텍스트로 잡힘 →
-    그 문구가 보이거나 정상 공지치곤 너무 짧으면 실패로 본다.
-    """
-    if not text:
-        return True
-    if "변환이 실패" in text or "변환에 실패" in text:
-        return True
-    return len(text.strip()) < 30
-
-
 def _detect_image_mime_from_magic(data: bytes) -> str | None:
     """magic number로 OpenAI Vision이 받는 4개 포맷만 식별. 그 외는 None.
 
@@ -144,29 +126,6 @@ def hwpx_bytes_to_text(data: bytes) -> str:
                 if text_node.text:
                     text_runs.append(text_node.text)
     return "\n".join(text_runs).strip()
-
-
-def hwp_bytes_to_text(data: bytes) -> str:
-    """구버전 .hwp(OLE 컴파운드 바이너리) 텍스트 추출.
-
-    .hwpx와 달리 ZIP이 아니라 olefile + zlib 압축 해제가 필요 → LlamaIndex HWPReader 의존.
-    무거운 dep라 lazy import — .hwp가 실제로 나올 때만 로드.
-    HWPReader.load_data가 Path를 요구해서 bytes를 임시 파일로 풀고 끝나면 unlink.
-    """
-    from llama_index.readers.file import HWPReader
-
-    # delete=False + 수동 unlink: with block 안에서 reader가 path로 open할 수 있게.
-    temp_hwp_file = tempfile.NamedTemporaryFile(suffix=".hwp", delete=False)
-    try:
-        temp_hwp_file.write(data)
-        temp_hwp_file.close()
-        llama_documents = HWPReader().load_data(file=Path(temp_hwp_file.name))
-    finally:
-        try:
-            os.unlink(temp_hwp_file.name)
-        except OSError:
-            pass
-    return "\n".join((doc.text or "") for doc in llama_documents).strip()
 
 
 def hwpx_via_preview(preview_url: str, context) -> str:
@@ -215,8 +174,8 @@ def _pdf_to_text_via_vlm(data: bytes) -> str:
     표 레이아웃 보존 및 포스터 이미지 내 텍스트 누락 방지를 위한 통일 파이프라인.
     """
     from pdf2image import convert_from_bytes
-    
-    # 200 DPI: 품질과 메모리/속도의 최적 타협점
+
+    # 300 DPI: 품질과 메모리/속도의 최적 타협점
     page_images = convert_from_bytes(data, dpi=300)
 
     def _process_page(page_tuple) -> str:
@@ -225,7 +184,7 @@ def _pdf_to_text_via_vlm(data: bytes) -> str:
         png_buffer = io.BytesIO()
         page_image.save(png_buffer, format="PNG")
         try:
-            page_text = _image_to_text(png_buffer.getvalue(), "image/png").strip()
+            page_text = image_to_text(png_buffer.getvalue(), "image/png", _VLM_PROMPT).strip()
             return f"--- [Page {page_num}] ---\n{page_text}"
         except Exception as exc:
             logger.warning("PDF 페이지 %d VLM 실패: %s", page_num, exc, exc_info=True)
@@ -237,7 +196,7 @@ def _pdf_to_text_via_vlm(data: bytes) -> str:
         futures = executor.map(_process_page, enumerate(page_images, start=1))
         for res in futures:
             page_ocr_texts.append(res)
-            
+
     return "\n\n".join(page_ocr_texts).strip()
 
 
@@ -355,46 +314,6 @@ def _xlsx_to_text(data: bytes) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# VLM (이미지 OCR)
-# ──────────────────────────────────────────────────────────────────────────
-
-@lru_cache(maxsize=1)
-def _vlm():
-    """VLM 클라이언트를 lazy하게 하나만 만들어 재사용 (config.LLM_PROVIDER 토글).
-
-    OCR은 일관성이 생명이라 temperature=0 고정.
-    """
-    if LLM_PROVIDER == "openai":
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=VLM_MODEL, api_key=OPENAI_API_KEY, temperature=0)
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    return ChatGoogleGenerativeAI(model=VLM_MODEL, google_api_key=GOOGLE_API_KEY, temperature=0)
-
-
-def _make_image_block(provider: str, data_url: str) -> dict:
-    """provider별 langchain image block 포맷.
-
-    - OpenAI Vision: image_url 은 객체 {"url": "..."}
-    - Gemini (langchain-google-genai): image_url 은 문자열 "data:..." (편의 단축형)
-    """
-    if provider == "openai":
-        return {"type": "image_url", "image_url": {"url": data_url}}
-    return {"type": "image_url", "image_url": data_url}
-
-
-def _image_to_text(image_bytes: bytes, mime: str) -> str:
-    """이미지 바이트를 VLM에 던져 텍스트만 받아오는 저수준 헬퍼."""
-    data_url = f"data:{mime};base64,{base64.b64encode(image_bytes).decode()}"
-    vlm_message = HumanMessage(content=[
-        {"type": "text", "text": _VLM_PROMPT},
-        _make_image_block(LLM_PROVIDER, data_url),
-    ])
-    vlm_response = _vlm().invoke([vlm_message])
-    # 가끔 content가 list-of-blocks로 올 때가 있어 방어적 문자열화
-    return vlm_response.content if isinstance(vlm_response.content, str) else str(vlm_response.content)
-
-
-# ──────────────────────────────────────────────────────────────────────────
 # inline 이미지
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -421,7 +340,7 @@ def inline_image_to_text(image_url: str, context):
 
     # 3) VLM 호출. 실패해도 raw_bytes는 살려둠.
     try:
-        image_text = _image_to_text(image_bytes, mime).strip()
+        image_text = image_to_text(image_bytes, mime, _VLM_PROMPT).strip()
     except Exception as exc:
         logger.warning("inline image VLM 실패 [%s]: %s", image_url, exc, exc_info=True)
         image_text = ""
@@ -459,24 +378,22 @@ def _handle_xlsx(
 def _handle_hwp_family(
     attachment: dict, context, asset_meta: AssetMeta, file_extension: str,
 ) -> str:
+    """확장자별 단일 경로:
+    - .hwp  → synapView preview 전용 (공주대 게시판은 항상 preview 제공). preview_url 없거나 실패 시 빈 텍스트.
+    - .hwpx → hwpx_bytes_to_text 직접 호출 (ZIP+XML 파싱이 preview보다 안정적).
+    """
     asset_meta.kind = "attachment_hwpx"
     asset_meta.mime_type = (
         "application/vnd.hancom.hwpx" if file_extension == ".hwpx"
         else "application/x-hwp"
     )
-    # 1차: synapView 미리보기 페이지 텍스트
-    extracted_body = ""
-    if attachment.get("preview_url"):
-        extracted_body = hwpx_via_preview(attachment["preview_url"], context)
-
-    # 1차 실패 시 바이트 직접 파싱
-    if _is_preview_failed(extracted_body):
-        file_bytes = _download(attachment["download_url"], context)
-        if file_extension == ".hwpx":
-            extracted_body = hwpx_bytes_to_text(file_bytes)  # ZIP + XML 직접 파싱
-        else:
-            extracted_body = hwp_bytes_to_text(file_bytes)   # HWPReader (OLE)
-    return extracted_body
+    if file_extension == ".hwp":
+        if not attachment.get("preview_url"):
+            return ""
+        return hwpx_via_preview(attachment["preview_url"], context)
+    # .hwpx
+    file_bytes = _download(attachment["download_url"], context)
+    return hwpx_bytes_to_text(file_bytes)
 
 
 def _handle_image_attachment(
@@ -486,7 +403,7 @@ def _handle_image_attachment(
     asset_meta.mime_type = "image/png" if file_extension == ".png" else "image/jpeg"
     image_bytes = _download(attachment["download_url"], context)
     asset_meta.raw_bytes = image_bytes      # 멀티모달 임베딩/재처리용 원본 보존
-    return _image_to_text(image_bytes, asset_meta.mime_type).strip()
+    return image_to_text(image_bytes, asset_meta.mime_type, _VLM_PROMPT).strip()
 
 
 def attachment_to_text(attachment: dict, context, include_xlsx: bool = False):

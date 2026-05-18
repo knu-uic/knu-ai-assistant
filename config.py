@@ -41,12 +41,19 @@ CHUNK_OVERLAP = 200
 
 if LLM_PROVIDER == "openai":
     EMBEDDING_MODEL = "text-embedding-3-small"
-    LLM_MODEL = "gpt-5-mini"
-    VLM_MODEL = "gpt-4o-mini"
+    LLM_MODEL = "gpt-5.4-mini"
+    VLM_MODEL = "gpt-5.4-mini"
 else:  # gemini
     EMBEDDING_MODEL = "gemini-embedding-2-preview"
     LLM_MODEL = "gemini-2.5-flash"
     VLM_MODEL = "gemini-2.5-flash"
+
+# 커리큘럼은 학생 졸업과 직결된 데이터라 환각 최소화 위해 최고 성능 VLM 사용.
+# 연 1회 도는 배치 스크립트라 비용 영향 미미. 공지 VLM(VLM_MODEL)과는 분리.
+if LLM_PROVIDER == "openai":
+    CURRICULUM_VLM_MODEL = "gpt-5.4-mini"
+else:  # gemini
+    CURRICULUM_VLM_MODEL = "gemini-2.5-pro"
 
 # ── Reranker (rerank.py) ─────────────────────────────────────────────────
 # 사용자 결정: BGE-reranker-v2-m3 유지 (이전 다운그레이드를 되돌림).
