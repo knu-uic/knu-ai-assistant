@@ -13,7 +13,7 @@ from db import get_document_content
 from rerank import rerank_scores
 # === [seungwon/bge-reranker] 끝 ===
 from embed import embed_query
-from model import get_model
+from model import get_llm
 
 
 Category = Literal["장학/등록", "학사/수업", "진로/취업", "행사/공모전", "일반/기타"]
@@ -108,7 +108,12 @@ note에는 의심 구간을 짧게 인용하거나 OK/회피 사유를 남긴다
 
 
 def router_node(state: ChatState) -> dict:
-    model = get_model().with_structured_output(RouteDecision)
+    """질문을 분석해 검색 경로를 정하는 LangGraph의 라우터 노드.
+
+    사용자 질문을 LLM에 전달해 관련 공지 카테고리와 검색용 확장 질의를
+    생성하고, 이후 retriever 노드가 참고할 라우팅 정보를 상태에 추가한다.
+    """
+    model = get_llm().with_structured_output(RouteDecision)
     decision = model.invoke([
         SystemMessage(content=ROUTER_SYSTEM),
         HumanMessage(content=state["question"]),
@@ -188,6 +193,12 @@ def _retrieve_with_rerank(
 
 
 def retriever_node(state: ChatState) -> dict:
+    """라우터 결과를 바탕으로 관련 공지 컨텍스트를 검색하는 노드.
+
+    router_node가 만든 확장 질의와 카테고리, 사용자의 전공 정보를 사용해
+    벡터 저장소에서 관련 공지 조각을 찾고 answerer_node가 참고할 contexts를
+    상태에 추가한다.
+    """
     # 라우터가 확장한 쿼리로 임베딩. 빈 문자열이면 원본 질문으로 폴백.
     query = state.get("expanded_query") or state["question"]
     categories = list(state.get("categories") or []) or None
@@ -212,7 +223,7 @@ def answerer_node(state: ChatState) -> dict:
 
     context_text = "\n\n---\n\n".join(_format_context(c) for c in contexts)
     today = date.today().isoformat()
-    model = get_model()
+    model = get_llm()
     resp = model.invoke([
         SystemMessage(content=ANSWERER_SYSTEM),
         HumanMessage(content=(
@@ -232,7 +243,7 @@ def verifier_node(state: ChatState) -> dict:
     ) or "(컨텍스트 없음)"
     today = date.today().isoformat()
 
-    model = get_model().with_structured_output(VerificationResult)
+    model = get_llm().with_structured_output(VerificationResult)
     result = model.invoke([
         SystemMessage(content=VERIFIER_SYSTEM),
         HumanMessage(content=(
@@ -249,6 +260,13 @@ def verifier_node(state: ChatState) -> dict:
 
 
 def build_graph():
+    """LangGraph RAG 파이프라인을 구성하고 실행 가능한 그래프로 컴파일한다.
+
+    router -> retriever -> answerer -> verifier 순서로 노드를 연결해
+    질문 분류, 공지 검색, 답변 생성, 근거 검증까지 이어지는 흐름을 만든다.
+    반환된 그래프는 앱 시작 시 GRAPH 상수에 바인딩되어 재사용된다.
+    각 노드는 ChatState를 공유하며 이전 노드의 결과를 다음 노드 입력으로 넘긴다.
+    """
     g = StateGraph(ChatState)
     g.add_node("router", router_node)
     g.add_node("retriever", retriever_node)
@@ -261,6 +279,5 @@ def build_graph():
     g.add_edge("answerer", "verifier")
     g.add_edge("verifier", END)
     return g.compile()
-
 
 GRAPH = build_graph()

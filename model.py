@@ -2,14 +2,25 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_openai import OpenAIEmbeddings
+from functools import lru_cache
 from dotenv import load_dotenv
 import os
 
 
+# providers
+VLM_PROVIDER = "lmstudio"
+EMBEDDING_PROVIDER = "lmstudio"
+
+# model names
+LLM_MODEL = "gemma-4-e4b"
+EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
+
+RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
+RERANKER_MAX_LENGTH = 512
+
 def get_llm():
     load_dotenv()
-    VLM_PROVIDER = "lmstudio"  # "google" or "lmstudio"
-
+    
     if VLM_PROVIDER == "google":
         return ChatGoogleGenerativeAI(
             model="gemini-2.0-pro-preview",
@@ -38,8 +49,7 @@ def get_llm():
 
 
 def get_embeddings():
-    EMBEDDING_PROVIDER = "lmstudio"  # "google" or "lmstudio"
-    
+    load_dotenv()
     if EMBEDDING_PROVIDER == "google":
 
         return GoogleGenerativeAIEmbeddings(
@@ -65,3 +75,12 @@ def get_embeddings():
     else:
 
         raise ValueError(f"지원하지 않는 provider: {EMBEDDING_PROVIDER}")
+    
+
+    
+@lru_cache(maxsize=1)
+def _get_reranker():
+    # import을 lazy 하게: 다른 코드 경로(예: 크롤러)는 torch를 안 쓰는데
+    # 모듈 top-level import면 매번 ~수 초 페널티가 붙는다.
+    from sentence_transformers import CrossEncoder
+    return CrossEncoder(RERANKER_MODEL, max_length=RERANKER_MAX_LENGTH)

@@ -7,20 +7,15 @@ from model import get_llm
 
 # --- 표준 라이브러리 ---
 import io           # 바이트 데이터를 "파일처럼" 다루기 위한 BytesIO 용도 (pdfplumber/openpyxl/zipfile이 파일객체를 요구함)
-import os           # 환경변수(API 키) 읽기용
 import base64       # 이미지 바이트를 Gemini에 보낼 때 base64 문자열로 인코딩
 import zipfile      # HWPX 파일은 사실상 ZIP 컨테이너라서 직접 열어서 내부 XML을 꺼냄
 from pathlib import Path                       # 파일 확장자(.pdf, .hwpx 등) 추출용
-from functools import lru_cache                # VLM 클라이언트 싱글톤화에 사용
 from xml.etree import ElementTree as ET        # HWPX 내부 XML 파싱
 
 # --- 외부 라이브러리 ---
 import pdfplumber                              # PDF에서 텍스트 추출 (텍스트 PDF용)
 import openpyxl                                # XLSX 읽기 (현재 라우터에서는 미사용)
-from dotenv import load_dotenv                 # .env 파일에서 API 키 로드
 from langchain_core.messages import HumanMessage          # LangChain 멀티모달 메시지 포맷
-from langchain_google_genai import ChatGoogleGenerativeAI  # Gemini를 LangChain 인터페이스로 호출
-from langchain_openai import ChatOpenAI
 
 
 # HWPX 본문(paragraph)의 XML 네임스페이스.

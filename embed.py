@@ -1,18 +1,13 @@
 from typing import List, Tuple
 from model import get_embeddings
-from dotenv import load_dotenv
 
 
 
 EMBEDDING_DIM = 768  # HNSW 한계(2000) 회피 + 비용/속도 우선. MTEB는 3072 대비 ~0.2점 손실로 무시 가능.
-CHUNK_SIZE = 800
-CHUNK_OVERLAP = 100
+CHUNK_SIZE = 800 # 청크사이즈란 한번에 처리할 텍스트의 길이를 의미합니다. 이 값을 늘리면 메모리 사용량이 증가하지만, 처리 속도는 빨라집니다. 반대로 줄이면 메모리 사용량은 감소하지만, 처리 속도는 느려집니다.
+CHUNK_OVERLAP = 100  #청크오버랩이란 두 청크 사이의 겹치는 부분을 의미합니다. 이것은 청크 사이의 유사성을 높이는 데 도움이 됩니다.
 
 
-
-
-
-        
 def chunk_text(content: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
     """800자 슬라이딩 윈도우 + 100자 overlap. 한국어 공지 기준."""
     if not content:
