@@ -113,7 +113,7 @@ if __name__ == "__main__":
                 )
                 insert_assets(doc.category, document_id, assets)
 
-                chunks = embed_chunks(f"{doc.title}\n\n{doc.content}")
+                chunks = embed_chunks(doc.content, title=doc.title)
                 insert_chunks(doc.category, document_id, chunks)
             except Exception as e:
                 logger.warning("doc 실패 [%s]: %s", doc.url, e, exc_info=True)

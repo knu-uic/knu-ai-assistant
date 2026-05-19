@@ -61,11 +61,11 @@ RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 RERANKER_MAX_LENGTH = 256
 
 # ── Retrieval (graph.py) ─────────────────────────────────────────────────
-RERANK_CANDIDATES = 30        # vector 1차 후보 수 (DISTINCT 제거로 청크 단위 후보 → 풀 확대)
-RERANK_TOP_N = 3          # cross-encoder 통과 후 최종 컨텍스트 수
+RERANK_CANDIDATES = 100        # vector 1차 후보 수 (DISTINCT 제거로 청크 단위 후보 → 풀 확대)
+RERANK_TOP_N = 50          # cross-encoder 통과 후 최종 컨텍스트 수
 
 # ── pgvector HNSW 검색 (db.py:search_chunks) ──────────────────────────────
 # ef_search: HNSW 탐색 시 후보 큐 크기. 크면 recall↑ latency↑.
 # pgvector 기본 40. RERANK_CANDIDATES=15 기준 2~4배가 sweet spot.
 # 100은 안전한 상한 — UNION ALL 5 카테고리에서도 latency 영향 미미 추정.
-HNSW_EF_SEARCH = 200
+HNSW_EF_SEARCH = 1000

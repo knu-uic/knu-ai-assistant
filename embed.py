@@ -49,21 +49,27 @@ def chunk_text(content: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_
     return _get_splitter(chunk_size, overlap).split_text(content)
 
 
-def embed_chunks(content: str) -> List[Tuple[int, str, List[float]]]:
+def embed_chunks(content: str, title: str | None = None) -> List[Tuple[int, str, List[float]]]:
     """content를 청크로 쪼개고 각 청크 임베딩까지 계산해서 반환.
 
+    title이 주어지면 모든 청크의 맨 앞에 '[문서 제목: title]' 형태의 꼬리표를 강제로 붙여서
+    Context-Aware Chunking(문맥 인지 청킹)을 수행한다.
+    
     반환: [(chunk_idx, chunk_content, embedding_vector), ...]
-
-    NOTE: gemini-embedding-2-preview의 batch가 silent partial response를 내던
-    버그 때문에 per-chunk embed_query로 호출 유지. OpenAI에선 embed_documents도 안전하지만
-    provider 교체 시 회귀를 막기 위해 보수적으로 유지.
     """
     chunks = chunk_text(content)
     if not chunks:
         return []
+        
+    if title:
+        enriched_chunks = [f"[문서 제목: {title}]\n{c}" for c in chunks]
+    else:
+        enriched_chunks = chunks
+
     embedder = get_embeddings()
-    vectors = [embedder.embed_query(c) for c in chunks]
-    return [(i, c, v) for i, (c, v) in enumerate(zip(chunks, vectors))]
+    vectors = [embedder.embed_query(c) for c in enriched_chunks]
+    
+    return [(i, ec, v) for i, (ec, v) in enumerate(zip(enriched_chunks, vectors))]
 
 
 def embed_query(query: str) -> List[float]:

@@ -186,11 +186,12 @@ def _retrieve(
     seen_urls: set[str] = set()
     for r, s in ranked:
         url = r[0]
-        if url in seen_urls:
-            continue
-        seen_urls.add(url)
-        full = get_document_content(r[7], url)
-        snippet = full or r[2]
+        # if url in seen_urls:
+        #     continue
+        # seen_urls.add(url)
+        # full = get_document_content(r[7], url)
+        # snippet = full or r[2]
+        snippet = r[2] # 청크만
         contexts.append({
             "url": url, "title": r[1], "snippet": snippet, "score": s,
             "posted_at": r[4], "start_date": r[5], "end_date": r[6],

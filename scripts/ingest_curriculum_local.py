@@ -180,7 +180,7 @@ def ingest(pdf_path: Path, meta: dict, key: str, seen_urls: set[str]) -> int:
             posted_at=None,
         )
         insert_assets("학사/수업", document_id, [])
-        chunks = embed_chunks(f"{title}\n\n{content}")
+        chunks = embed_chunks(content, title=title)
         insert_chunks("학사/수업", document_id, chunks)
         count += 1
 
