@@ -5,6 +5,10 @@
   파서 흐름(prefix split, NO_TABLE 필터, fail-fast) 검증. 항상 실행.
 - Live 통합 테스트(@pytest.mark.live): tests/fixtures/parsers/sample_curriculum.pdf 가
   있고 OPENAI_API_KEY 가 세팅돼 있으면 실제 VLM 호출. 옵트인.
+
+실행 방법:
+  - 오프라인 테스트: docker compose exec app pytest tests/parsers/test_curriculum_parser.py
+  - 라이브 테스트: docker compose exec app pytest -m live tests/parsers/test_curriculum_parser.py
 """
 
 from __future__ import annotations

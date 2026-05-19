@@ -8,7 +8,9 @@
   - _pdf_to_text_via_vlm: sample.pdf fixture + 실제 VLM API.
   - hwpx_via_preview: 공주대 게시판의 실제 synapView URL + Playwright.
 
-활성화: pytest -m live tests/parsers/test_document_parser.py
+실행 방법:
+  - 오프라인 테스트: docker compose exec app pytest tests/parsers/test_document_parser.py
+  - 라이브 테스트: docker compose exec app pytest -m live tests/parsers/test_document_parser.py
 """
 
 from __future__ import annotations

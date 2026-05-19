@@ -1,12 +1,18 @@
-# Graph Report - .  (2026-05-19)
+# Graph Report - knu_ai_assistant  (2026-05-19)
 
 ## Corpus Check
-- Corpus is ~23,366 words - fits in a single context window. You may not need a graph.
+- 48 files · ~23,578 words
+- Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
 - 381 nodes · 476 edges · 47 communities (32 shown, 15 thin omitted)
 - Extraction: 86% EXTRACTED · 14% INFERRED · 0% AMBIGUOUS · INFERRED: 69 edges (avg confidence: 0.83)
-- Token cost: 77,660 input · 8,628 output
+- Token cost: 0 input · 0 output
+
+## Graph Freshness
+- Built from commit: `c779a73d`
+- Run `git rev-parse HEAD` and compare to check if the graph is stale.
+- Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - [[_COMMUNITY_Document Parser|Document Parser]]
@@ -49,20 +55,20 @@
 6. `RAG query pipeline (graph.py)` - 9 edges
 7. `_doc_ident()` - 8 edges
 8. `attachment_to_text()` - 8 edges
-9. `_slug()` - 7 edges
-10. `_retrieve()` - 7 edges
+9. `_retrieve()` - 7 edges
+10. `_slug()` - 7 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `KNU AI Assistant project spec` --semantically_similar_to--> `KNU AI Assistant project`  [INFERRED] [semantically similar]
   README.md → CLAUDE.md
 - `Integrated RAG chatbot feature` --semantically_similar_to--> `RAG query pipeline (graph.py)`  [INFERRED] [semantically similar]
   README.md → CLAUDE.md
-- `_rerank()` --calls--> `rerank_scores()`  [INFERRED]
-  graph.py → rerank.py
-- `ingest()` --calls--> `insert_document()`  [INFERRED]
-  scripts/ingest_curriculum_local.py → db.py
-- `ingest()` --calls--> `insert_assets()`  [INFERRED]
-  scripts/ingest_curriculum_local.py → db.py
+- `ingest()` --calls--> `embed_chunks()`  [INFERRED]
+  scripts/ingest_curriculum_local.py → embed.py
+- `_retrieve()` --calls--> `embed_query()`  [INFERRED]
+  graph.py → embed.py
+- `_vector_search()` --calls--> `search_chunks()`  [INFERRED]
+  graph.py → db.py
 
 ## Hyperedges (group relationships)
 - **RAG query pipeline nodes** — claudemd_node_router, claudemd_node_retrieve, claudemd_node_answerer, claudemd_node_verifier [EXTRACTED 1.00]
@@ -154,11 +160,11 @@ _Questions this graph is uniquely positioned to answer:_
   _High betweenness centrality (0.131) - this node is a cross-community bridge._
 - **Why does `_page_to_year()` connect `Curriculum Parser (VLM)` to `Document Parser`?**
   _High betweenness centrality (0.114) - this node is a cross-community bridge._
-- **Are the 7 inferred relationships involving `ingest()` (e.g. with `parse()` and `upsert_source()`) actually correct?**
+- **Are the 7 inferred relationships involving `ingest()` (e.g. with `embed_chunks()` and `upsert_source()`) actually correct?**
   _`ingest()` has 7 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 6 inferred relationships involving `parse()` (e.g. with `main()` and `test_parse_filters_no_table_pages()`) actually correct?**
   _`parse()` has 6 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `BGE-reranker 로컬 cross-encoder 재정렬.  graph.py의 _retrieve에서 vector top-N 후보를 받아 to`, `앱 부팅 시 호출. 모델 로드 + 더미 forward 1회로 첫 질문 latency 제거.`, `각 passage의 relevance score 리스트 반환 (입력 순서 유지, sigmoid로 0~1 정규화).` to the rest of the system?**
+- **What connects `RAG 파이프라인 튜닝 상수와 환경 변수 일괄 관리.  기존에 embed.py / graph.py / rerank.py / db.py / mod`, `provider 토글에 따라 OpenAI/Gemini 임베딩 클라이언트를 돌려준다.      두 provider 모두 결과 차원을 EMBEDDI`, `RecursiveCharacterTextSplitter 싱글톤. lazy import로 cold start 영향 회피.` to the rest of the system?**
   _156 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Document Parser` be split into smaller, more focused modules?**
   _Cohesion score 0.07087486157253599 - nodes in this community are weakly interconnected._

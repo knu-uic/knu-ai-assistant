@@ -1,5 +1,8 @@
 """data/curriculums/**/<key>*.pdf 를 DB에 적재한다.
 
+실행 방법:
+  docker compose exec app python scripts/ingest_curriculum_local.py
+
 정책: 커리큘럼은 사람이 손으로 정제한 PDF를 data/curriculums/에 두고 이 스크립트로
 적재. 1 PDF = 여러 입학년도 페이지 → 입학년도별 1 document로 분리.
 

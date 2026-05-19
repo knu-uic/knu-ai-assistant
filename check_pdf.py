@@ -1,3 +1,8 @@
+"""
+실행 방법:
+  docker compose exec app python check_pdf.py
+"""
+
 import sys
 from pathlib import Path
 
