@@ -1,0 +1,392 @@
+{
+  "/Users/iseung-won/knu_ai_assistant/rerank.py": {
+    "mtime": 1779012357.45243,
+    "ast_hash": "d16b532d5ae7af06fa89b62f960d3b5e",
+    "semantic_hash": "d16b532d5ae7af06fa89b62f960d3b5e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/db.py": {
+    "mtime": 1779012357.4513004,
+    "ast_hash": "b6cb418f98074fff0deedda367669d0c",
+    "semantic_hash": "b6cb418f98074fff0deedda367669d0c"
+  },
+  "/Users/iseung-won/knu_ai_assistant/state.json": {
+    "mtime": 1778883887.3909922,
+    "ast_hash": "a1eb2e2e3db64a840cad790e48073171",
+    "semantic_hash": "a1eb2e2e3db64a840cad790e48073171"
+  },
+  "/Users/iseung-won/knu_ai_assistant/config.py": {
+    "mtime": 1779105184.781189,
+    "ast_hash": "0c0c32d2772bb191297bbb6193fde880",
+    "semantic_hash": "0c0c32d2772bb191297bbb6193fde880"
+  },
+  "/Users/iseung-won/knu_ai_assistant/embed.py": {
+    "mtime": 1778944061.1822014,
+    "ast_hash": "4767475663a491b15868c5cd9595a647",
+    "semantic_hash": "4767475663a491b15868c5cd9595a647"
+  },
+  "/Users/iseung-won/knu_ai_assistant/ui.py": {
+    "mtime": 1778750509.9613037,
+    "ast_hash": "ee2eca8462c47288d194db9e8482b252",
+    "semantic_hash": "ee2eca8462c47288d194db9e8482b252"
+  },
+  "/Users/iseung-won/knu_ai_assistant/graph.py": {
+    "mtime": 1779012357.4521337,
+    "ast_hash": "3f7ae575dafed4765c2f35a86ebb4684",
+    "semantic_hash": "3f7ae575dafed4765c2f35a86ebb4684"
+  },
+  "/Users/iseung-won/knu_ai_assistant/refine.py": {
+    "mtime": 1778944061.1840227,
+    "ast_hash": "3f01f6648a5350b864a6ba684759fdab",
+    "semantic_hash": "3f01f6648a5350b864a6ba684759fdab"
+  },
+  "/Users/iseung-won/knu_ai_assistant/model.py": {
+    "mtime": 1778944061.183533,
+    "ast_hash": "c9f27064d215cabe2afecd735b424a99",
+    "semantic_hash": "c9f27064d215cabe2afecd735b424a99"
+  },
+  "/Users/iseung-won/knu_ai_assistant/check_pdf.py": {
+    "mtime": 1779104837.6132805,
+    "ast_hash": "d3b43d12e304cce47547c6cbc5e80aa4",
+    "semantic_hash": "d3b43d12e304cce47547c6cbc5e80aa4"
+  },
+  "/Users/iseung-won/knu_ai_assistant/test_synapview.py": {
+    "mtime": 1779080615.888659,
+    "ast_hash": "d1d4f2b9c60e53c1d81ee14c119463f3",
+    "semantic_hash": "d1d4f2b9c60e53c1d81ee14c119463f3"
+  },
+  "/Users/iseung-won/knu_ai_assistant/app.py": {
+    "mtime": 1779012357.4511178,
+    "ast_hash": "01b7e7508fb9f9ea4b2c89a01bb1ad83",
+    "semantic_hash": "01b7e7508fb9f9ea4b2c89a01bb1ad83"
+  },
+  "/Users/iseung-won/knu_ai_assistant/main.py": {
+    "mtime": 1778944314.4556847,
+    "ast_hash": "9e69e9e49927e805c16aba5bad7231e4",
+    "semantic_hash": "9e69e9e49927e805c16aba5bad7231e4"
+  },
+  "/Users/iseung-won/knu_ai_assistant/test_hwp_reader.py": {
+    "mtime": 1779071847.07037,
+    "ast_hash": "e80937d36b0b6ab005e2dd307c26d0f0",
+    "semantic_hash": "e80937d36b0b6ab005e2dd307c26d0f0"
+  },
+  "/Users/iseung-won/knu_ai_assistant/test_hwpx_bytes.py": {
+    "mtime": 1779080621.4641714,
+    "ast_hash": "168deed3d79b56f3024500403f502131",
+    "semantic_hash": "168deed3d79b56f3024500403f502131"
+  },
+  "/Users/iseung-won/knu_ai_assistant/schema.py": {
+    "mtime": 1778690474.4777792,
+    "ast_hash": "3dc1c2619e9f7da027df18fc5939bcff",
+    "semantic_hash": "3dc1c2619e9f7da027df18fc5939bcff"
+  },
+  "/Users/iseung-won/knu_ai_assistant/.hf_cache/hub/models--BAAI--bge-reranker-v2-m3/.no_exist/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e/processor_config.json": {
+    "mtime": 1779105527.665217,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/.hf_cache/hub/models--BAAI--bge-reranker-v2-m3/.no_exist/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e/adapter_config.json": {
+    "mtime": 1779105526.916527,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/.hf_cache/hub/models--BAAI--bge-reranker-v2-m3/.no_exist/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e/modules.json": {
+    "mtime": 1779105526.134811,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/.hf_cache/hub/models--BAAI--bge-reranker-v2-m3/.no_exist/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e/video_preprocessor_config.json": {
+    "mtime": 1779105528.169124,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/.hf_cache/hub/models--BAAI--bge-reranker-v2-m3/.no_exist/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e/preprocessor_config.json": {
+    "mtime": 1779105528.433755,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/parsers/_vlm.py": {
+    "mtime": 1779086516.5384953,
+    "ast_hash": "eac1f3e6bbe9bd548bc7b6213a9fbaad",
+    "semantic_hash": "eac1f3e6bbe9bd548bc7b6213a9fbaad"
+  },
+  "/Users/iseung-won/knu_ai_assistant/parsers/__init__.py": {
+    "mtime": 1779080047.2320251,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/parsers/curriculum_parser.py": {
+    "mtime": 1779104429.4920957,
+    "ast_hash": "14e1b7e04c7b5d02dbba431cb69b10bb",
+    "semantic_hash": "14e1b7e04c7b5d02dbba431cb69b10bb"
+  },
+  "/Users/iseung-won/knu_ai_assistant/parsers/document_parser.py": {
+    "mtime": 1779086567.4388459,
+    "ast_hash": "3c81c9684d0b0a25f630e0ad5e264e48",
+    "semantic_hash": "3c81c9684d0b0a25f630e0ad5e264e48"
+  },
+  "/Users/iseung-won/knu_ai_assistant/app_pages/home.py": {
+    "mtime": 1778944061.1782737,
+    "ast_hash": "39000493d9c74fafe06ccd6944bdb8b4",
+    "semantic_hash": "39000493d9c74fafe06ccd6944bdb8b4"
+  },
+  "/Users/iseung-won/knu_ai_assistant/app_pages/profile.py": {
+    "mtime": 1778944061.1789017,
+    "ast_hash": "7994d349aa782ec62ce396ef9cc1e169",
+    "semantic_hash": "7994d349aa782ec62ce396ef9cc1e169"
+  },
+  "/Users/iseung-won/knu_ai_assistant/app_pages/__init__.py": {
+    "mtime": 1778750473.867722,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/app_pages/notices.py": {
+    "mtime": 1778944061.1786735,
+    "ast_hash": "3dabe11a1d7e0cf2589121421d5cfd23",
+    "semantic_hash": "3dabe11a1d7e0cf2589121421d5cfd23"
+  },
+  "/Users/iseung-won/knu_ai_assistant/app_pages/chatbot.py": {
+    "mtime": 1778946858.5269125,
+    "ast_hash": "d1a505d8c8a2c3184d94fd934d8e186d",
+    "semantic_hash": "d1a505d8c8a2c3184d94fd934d8e186d"
+  },
+  "/Users/iseung-won/knu_ai_assistant/crawlers/registry.py": {
+    "mtime": 1778944216.8288457,
+    "ast_hash": "2bfcbff9ff13f9455ec02827fa15a379",
+    "semantic_hash": "2bfcbff9ff13f9455ec02827fa15a379"
+  },
+  "/Users/iseung-won/knu_ai_assistant/crawlers/__init__.py": {
+    "mtime": 1778944287.349732,
+    "ast_hash": "0199b29592f0e25cbae31c7b59f837ac",
+    "semantic_hash": "0199b29592f0e25cbae31c7b59f837ac"
+  },
+  "/Users/iseung-won/knu_ai_assistant/crawlers/methods/static_page.py": {
+    "mtime": 1778944216.8284204,
+    "ast_hash": "16d71d20f7128c22a27afc9a05b1aea9",
+    "semantic_hash": "16d71d20f7128c22a27afc9a05b1aea9"
+  },
+  "/Users/iseung-won/knu_ai_assistant/crawlers/methods/__init__.py": {
+    "mtime": 1778944287.7872703,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/crawlers/methods/board_notice.py": {
+    "mtime": 1779080206.29698,
+    "ast_hash": "07be0a2931fdad9601ff2a37eef2065e",
+    "semantic_hash": "07be0a2931fdad9601ff2a37eef2065e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/crawlers/sites/__init__.py": {
+    "mtime": 1778944288.9112835,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/crawlers/sites/kongju.py": {
+    "mtime": 1778944279.0861993,
+    "ast_hash": "28b6e78bcafd3614e58a59f135500c9f",
+    "semantic_hash": "28b6e78bcafd3614e58a59f135500c9f"
+  },
+  "/Users/iseung-won/knu_ai_assistant/crawlers/sites/departments/__init__.py": {
+    "mtime": 1778944289.3396065,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/crawlers/sites/departments/computer.py": {
+    "mtime": 1779080213.5565443,
+    "ast_hash": "46156b7aea07e9e94d2f5be55a190614",
+    "semantic_hash": "46156b7aea07e9e94d2f5be55a190614"
+  },
+  "/Users/iseung-won/knu_ai_assistant/tests/__init__.py": {
+    "mtime": 1779080289.2767982,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/tests/parsers/test_curriculum_parser.py": {
+    "mtime": 1779086655.14279,
+    "ast_hash": "172195f6bf9777e7f79f45b95761cccd",
+    "semantic_hash": "172195f6bf9777e7f79f45b95761cccd"
+  },
+  "/Users/iseung-won/knu_ai_assistant/tests/parsers/test_document_parser.py": {
+    "mtime": 1779080330.3683977,
+    "ast_hash": "680cefcccace8b900535c951ce4e71dc",
+    "semantic_hash": "680cefcccace8b900535c951ce4e71dc"
+  },
+  "/Users/iseung-won/knu_ai_assistant/tests/parsers/__init__.py": {
+    "mtime": 1779080292.6852238,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/.claude/settings.local.json": {
+    "mtime": 1779069592.2243304,
+    "ast_hash": "582b225e37f0f8f495c2646785bd6a8a",
+    "semantic_hash": "582b225e37f0f8f495c2646785bd6a8a"
+  },
+  "/Users/iseung-won/knu_ai_assistant/scripts/ingest_curriculum_local.py": {
+    "mtime": 1779093006.2065973,
+    "ast_hash": "4a83288ea7541674838e2a58c781de9c",
+    "semantic_hash": "4a83288ea7541674838e2a58c781de9c"
+  },
+  "/Users/iseung-won/knu_ai_assistant/requirements.txt": {
+    "mtime": 1779086619.2506742,
+    "ast_hash": "05309183e20304177f4e8c7ab0a303df",
+    "semantic_hash": "05309183e20304177f4e8c7ab0a303df"
+  },
+  "/Users/iseung-won/knu_ai_assistant/README.md": {
+    "mtime": 1778692934.9177108,
+    "ast_hash": "ea5091d9c19a942a3419bf2b96fb257e",
+    "semantic_hash": "ea5091d9c19a942a3419bf2b96fb257e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/requirements-dev.txt": {
+    "mtime": 1779080280.0840771,
+    "ast_hash": "85c0bd5aab0b5a6243faa5d8444d9b2b",
+    "semantic_hash": "85c0bd5aab0b5a6243faa5d8444d9b2b"
+  },
+  "/Users/iseung-won/knu_ai_assistant/docker-compose.yml": {
+    "mtime": 1779012357.4516468,
+    "ast_hash": "b9118a5aee7a0881d9a5103f128ff570",
+    "semantic_hash": "b9118a5aee7a0881d9a5103f128ff570"
+  },
+  "/Users/iseung-won/knu_ai_assistant/CLAUDE.md": {
+    "mtime": 1779025290.3350103,
+    "ast_hash": "69b854f26133b38ecd700abdb0ead92f",
+    "semantic_hash": "69b854f26133b38ecd700abdb0ead92f"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uc124\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_design_2012_to_2016.pdf": {
+    "mtime": 1779102395.0579093,
+    "ast_hash": "22580b4b684d6c1fccd8fbe91d436b99",
+    "semantic_hash": "22580b4b684d6c1fccd8fbe91d436b99"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uc124\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_design_2011.pdf": {
+    "mtime": 1779102395.0679104,
+    "ast_hash": "4a75839d10937d6a9597b34c6e5327fc",
+    "semantic_hash": "4a75839d10937d6a9597b34c6e5327fc"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uc124\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_design_2020.pdf": {
+    "mtime": 1779102395.0525088,
+    "ast_hash": "ec809f6e137ae4b63924f5101a94587d",
+    "semantic_hash": "ec809f6e137ae4b63924f5101a94587d"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uc124\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_design_2021.pdf": {
+    "mtime": 1779102395.0487523,
+    "ast_hash": "4437da921ffaad5758a8d8117d24367a",
+    "semantic_hash": "4437da921ffaad5758a8d8117d24367a"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uc124\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_design_2025.pdf": {
+    "mtime": 1779102395.0406244,
+    "ast_hash": "b95c1614b56ec47bc200a1ff0061e748",
+    "semantic_hash": "b95c1614b56ec47bc200a1ff0061e748"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uc124\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_design_2017_to_2019.pdf": {
+    "mtime": 1779102395.0553408,
+    "ast_hash": "f0edfa5f35d1f4bba6747b1ebd86ca0b",
+    "semantic_hash": "f0edfa5f35d1f4bba6747b1ebd86ca0b"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_2020.pdf": {
+    "mtime": 1779101850.8060708,
+    "ast_hash": "6f1effaeb88900c6a7c6b3d5ab8517fc",
+    "semantic_hash": "6f1effaeb88900c6a7c6b3d5ab8517fc"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_2011_to_2014.pdf": {
+    "mtime": 1779101850.8180943,
+    "ast_hash": "98a8e38f951797dbe9542526fcbe365f",
+    "semantic_hash": "98a8e38f951797dbe9542526fcbe365f"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_2025.pdf": {
+    "mtime": 1779101850.7888916,
+    "ast_hash": "efb73117581dbd1b5f7b28e5e1a3cea1",
+    "semantic_hash": "efb73117581dbd1b5f7b28e5e1a3cea1"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_2026_to_2029.pdf": {
+    "mtime": 1779101850.7862074,
+    "ast_hash": "b9504e4b6aee0cfe8909296216ddd2c5",
+    "semantic_hash": "b9504e4b6aee0cfe8909296216ddd2c5"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_2021_to_2024.pdf": {
+    "mtime": 1779101850.7918475,
+    "ast_hash": "0d67c584c36932e356d72d7a56006154",
+    "semantic_hash": "0d67c584c36932e356d72d7a56006154"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uae30\uacc4\uc790\ub3d9\ucc28\uacf5\ud559\ubd80/\uae30\uacc4\uacf5\ud559\uc804\uacf5/mae_mechanical_2015_to_2016.pdf": {
+    "mtime": 1779101850.8094769,
+    "ast_hash": "121862f3a2347edbca0e95c6a85664b9",
+    "semantic_hash": "121862f3a2347edbca0e95c6a85664b9"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\ucef4\ud4e8\ud130\uacf5\ud559\uacfc/cse_curriculum_2011_to_2026.pdf": {
+    "mtime": 1778888301.0841992,
+    "ast_hash": "33d9524a87360ad74d1575c21f8ffc6f",
+    "semantic_hash": "33d9524a87360ad74d1575c21f8ffc6f"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\uc81c\uc5b4\uacc4\uce21\uacf5\ud559\uc804\uacf5/ee_control_2015_to_2026.pdf": {
+    "mtime": 1779090653.1695642,
+    "ast_hash": "6dd80ac5297b144e734f8067c141c89e",
+    "semantic_hash": "6dd80ac5297b144e734f8067c141c89e"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\uc804\uae30\uacf5\ud559\uc804\uacf5/ee_electrical_2021_to_2024.pdf": {
+    "mtime": 1779089891.7920973,
+    "ast_hash": "af73f448f0f66cb61b1f8c0ba4222994",
+    "semantic_hash": "af73f448f0f66cb61b1f8c0ba4222994"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\uc804\uae30\uacf5\ud559\uc804\uacf5/ee_electrical_2025.pdf": {
+    "mtime": 1779089891.7837825,
+    "ast_hash": "cc7397c6b7d7f1316b4cf34d99bbc2c4",
+    "semantic_hash": "cc7397c6b7d7f1316b4cf34d99bbc2c4"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\uc804\uae30\uacf5\ud559\uc804\uacf5/ee_electrical_2011_to_2016.pdf": {
+    "mtime": 1779089981.8801434,
+    "ast_hash": "237db6335cc8483b06f2318bebdec6de",
+    "semantic_hash": "237db6335cc8483b06f2318bebdec6de"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\uc804\uae30\uacf5\ud559\uc804\uacf5/ee_electrical_2026.pdf": {
+    "mtime": 1779089891.7672558,
+    "ast_hash": "6af6fde49057e52f611efd258f346ae2",
+    "semantic_hash": "6af6fde49057e52f611efd258f346ae2"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\uc804\uae30\uacf5\ud559\uc804\uacf5/ee_electrical_2017_to_2020.pdf": {
+    "mtime": 1779089891.7952914,
+    "ast_hash": "eeeefa824f83bd720390c1117d526cb0",
+    "semantic_hash": "eeeefa824f83bd720390c1117d526cb0"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\ubc18\ub3c4\uccb4\uc815\ubcf4\uacf5\ud559\uc804\uacf5/ee_semiconductor_2019_to_2020.pdf": {
+    "mtime": 1779090993.1542768,
+    "ast_hash": "bacdd92a4ba0fa3868f50cacc2eb64a1",
+    "semantic_hash": "bacdd92a4ba0fa3868f50cacc2eb64a1"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\ubc18\ub3c4\uccb4\uc815\ubcf4\uacf5\ud559\uc804\uacf5/ee_semiconductor_2021_to_2022.pdf": {
+    "mtime": 1779090993.1423888,
+    "ast_hash": "4507fe0d7ff0d734780d235015b74243",
+    "semantic_hash": "4507fe0d7ff0d734780d235015b74243"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\ubc18\ub3c4\uccb4\uc815\ubcf4\uacf5\ud559\uc804\uacf5/ee_semiconductor_2023_to_2026.pdf": {
+    "mtime": 1779090993.1189907,
+    "ast_hash": "2a24a6dba7a36d9f3f0ce9e87323e606",
+    "semantic_hash": "2a24a6dba7a36d9f3f0ce9e87323e606"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\ubc18\ub3c4\uccb4\uc815\ubcf4\uacf5\ud559\uc804\uacf5/ee_semiconductor_2015_to_2016.pdf": {
+    "mtime": 1779090993.194596,
+    "ast_hash": "4a87975899e8aa8ab6c1ef6b7d992064",
+    "semantic_hash": "4a87975899e8aa8ab6c1ef6b7d992064"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\ubc18\ub3c4\uccb4\uc815\ubcf4\uacf5\ud559\uc804\uacf5/ee_semiconductor_2017_to_2018.pdf": {
+    "mtime": 1779090993.15883,
+    "ast_hash": "921235d6bac06f6324c384c9daff8bee",
+    "semantic_hash": "921235d6bac06f6324c384c9daff8bee"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\uc804\uc790\uacf5\ud559\uc804\uacf5/ee_electronics_2026.pdf": {
+    "mtime": 1779090489.3131056,
+    "ast_hash": "6d8eb2d9265ce8ed9791a8b9328d1c18",
+    "semantic_hash": "6d8eb2d9265ce8ed9791a8b9328d1c18"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\uc804\uc790\uacf5\ud559\uc804\uacf5/ee_electronics_2021_to_2024.pdf": {
+    "mtime": 1779090436.0198183,
+    "ast_hash": "f94a66a53cd781adb5b3424790c72d26",
+    "semantic_hash": "f94a66a53cd781adb5b3424790c72d26"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\uc804\uc790\uacf5\ud559\uc804\uacf5/ee_electronics_2021_to_2025.pdf": {
+    "mtime": 1779090489.335332,
+    "ast_hash": "f8311a06fb53d31d7aa269048f16e176",
+    "semantic_hash": "f8311a06fb53d31d7aa269048f16e176"
+  },
+  "/Users/iseung-won/knu_ai_assistant/data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80/\uc804\uc790\uacf5\ud559\uc804\uacf5/ee_electronics_2014_to_2020.pdf": {
+    "mtime": 1779090356.8060606,
+    "ast_hash": "aa738142622367a3f40262419da28066",
+    "semantic_hash": "aa738142622367a3f40262419da28066"
+  }
+}
