@@ -179,346 +179,31 @@
   },
   "nodes": [
     {
-      "label": "config.py",
+      "label": "check_pdf.py",
       "file_type": "code",
-      "source_file": "config.py",
+      "source_file": "check_pdf.py",
       "source_location": "L1",
-      "id": "config_py",
-      "community": 24,
-      "norm_label": "config.py"
+      "id": "check_pdf_py",
+      "community": 6,
+      "norm_label": "check_pdf.py"
     },
     {
-      "label": "RAG \ud30c\uc774\ud504\ub77c\uc778 \ud29c\ub2dd \uc0c1\uc218\uc640 \ud658\uacbd \ubcc0\uc218 \uc77c\uad04 \uad00\ub9ac.  \uae30\uc874\uc5d0 embed.py / graph.py / rerank.py / db.py / mod",
+      "label": "main()",
+      "file_type": "code",
+      "source_file": "check_pdf.py",
+      "source_location": "L16",
+      "id": "knu_ai_assistant_check_pdf_main",
+      "community": 6,
+      "norm_label": "main()"
+    },
+    {
+      "label": "\uc2e4\ud589 \ubc29\ubc95:   docker compose exec app python check_pdf.py",
       "file_type": "rationale",
-      "source_file": "config.py",
+      "source_file": "check_pdf.py",
       "source_location": "L1",
-      "id": "knu_ai_assistant_config_rationale_1",
-      "community": 24,
-      "norm_label": "rag \u1111\u1161\u110b\u1175\u1111\u1173\u1105\u1161\u110b\u1175\u11ab \u1110\u1172\u1102\u1175\u11bc \u1109\u1161\u11bc\u1109\u116e\u110b\u116a \u1112\u116a\u11ab\u1100\u1167\u11bc \u1107\u1167\u11ab\u1109\u116e \u110b\u1175\u11af\u1100\u116a\u11af \u1100\u116a\u11ab\u1105\u1175.  \u1100\u1175\u110c\u1169\u11ab\u110b\u1166 embed.py / graph.py / rerank.py / db.py / mod"
-    },
-    {
-      "label": "embed.py",
-      "file_type": "code",
-      "source_file": "embed.py",
-      "source_location": "L1",
-      "id": "embed_py",
-      "community": 11,
-      "norm_label": "embed.py"
-    },
-    {
-      "label": "get_embeddings()",
-      "file_type": "code",
-      "source_file": "embed.py",
-      "source_location": "L11",
-      "id": "knu_ai_assistant_embed_get_embeddings",
-      "community": 11,
-      "norm_label": "get_embeddings()"
-    },
-    {
-      "label": "_get_splitter()",
-      "file_type": "code",
-      "source_file": "embed.py",
-      "source_location": "L32",
-      "id": "knu_ai_assistant_embed_get_splitter",
-      "community": 11,
-      "norm_label": "_get_splitter()"
-    },
-    {
-      "label": "chunk_text()",
-      "file_type": "code",
-      "source_file": "embed.py",
-      "source_location": "L45",
-      "id": "knu_ai_assistant_embed_chunk_text",
-      "community": 11,
-      "norm_label": "chunk_text()"
-    },
-    {
-      "label": "embed_chunks()",
-      "file_type": "code",
-      "source_file": "embed.py",
-      "source_location": "L52",
-      "id": "knu_ai_assistant_embed_embed_chunks",
-      "community": 11,
-      "norm_label": "embed_chunks()"
-    },
-    {
-      "label": "embed_query()",
-      "file_type": "code",
-      "source_file": "embed.py",
-      "source_location": "L75",
-      "id": "knu_ai_assistant_embed_embed_query",
-      "community": 11,
-      "norm_label": "embed_query()"
-    },
-    {
-      "label": "provider \ud1a0\uae00\uc5d0 \ub530\ub77c OpenAI/Gemini \uc784\ubca0\ub529 \ud074\ub77c\uc774\uc5b8\ud2b8\ub97c \ub3cc\ub824\uc900\ub2e4.      \ub450 provider \ubaa8\ub450 \uacb0\uacfc \ucc28\uc6d0\uc744 EMBEDDI",
-      "file_type": "rationale",
-      "source_file": "embed.py",
-      "source_location": "L12",
-      "id": "knu_ai_assistant_embed_rationale_12",
-      "community": 11,
-      "norm_label": "provider \u1110\u1169\u1100\u1173\u11af\u110b\u1166 \u1104\u1161\u1105\u1161 openai/gemini \u110b\u1175\u11b7\u1107\u1166\u1103\u1175\u11bc \u110f\u1173\u11af\u1105\u1161\u110b\u1175\u110b\u1165\u11ab\u1110\u1173\u1105\u1173\u11af \u1103\u1169\u11af\u1105\u1167\u110c\u116e\u11ab\u1103\u1161.      \u1103\u116e provider \u1106\u1169\u1103\u116e \u1100\u1167\u11af\u1100\u116a \u110e\u1161\u110b\u116f\u11ab\u110b\u1173\u11af embeddi"
-    },
-    {
-      "label": "RecursiveCharacterTextSplitter \uc2f1\uae00\ud1a4. lazy import\ub85c cold start \uc601\ud5a5 \ud68c\ud53c.",
-      "file_type": "rationale",
-      "source_file": "embed.py",
-      "source_location": "L33",
-      "id": "knu_ai_assistant_embed_rationale_33",
-      "community": 11,
-      "norm_label": "recursivecharactertextsplitter \u1109\u1175\u11bc\u1100\u1173\u11af\u1110\u1169\u11ab. lazy import\u1105\u1169 cold start \u110b\u1167\u11bc\u1112\u1163\u11bc \u1112\u116c\u1111\u1175."
-    },
-    {
-      "label": "\ud55c\uad6d\uc5b4 \uacf5\uc9c0 \uae30\uc900 \uc758\ubbf8 \ub2e8\uc704 \ubd84\ud560. CHUNK_SIZE \uc790 \uc0c1\ud55c, CHUNK_OVERLAP \uc790 overlap.",
-      "file_type": "rationale",
-      "source_file": "embed.py",
-      "source_location": "L46",
-      "id": "knu_ai_assistant_embed_rationale_46",
-      "community": 11,
-      "norm_label": "\u1112\u1161\u11ab\u1100\u116e\u11a8\u110b\u1165 \u1100\u1169\u11bc\u110c\u1175 \u1100\u1175\u110c\u116e\u11ab \u110b\u1174\u1106\u1175 \u1103\u1161\u11ab\u110b\u1171 \u1107\u116e\u11ab\u1112\u1161\u11af. chunk_size \u110c\u1161 \u1109\u1161\u11bc\u1112\u1161\u11ab, chunk_overlap \u110c\u1161 overlap."
-    },
-    {
-      "label": "content\ub97c \uccad\ud06c\ub85c \ucabc\uac1c\uace0 \uac01 \uccad\ud06c \uc784\ubca0\ub529\uae4c\uc9c0 \uacc4\uc0b0\ud574\uc11c \ubc18\ud658.      title\uc774 \uc8fc\uc5b4\uc9c0\uba74 \ubaa8\ub4e0 \uccad\ud06c\uc758 \ub9e8 \uc55e\uc5d0 '[\ubb38\uc11c \uc81c\ubaa9: title",
-      "file_type": "rationale",
-      "source_file": "embed.py",
-      "source_location": "L53",
-      "id": "knu_ai_assistant_embed_rationale_53",
-      "community": 11,
-      "norm_label": "content\u1105\u1173\u11af \u110e\u1165\u11bc\u110f\u1173\u1105\u1169 \u110d\u1169\u1100\u1162\u1100\u1169 \u1100\u1161\u11a8 \u110e\u1165\u11bc\u110f\u1173 \u110b\u1175\u11b7\u1107\u1166\u1103\u1175\u11bc\u1101\u1161\u110c\u1175 \u1100\u1168\u1109\u1161\u11ab\u1112\u1162\u1109\u1165 \u1107\u1161\u11ab\u1112\u116a\u11ab.      title\u110b\u1175 \u110c\u116e\u110b\u1165\u110c\u1175\u1106\u1167\u11ab \u1106\u1169\u1103\u1173\u11ab \u110e\u1165\u11bc\u110f\u1173\u110b\u1174 \u1106\u1162\u11ab \u110b\u1161\u11c1\u110b\u1166 '[\u1106\u116e\u11ab\u1109\u1165 \u110c\u1166\u1106\u1169\u11a8: title"
-    },
-    {
-      "label": "graph.py",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L1",
-      "id": "graph_py",
-      "community": 3,
-      "norm_label": "graph.py"
-    },
-    {
-      "label": "RouteDecision",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L19",
-      "id": "knu_ai_assistant_graph_routedecision",
-      "community": 3,
-      "norm_label": "routedecision"
-    },
-    {
-      "label": "BaseModel",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "id": "basemodel",
-      "community": 3,
-      "norm_label": "basemodel"
-    },
-    {
-      "label": "VerificationResult",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L36",
-      "id": "knu_ai_assistant_graph_verificationresult",
-      "community": 3,
-      "norm_label": "verificationresult"
-    },
-    {
-      "label": "ChatState",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L42",
-      "id": "knu_ai_assistant_graph_chatstate",
-      "community": 3,
-      "norm_label": "chatstate"
-    },
-    {
-      "label": "TypedDict",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "id": "typeddict",
-      "community": 3,
-      "norm_label": "typeddict"
-    },
-    {
-      "label": "_history_messages()",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L126",
-      "id": "knu_ai_assistant_graph_history_messages",
-      "community": 3,
-      "norm_label": "_history_messages()"
-    },
-    {
-      "label": "router_node()",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L135",
-      "id": "knu_ai_assistant_graph_router_node",
-      "community": 3,
-      "norm_label": "router_node()"
-    },
-    {
-      "label": "_vector_search()",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L152",
-      "id": "knu_ai_assistant_graph_vector_search",
-      "community": 3,
-      "norm_label": "_vector_search()"
-    },
-    {
-      "label": "_rerank()",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L158",
-      "id": "knu_ai_assistant_graph_rerank",
-      "community": 3,
-      "norm_label": "_rerank()"
-    },
-    {
-      "label": "_retrieve()",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L166",
-      "id": "knu_ai_assistant_graph_retrieve",
-      "community": 3,
-      "norm_label": "_retrieve()"
-    },
-    {
-      "label": "retriever_node()",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L202",
-      "id": "knu_ai_assistant_graph_retriever_node",
-      "community": 3,
-      "norm_label": "retriever_node()"
-    },
-    {
-      "label": "_format_context()",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L210",
-      "id": "knu_ai_assistant_graph_format_context",
-      "community": 3,
-      "norm_label": "_format_context()"
-    },
-    {
-      "label": "answerer_node()",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L220",
-      "id": "knu_ai_assistant_graph_answerer_node",
-      "community": 3,
-      "norm_label": "answerer_node()"
-    },
-    {
-      "label": "casual_answerer_node()",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L249",
-      "id": "knu_ai_assistant_graph_casual_answerer_node",
-      "community": 3,
-      "norm_label": "casual_answerer_node()"
-    },
-    {
-      "label": "verifier_node()",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L261",
-      "id": "knu_ai_assistant_graph_verifier_node",
-      "community": 3,
-      "norm_label": "verifier_node()"
-    },
-    {
-      "label": "build_graph()",
-      "file_type": "code",
-      "source_file": "graph.py",
-      "source_location": "L284",
-      "id": "knu_ai_assistant_graph_build_graph",
-      "community": 3,
-      "norm_label": "build_graph()"
-    },
-    {
-      "label": "LangGraph: \ub77c\uc6b0\ud130(\ubd84\ub958+\ucffc\ub9ac\ud655\uc7a5) \u2192 retriever \u2192 answerer \u2192 verifier 4\ub178\ub4dc RAG \ud30c\uc774\ud504\ub77c\uc778.",
-      "file_type": "rationale",
-      "source_file": "graph.py",
-      "source_location": "L1",
-      "id": "knu_ai_assistant_graph_rationale_1",
-      "community": 3,
-      "norm_label": "langgraph: \u1105\u1161\u110b\u116e\u1110\u1165(\u1107\u116e\u11ab\u1105\u1172+\u110f\u116f\u1105\u1175\u1112\u116a\u11a8\u110c\u1161\u11bc) \u2192 retriever \u2192 answerer \u2192 verifier 4\u1102\u1169\u1103\u1173 rag \u1111\u1161\u110b\u1175\u1111\u1173\u1105\u1161\u110b\u1175\u11ab."
-    },
-    {
-      "label": "history dict \ub9ac\uc2a4\ud2b8\ub97c LangChain Human/AI \uba54\uc2dc\uc9c0\ub85c \ubcc0\ud658.",
-      "file_type": "rationale",
-      "source_file": "graph.py",
-      "source_location": "L127",
-      "id": "knu_ai_assistant_graph_rationale_127",
-      "community": 3,
-      "norm_label": "history dict \u1105\u1175\u1109\u1173\u1110\u1173\u1105\u1173\u11af langchain human/ai \u1106\u1166\u1109\u1175\u110c\u1175\u1105\u1169 \u1107\u1167\u11ab\u1112\u116a\u11ab."
-    },
-    {
-      "label": "trace \ub178\ucd9c\uc6a9 wrapper. output: vector top-N \ud6c4\ubcf4 row \ub9ac\uc2a4\ud2b8(reranker \uc785\ub825).",
-      "file_type": "rationale",
-      "source_file": "graph.py",
-      "source_location": "L153",
-      "id": "knu_ai_assistant_graph_rationale_153",
-      "community": 3,
-      "norm_label": "trace \u1102\u1169\u110e\u116e\u11af\u110b\u116d\u11bc wrapper. output: vector top-n \u1112\u116e\u1107\u1169 row \u1105\u1175\u1109\u1173\u1110\u1173(reranker \u110b\u1175\u11b8\u1105\u1167\u11a8)."
-    },
-    {
-      "label": "trace \ub178\ucd9c\uc6a9 wrapper. output: (row, cross-encoder score) \ub0b4\ub9bc\ucc28\uc21c \uc815\ub82c \ub9ac\uc2a4\ud2b8.",
-      "file_type": "rationale",
-      "source_file": "graph.py",
-      "source_location": "L159",
-      "id": "knu_ai_assistant_graph_rationale_159",
-      "community": 3,
-      "norm_label": "trace \u1102\u1169\u110e\u116e\u11af\u110b\u116d\u11bc wrapper. output: (row, cross-encoder score) \u1102\u1162\u1105\u1175\u11b7\u110e\u1161\u1109\u116e\u11ab \u110c\u1165\u11bc\u1105\u1167\u11af \u1105\u1175\u1109\u1173\u1110\u1173."
-    },
-    {
-      "label": "vector top-N(\uccad\ud06c \ub2e8\uc704) \u2192 BGE-reranker\ub85c \uc7ac\uc815\ub82c \u2192 top-K \uccad\ud06c \u2192 \ubd80\ubaa8 \ubb38\uc11c dedupe.      \uac19\uc740 url\uc758",
-      "file_type": "rationale",
-      "source_file": "graph.py",
-      "source_location": "L171",
-      "id": "knu_ai_assistant_graph_rationale_171",
-      "community": 3,
-      "norm_label": "vector top-n(\u110e\u1165\u11bc\u110f\u1173 \u1103\u1161\u11ab\u110b\u1171) \u2192 bge-reranker\u1105\u1169 \u110c\u1162\u110c\u1165\u11bc\u1105\u1167\u11af \u2192 top-k \u110e\u1165\u11bc\u110f\u1173 \u2192 \u1107\u116e\u1106\u1169 \u1106\u116e\u11ab\u1109\u1165 dedupe.      \u1100\u1161\u11c0\u110b\u1173\u11ab url\u110b\u1174"
-    },
-    {
-      "label": "answerer/verifier \uacf5\uc6a9 \ucee8\ud14d\uc2a4\ud2b8 \ud3ec\ub9f7. start/end_date\ub97c \uba85\uc2dc\uc801\uc73c\ub85c \ub178\ucd9c.",
-      "file_type": "rationale",
-      "source_file": "graph.py",
-      "source_location": "L211",
-      "id": "knu_ai_assistant_graph_rationale_211",
-      "community": 3,
-      "norm_label": "answerer/verifier \u1100\u1169\u11bc\u110b\u116d\u11bc \u110f\u1165\u11ab\u1110\u1166\u11a8\u1109\u1173\u1110\u1173 \u1111\u1169\u1106\u1162\u11ba. start/end_date\u1105\u1173\u11af \u1106\u1167\u11bc\u1109\u1175\u110c\u1165\u11a8\u110b\u1173\u1105\u1169 \u1102\u1169\u110e\u116e\u11af."
-    },
-    {
-      "label": "main.py",
-      "file_type": "code",
-      "source_file": "main.py",
-      "source_location": "L1",
-      "id": "main_py",
-      "community": 17,
-      "norm_label": "main.py"
-    },
-    {
-      "label": "_parse_posted_date()",
-      "file_type": "code",
-      "source_file": "main.py",
-      "source_location": "L13",
-      "id": "knu_ai_assistant_main_parse_posted_date",
-      "community": 17,
-      "norm_label": "_parse_posted_date()"
-    },
-    {
-      "label": "\ud06c\ub864\ub7ec\uac00 \uc218\uc9d1\ud55c \uc6d0\ubcf8 \ub4f1\ub85d\uc77c \ubb38\uc790\uc5f4\uc744 date\ub85c \ubcc0\ud658. \uc2e4\ud328\ud558\uba74 None.      \uacf5\uc8fc\ub300 \uc0ac\uc774\ud2b8\ub4e4\uc774 \ud754\ud788 \uc4f0\ub294 'YYYY.MM.DD', 'YY",
-      "file_type": "rationale",
-      "source_file": "main.py",
-      "source_location": "L14",
-      "id": "knu_ai_assistant_main_rationale_14",
-      "community": 17,
-      "norm_label": "\u110f\u1173\u1105\u1169\u11af\u1105\u1165\u1100\u1161 \u1109\u116e\u110c\u1175\u11b8\u1112\u1161\u11ab \u110b\u116f\u11ab\u1107\u1169\u11ab \u1103\u1173\u11bc\u1105\u1169\u11a8\u110b\u1175\u11af \u1106\u116e\u11ab\u110c\u1161\u110b\u1167\u11af\u110b\u1173\u11af date\u1105\u1169 \u1107\u1167\u11ab\u1112\u116a\u11ab. \u1109\u1175\u11af\u1111\u1162\u1112\u1161\u1106\u1167\u11ab none.      \u1100\u1169\u11bc\u110c\u116e\u1103\u1162 \u1109\u1161\u110b\u1175\u1110\u1173\u1103\u1173\u11af\u110b\u1175 \u1112\u1173\u11ab\u1112\u1175 \u110a\u1173\u1102\u1173\u11ab 'yyyy.mm.dd', 'yy"
+      "id": "knu_ai_assistant_check_pdf_rationale_1",
+      "community": 6,
+      "norm_label": "\u1109\u1175\u11af\u1112\u1162\u11bc \u1107\u1161\u11bc\u1107\u1165\u11b8:   docker compose exec app python check_pdf.py"
     },
     {
       "label": "ingest_curriculum_local.py",
@@ -533,7 +218,7 @@
       "label": "_expand_years()",
       "file_type": "code",
       "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L79",
+      "source_location": "L82",
       "id": "scripts_ingest_curriculum_local_expand_years",
       "community": 10,
       "norm_label": "_expand_years()"
@@ -542,7 +227,7 @@
       "label": "_lead_sentence()",
       "file_type": "code",
       "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L109",
+      "source_location": "L112",
       "id": "scripts_ingest_curriculum_local_lead_sentence",
       "community": 10,
       "norm_label": "_lead_sentence()"
@@ -551,7 +236,7 @@
       "label": "_pseudo_url()",
       "file_type": "code",
       "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L117",
+      "source_location": "L120",
       "id": "scripts_ingest_curriculum_local_pseudo_url",
       "community": 10,
       "norm_label": "_pseudo_url()"
@@ -560,7 +245,7 @@
       "label": "ingest()",
       "file_type": "code",
       "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L126",
+      "source_location": "L129",
       "id": "scripts_ingest_curriculum_local_ingest",
       "community": 10,
       "norm_label": "ingest()"
@@ -569,26 +254,26 @@
       "label": "main()",
       "file_type": "code",
       "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L190",
+      "source_location": "L193",
       "id": "scripts_ingest_curriculum_local_main",
       "community": 10,
       "norm_label": "main()"
     },
     {
-      "label": "data/curriculums/**/<key>*.pdf \ub97c DB\uc5d0 \uc801\uc7ac\ud55c\ub2e4.  \uc815\ucc45: \ucee4\ub9ac\ud058\ub7fc\uc740 \uc0ac\ub78c\uc774 \uc190\uc73c\ub85c \uc815\uc81c\ud55c PDF\ub97c data/curr",
+      "label": "data/curriculums/**/<key>*.pdf \ub97c DB\uc5d0 \uc801\uc7ac\ud55c\ub2e4.  \uc2e4\ud589 \ubc29\ubc95:   docker compose exec app pyt",
       "file_type": "rationale",
       "source_file": "scripts/ingest_curriculum_local.py",
       "source_location": "L1",
       "id": "scripts_ingest_curriculum_local_rationale_1",
       "community": 10,
-      "norm_label": "data/curriculums/**/<key>*.pdf \u1105\u1173\u11af db\u110b\u1166 \u110c\u1165\u11a8\u110c\u1162\u1112\u1161\u11ab\u1103\u1161.  \u110c\u1165\u11bc\u110e\u1162\u11a8: \u110f\u1165\u1105\u1175\u110f\u1172\u11af\u1105\u1165\u11b7\u110b\u1173\u11ab \u1109\u1161\u1105\u1161\u11b7\u110b\u1175 \u1109\u1169\u11ab\u110b\u1173\u1105\u1169 \u110c\u1165\u11bc\u110c\u1166\u1112\u1161\u11ab pdf\u1105\u1173\u11af data/curr"
+      "norm_label": "data/curriculums/**/<key>*.pdf \u1105\u1173\u11af db\u110b\u1166 \u110c\u1165\u11a8\u110c\u1162\u1112\u1161\u11ab\u1103\u1161.  \u1109\u1175\u11af\u1112\u1162\u11bc \u1107\u1161\u11bc\u1107\u1165\u11b8:   docker compose exec app pyt"
     },
     {
       "label": "\ub77c\ubca8\uc5d0\uc11c \uc801\uc6a9 \uc5f0\ub3c4\ub97c \ubaa8\ub450 \ud480\uc5b4\ub0b8\ub2e4.      - \"2011~2014\ud559\ub144\ub3c4 \uc785\ud559\uc790\ubd80\ud130 \uc801\uc6a9\" \u2192 [2011, ..., 2014] (range)",
       "file_type": "rationale",
       "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L80",
-      "id": "scripts_ingest_curriculum_local_rationale_80",
+      "source_location": "L83",
+      "id": "scripts_ingest_curriculum_local_rationale_83",
       "community": 10,
       "norm_label": "\u1105\u1161\u1107\u1166\u11af\u110b\u1166\u1109\u1165 \u110c\u1165\u11a8\u110b\u116d\u11bc \u110b\u1167\u11ab\u1103\u1169\u1105\u1173\u11af \u1106\u1169\u1103\u116e \u1111\u116e\u11af\u110b\u1165\u1102\u1162\u11ab\u1103\u1161.      - \"2011~2014\u1112\u1161\u11a8\u1102\u1167\u11ab\u1103\u1169 \u110b\u1175\u11b8\u1112\u1161\u11a8\u110c\u1161\u1107\u116e\u1110\u1165 \u110c\u1165\u11a8\u110b\u116d\u11bc\" \u2192 [2011, ..., 2014] (range)"
     },
@@ -596,8 +281,8 @@
       "label": "\uc784\ubca0\ub529 \uac80\uc0c9\uc774 '2014\ud559\ub144\ub3c4' \uac19\uc740 \ub2e8\uc77c \uc5f0\ub3c4 \ud1a0\ud070\uc744 \uc7a1\ub3c4\ub85d \uccab \uc904\uc5d0 \ud480\uc5b4 \uc4f4\ub2e4.",
       "file_type": "rationale",
       "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L110",
-      "id": "scripts_ingest_curriculum_local_rationale_110",
+      "source_location": "L113",
+      "id": "scripts_ingest_curriculum_local_rationale_113",
       "community": 10,
       "norm_label": "\u110b\u1175\u11b7\u1107\u1166\u1103\u1175\u11bc \u1100\u1165\u11b7\u1109\u1162\u11a8\u110b\u1175 '2014\u1112\u1161\u11a8\u1102\u1167\u11ab\u1103\u1169' \u1100\u1161\u11c0\u110b\u1173\u11ab \u1103\u1161\u11ab\u110b\u1175\u11af \u110b\u1167\u11ab\u1103\u1169 \u1110\u1169\u110f\u1173\u11ab\u110b\u1173\u11af \u110c\u1161\u11b8\u1103\u1169\u1105\u1169\u11a8 \u110e\u1165\u11ba \u110c\u116e\u11af\u110b\u1166 \u1111\u116e\u11af\u110b\u1165 \u110a\u1173\u11ab\u1103\u1161."
     },
@@ -605,8 +290,8 @@
       "label": "url UNIQUE \uc81c\uc57d\uc744 \uc6b0\ud68c\ud558\uae30 \uc704\ud574 fragment(#year=\u2026)\ub85c record \uad6c\ubd84.     \ud30c\uc77c\uba85 \ub300\uc2e0 registry key \uc0ac\uc6a9",
       "file_type": "rationale",
       "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L118",
-      "id": "scripts_ingest_curriculum_local_rationale_118",
+      "source_location": "L121",
+      "id": "scripts_ingest_curriculum_local_rationale_121",
       "community": 10,
       "norm_label": "url unique \u110c\u1166\u110b\u1163\u11a8\u110b\u1173\u11af \u110b\u116e\u1112\u116c\u1112\u1161\u1100\u1175 \u110b\u1171\u1112\u1162 fragment(#year=...)\u1105\u1169 record \u1100\u116e\u1107\u116e\u11ab.     \u1111\u1161\u110b\u1175\u11af\u1106\u1167\u11bc \u1103\u1162\u1109\u1175\u11ab registry key \u1109\u1161\u110b\u116d\u11bc"
     },
@@ -614,10 +299,685 @@
       "label": "1 PDF \u2192 \uc785\ud559\ub144\ub3c4\ubcc4 document \uc801\uc7ac. \uac19\uc740 key \uc758 \ub2e4\ub978 PDF \uc5d0\uc11c \uc774\ubbf8 \ub4f1\ub85d\ud55c url \uc744     \ub610 \ub9cc\ub098\uba74 stderr \uacbd\uace0 (",
       "file_type": "rationale",
       "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L127",
-      "id": "scripts_ingest_curriculum_local_rationale_127",
+      "source_location": "L130",
+      "id": "scripts_ingest_curriculum_local_rationale_130",
       "community": 10,
       "norm_label": "1 pdf \u2192 \u110b\u1175\u11b8\u1112\u1161\u11a8\u1102\u1167\u11ab\u1103\u1169\u1107\u1167\u11af document \u110c\u1165\u11a8\u110c\u1162. \u1100\u1161\u11c0\u110b\u1173\u11ab key \u110b\u1174 \u1103\u1161\u1105\u1173\u11ab pdf \u110b\u1166\u1109\u1165 \u110b\u1175\u1106\u1175 \u1103\u1173\u11bc\u1105\u1169\u11a8\u1112\u1161\u11ab url \u110b\u1173\u11af     \u1104\u1169 \u1106\u1161\u11ab\u1102\u1161\u1106\u1167\u11ab stderr \u1100\u1167\u11bc\u1100\u1169 ("
+    },
+    {
+      "label": "rechunk.py",
+      "file_type": "code",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L1",
+      "id": "scripts_rechunk_py",
+      "community": 18,
+      "norm_label": "rechunk.py"
+    },
+    {
+      "label": "_resolve_slug()",
+      "file_type": "code",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L37",
+      "id": "scripts_rechunk_resolve_slug",
+      "community": 18,
+      "norm_label": "_resolve_slug()"
+    },
+    {
+      "label": "_iter_documents()",
+      "file_type": "code",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L46",
+      "id": "scripts_rechunk_iter_documents",
+      "community": 18,
+      "norm_label": "_iter_documents()"
+    },
+    {
+      "label": "_embed_with_retry()",
+      "file_type": "code",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L61",
+      "id": "scripts_rechunk_embed_with_retry",
+      "community": 18,
+      "norm_label": "_embed_with_retry()"
+    },
+    {
+      "label": "_process_one()",
+      "file_type": "code",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L77",
+      "id": "scripts_rechunk_process_one",
+      "community": 18,
+      "norm_label": "_process_one()"
+    },
+    {
+      "label": "rechunk_category()",
+      "file_type": "code",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L91",
+      "id": "scripts_rechunk_rechunk_category",
+      "community": 18,
+      "norm_label": "rechunk_category()"
+    },
+    {
+      "label": "main()",
+      "file_type": "code",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L117",
+      "id": "scripts_rechunk_main",
+      "community": 18,
+      "norm_label": "main()"
+    },
+    {
+      "label": "DB document_*\ub9cc\uc73c\ub85c \uccad\ud06c/\uc784\ubca0\ub529 \uc7ac\uc0dd\uc131. \ud06c\ub864\ub9c1 \uc6b0\ud68c.  \uc6a9\ub3c4: CHUNK_SIZE / CHUNK_OVERLAP / \uc784\ubca0\ub529 \uc815\ucc45 \ubcc0\uacbd",
+      "file_type": "rationale",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L1",
+      "id": "scripts_rechunk_rationale_1",
+      "community": 18,
+      "norm_label": "db document_*\u1106\u1161\u11ab\u110b\u1173\u1105\u1169 \u110e\u1165\u11bc\u110f\u1173/\u110b\u1175\u11b7\u1107\u1166\u1103\u1175\u11bc \u110c\u1162\u1109\u1162\u11bc\u1109\u1165\u11bc. \u110f\u1173\u1105\u1169\u11af\u1105\u1175\u11bc \u110b\u116e\u1112\u116c.  \u110b\u116d\u11bc\u1103\u1169: chunk_size / chunk_overlap / \u110b\u1175\u11b7\u1107\u1166\u1103\u1175\u11bc \u110c\u1165\u11bc\u110e\u1162\u11a8 \u1107\u1167\u11ab\u1100\u1167\u11bc"
+    },
+    {
+      "label": "\ud55c\uae00 \uce74\ud14c\uace0\ub9ac \ub610\ub294 \uc601\ubb38 slug \uc785\ub825 \uc815\uaddc\ud654.",
+      "file_type": "rationale",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L38",
+      "id": "scripts_rechunk_rationale_38",
+      "community": 18,
+      "norm_label": "\u1112\u1161\u11ab\u1100\u1173\u11af \u110f\u1161\u1110\u1166\u1100\u1169\u1105\u1175 \u1104\u1169\u1102\u1173\u11ab \u110b\u1167\u11bc\u1106\u116e\u11ab slug \u110b\u1175\u11b8\u1105\u1167\u11a8 \u110c\u1165\u11bc\u1100\u1172\u1112\u116a."
+    },
+    {
+      "label": "document_{slug} \uc804\uc218 \ub610\ub294 \ub2e8\uac74 SELECT \uc81c\ub108\ub808\uc774\ud130.",
+      "file_type": "rationale",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L47",
+      "id": "scripts_rechunk_rationale_47",
+      "community": 18,
+      "norm_label": "document_{slug} \u110c\u1165\u11ab\u1109\u116e \u1104\u1169\u1102\u1173\u11ab \u1103\u1161\u11ab\u1100\u1165\u11ab select \u110c\u1166\u1102\u1165\u1105\u1166\u110b\u1175\u1110\u1165."
+    },
+    {
+      "label": "exponential backoff 4\ud68c. \ubaa8\ub4e0 \uc608\uc678 retry \u2014 auth \uac19\uc740 \uc601\uad6c \uc5d0\ub7ec\ub3c4 \ucd5c\ub300 7s \ub0ad\ube44 \ud5c8\uc6a9.",
+      "file_type": "rationale",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L62",
+      "id": "scripts_rechunk_rationale_62",
+      "community": 18,
+      "norm_label": "exponential backoff 4\u1112\u116c. \u1106\u1169\u1103\u1173\u11ab \u110b\u1168\u110b\u116c retry \u2014 auth \u1100\u1161\u11c0\u110b\u1173\u11ab \u110b\u1167\u11bc\u1100\u116e \u110b\u1166\u1105\u1165\u1103\u1169 \u110e\u116c\u1103\u1162 7s \u1102\u1161\u11bc\u1107\u1175 \u1112\u1165\u110b\u116d\u11bc."
+    },
+    {
+      "label": "document 1\uac1c \ucc98\ub9ac. \ubc18\ud658: (status, document_id, detail).     status: \"ok\" | \"skip\".  \uc2e4",
+      "file_type": "rationale",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L78",
+      "id": "scripts_rechunk_rationale_78",
+      "community": 18,
+      "norm_label": "document 1\u1100\u1162 \u110e\u1165\u1105\u1175. \u1107\u1161\u11ab\u1112\u116a\u11ab: (status, document_id, detail).     status: \"ok\" | \"skip\".  \u1109\u1175\u11af"
+    },
+    {
+      "label": "\ud55c \uce74\ud14c\uace0\ub9ac ThreadPool \uc7ac\ucc98\ub9ac. (ok, fail) \ubc18\ud658.",
+      "file_type": "rationale",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L92",
+      "id": "scripts_rechunk_rationale_92",
+      "community": 18,
+      "norm_label": "\u1112\u1161\u11ab \u110f\u1161\u1110\u1166\u1100\u1169\u1105\u1175 threadpool \u110c\u1162\u110e\u1165\u1105\u1175. (ok, fail) \u1107\u1161\u11ab\u1112\u116a\u11ab."
+    },
+    {
+      "label": "test_curriculum_parser.py",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L1",
+      "id": "tests_parsers_test_curriculum_parser_py",
+      "community": 6,
+      "norm_label": "test_curriculum_parser.py"
+    },
+    {
+      "label": "test_split_year_prefix_extracts_label()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L33",
+      "id": "parsers_test_curriculum_parser_test_split_year_prefix_extracts_label",
+      "community": 6,
+      "norm_label": "test_split_year_prefix_extracts_label()"
+    },
+    {
+      "label": "test_split_year_prefix_empty_label_returns_none()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L46",
+      "id": "parsers_test_curriculum_parser_test_split_year_prefix_empty_label_returns_none",
+      "community": 6,
+      "norm_label": "test_split_year_prefix_empty_label_returns_none()"
+    },
+    {
+      "label": "test_split_year_prefix_missing_prefix_returns_none()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L53",
+      "id": "parsers_test_curriculum_parser_test_split_year_prefix_missing_prefix_returns_none",
+      "community": 6,
+      "norm_label": "test_split_year_prefix_missing_prefix_returns_none()"
+    },
+    {
+      "label": "test_is_no_table_detects_marker()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L62",
+      "id": "parsers_test_curriculum_parser_test_is_no_table_detects_marker",
+      "community": 6,
+      "norm_label": "test_is_no_table_detects_marker()"
+    },
+    {
+      "label": "test_is_no_table_rejects_other_responses()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L67",
+      "id": "parsers_test_curriculum_parser_test_is_no_table_rejects_other_responses",
+      "community": 6,
+      "norm_label": "test_is_no_table_rejects_other_responses()"
+    },
+    {
+      "label": "test_render_text_returns_markdown_table_verbatim()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L75",
+      "id": "parsers_test_curriculum_parser_test_render_text_returns_markdown_table_verbatim",
+      "community": 6,
+      "norm_label": "test_render_text_returns_markdown_table_verbatim()"
+    },
+    {
+      "label": "_FakePILImage",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L86",
+      "id": "parsers_test_curriculum_parser_fakepilimage",
+      "community": 6,
+      "norm_label": "_fakepilimage"
+    },
+    {
+      "label": ".save()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L88",
+      "id": "parsers_test_curriculum_parser_fakepilimage_save",
+      "community": 6,
+      "norm_label": ".save()"
+    },
+    {
+      "label": "test_parse_filters_no_table_pages()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L92",
+      "id": "parsers_test_curriculum_parser_test_parse_filters_no_table_pages",
+      "community": 6,
+      "norm_label": "test_parse_filters_no_table_pages()"
+    },
+    {
+      "label": "test_parse_fails_fast_on_vlm_exception()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L129",
+      "id": "parsers_test_curriculum_parser_test_parse_fails_fast_on_vlm_exception",
+      "community": 6,
+      "norm_label": "test_parse_fails_fast_on_vlm_exception()"
+    },
+    {
+      "label": "test_parse_empty_pdf_returns_no_years()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L147",
+      "id": "parsers_test_curriculum_parser_test_parse_empty_pdf_returns_no_years",
+      "community": 6,
+      "norm_label": "test_parse_empty_pdf_returns_no_years()"
+    },
+    {
+      "label": "test_live_parse_returns_normalized_markdown()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L168",
+      "id": "parsers_test_curriculum_parser_test_live_parse_returns_normalized_markdown",
+      "community": 6,
+      "norm_label": "test_live_parse_returns_normalized_markdown()"
+    },
+    {
+      "label": "parsers/curriculum_parser.py \ud68c\uadc0 \ud14c\uc2a4\ud2b8.  \uc804\ub7b5: - Mock \ub2e8\uc704 \ud14c\uc2a4\ud2b8: image_to_text/convert_f",
+      "file_type": "rationale",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L1",
+      "id": "parsers_test_curriculum_parser_rationale_1",
+      "community": 6,
+      "norm_label": "parsers/curriculum_parser.py \u1112\u116c\u1100\u1171 \u1110\u1166\u1109\u1173\u1110\u1173.  \u110c\u1165\u11ab\u1105\u1163\u11a8: - mock \u1103\u1161\u11ab\u110b\u1171 \u1110\u1166\u1109\u1173\u1110\u1173: image_to_text/convert_f"
+    },
+    {
+      "label": "page_image.save(buf, format=\"PNG\") \ub9cc \ud638\ucd9c\ub418\ubbc0\ub85c \uadf8\uac83\ub9cc \ud749\ub0b4.",
+      "file_type": "rationale",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L87",
+      "id": "parsers_test_curriculum_parser_rationale_87",
+      "community": 6,
+      "norm_label": "page_image.save(buf, format=\"png\") \u1106\u1161\u11ab \u1112\u1169\u110e\u116e\u11af\u1103\u116c\u1106\u1173\u1105\u1169 \u1100\u1173\u1100\u1165\u11ba\u1106\u1161\u11ab \u1112\u1172\u11bc\u1102\u1162."
+    },
+    {
+      "label": "\ud398\uc774\uc9c0 \ud55c \uc7a5\uc774\ub77c\ub3c4 VLM \ud638\ucd9c\uc5d0\uc11c \uc608\uc678\uac00 \ub098\uba74 \uadf8\ub300\ub85c raise (\ubd80\ubd84 \uc801\uc7ac \uae08\uc9c0).",
+      "file_type": "rationale",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L130",
+      "id": "parsers_test_curriculum_parser_rationale_130",
+      "community": 6,
+      "norm_label": "\u1111\u1166\u110b\u1175\u110c\u1175 \u1112\u1161\u11ab \u110c\u1161\u11bc\u110b\u1175\u1105\u1161\u1103\u1169 vlm \u1112\u1169\u110e\u116e\u11af\u110b\u1166\u1109\u1165 \u110b\u1168\u110b\u116c\u1100\u1161 \u1102\u1161\u1106\u1167\u11ab \u1100\u1173\u1103\u1162\u1105\u1169 raise (\u1107\u116e\u1107\u116e\u11ab \u110c\u1165\u11a8\u110c\u1162 \u1100\u1173\u11b7\u110c\u1175)."
+    },
+    {
+      "label": "test_document_parser.py",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L1",
+      "id": "tests_parsers_test_document_parser_py",
+      "community": 0,
+      "norm_label": "test_document_parser.py"
+    },
+    {
+      "label": "test_xlsx_to_text_nonempty()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L40",
+      "id": "parsers_test_document_parser_test_xlsx_to_text_nonempty",
+      "community": 0,
+      "norm_label": "test_xlsx_to_text_nonempty()"
+    },
+    {
+      "label": "test_hwpx_bytes_to_text_nonempty()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L48",
+      "id": "parsers_test_document_parser_test_hwpx_bytes_to_text_nonempty",
+      "community": 0,
+      "norm_label": "test_hwpx_bytes_to_text_nonempty()"
+    },
+    {
+      "label": "test_pdf_to_text_via_vlm_returns_pages()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L56",
+      "id": "parsers_test_document_parser_test_pdf_to_text_via_vlm_returns_pages",
+      "community": 0,
+      "norm_label": "test_pdf_to_text_via_vlm_returns_pages()"
+    },
+    {
+      "label": "test_hwp_via_synapview()",
+      "file_type": "code",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L66",
+      "id": "parsers_test_document_parser_test_hwp_via_synapview",
+      "community": 0,
+      "norm_label": "test_hwp_via_synapview()"
+    },
+    {
+      "label": "parsers/document_parser.py \ud68c\uadc0 \ud14c\uc2a4\ud2b8.  \uc624\ud504\ub77c\uc778 \ud14c\uc2a4\ud2b8 (fixture \ud544\uc694, \uc678\ubd80 API \ubd88\ud544\uc694):   - hwpx_",
+      "file_type": "rationale",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L1",
+      "id": "parsers_test_document_parser_rationale_1",
+      "community": 0,
+      "norm_label": "parsers/document_parser.py \u1112\u116c\u1100\u1171 \u1110\u1166\u1109\u1173\u1110\u1173.  \u110b\u1169\u1111\u1173\u1105\u1161\u110b\u1175\u11ab \u1110\u1166\u1109\u1173\u1110\u1173 (fixture \u1111\u1175\u11af\u110b\u116d, \u110b\u116c\u1107\u116e api \u1107\u116e\u11af\u1111\u1175\u11af\u110b\u116d):   - hwpx_"
+    },
+    {
+      "label": "\uc2e4\uc81c VLM API \ud638\ucd9c. \ube44\uc6a9 \ubc1c\uc0dd. pytest -m live \ub85c \ud65c\uc131\ud654.",
+      "file_type": "rationale",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L57",
+      "id": "parsers_test_document_parser_rationale_57",
+      "community": 0,
+      "norm_label": "\u1109\u1175\u11af\u110c\u1166 vlm api \u1112\u1169\u110e\u116e\u11af. \u1107\u1175\u110b\u116d\u11bc \u1107\u1161\u11af\u1109\u1162\u11bc. pytest -m live \u1105\u1169 \u1112\u116a\u11af\u1109\u1165\u11bc\u1112\u116a."
+    },
+    {
+      "label": "\uc2e4\uc81c \uacf5\uc8fc\ub300 synapView URL + Playwright Chromium launch.     \ub124\ud2b8\uc6cc\ud06c + Playwright \uc758\uc874. pyt",
+      "file_type": "rationale",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L67",
+      "id": "parsers_test_document_parser_rationale_67",
+      "community": 0,
+      "norm_label": "\u1109\u1175\u11af\u110c\u1166 \u1100\u1169\u11bc\u110c\u116e\u1103\u1162 synapview url + playwright chromium launch.     \u1102\u1166\u1110\u1173\u110b\u116f\u110f\u1173 + playwright \u110b\u1174\u110c\u1169\u11ab. pyt"
+    },
+    {
+      "label": "config.py",
+      "file_type": "code",
+      "source_file": "config.py",
+      "source_location": "L1",
+      "community": 24,
+      "norm_label": "config.py",
+      "id": "config_py"
+    },
+    {
+      "label": "RAG \ud30c\uc774\ud504\ub77c\uc778 \ud29c\ub2dd \uc0c1\uc218\uc640 \ud658\uacbd \ubcc0\uc218 \uc77c\uad04 \uad00\ub9ac.  \uae30\uc874\uc5d0 embed.py / graph.py / rerank.py / db.py / mod",
+      "file_type": "rationale",
+      "source_file": "config.py",
+      "source_location": "L1",
+      "community": 24,
+      "norm_label": "rag \u1111\u1161\u110b\u1175\u1111\u1173\u1105\u1161\u110b\u1175\u11ab \u1110\u1172\u1102\u1175\u11bc \u1109\u1161\u11bc\u1109\u116e\u110b\u116a \u1112\u116a\u11ab\u1100\u1167\u11bc \u1107\u1167\u11ab\u1109\u116e \u110b\u1175\u11af\u1100\u116a\u11af \u1100\u116a\u11ab\u1105\u1175.  \u1100\u1175\u110c\u1169\u11ab\u110b\u1166 embed.py / graph.py / rerank.py / db.py / mod",
+      "id": "knu_ai_assistant_config_rationale_1"
+    },
+    {
+      "label": "embed.py",
+      "file_type": "code",
+      "source_file": "embed.py",
+      "source_location": "L1",
+      "community": 11,
+      "norm_label": "embed.py",
+      "id": "embed_py"
+    },
+    {
+      "label": "get_embeddings()",
+      "file_type": "code",
+      "source_file": "embed.py",
+      "source_location": "L11",
+      "community": 11,
+      "norm_label": "get_embeddings()",
+      "id": "knu_ai_assistant_embed_get_embeddings"
+    },
+    {
+      "label": "_get_splitter()",
+      "file_type": "code",
+      "source_file": "embed.py",
+      "source_location": "L32",
+      "community": 11,
+      "norm_label": "_get_splitter()",
+      "id": "knu_ai_assistant_embed_get_splitter"
+    },
+    {
+      "label": "chunk_text()",
+      "file_type": "code",
+      "source_file": "embed.py",
+      "source_location": "L45",
+      "community": 11,
+      "norm_label": "chunk_text()",
+      "id": "knu_ai_assistant_embed_chunk_text"
+    },
+    {
+      "label": "embed_chunks()",
+      "file_type": "code",
+      "source_file": "embed.py",
+      "source_location": "L52",
+      "community": 11,
+      "norm_label": "embed_chunks()",
+      "id": "knu_ai_assistant_embed_embed_chunks"
+    },
+    {
+      "label": "embed_query()",
+      "file_type": "code",
+      "source_file": "embed.py",
+      "source_location": "L75",
+      "community": 11,
+      "norm_label": "embed_query()",
+      "id": "knu_ai_assistant_embed_embed_query"
+    },
+    {
+      "label": "provider \ud1a0\uae00\uc5d0 \ub530\ub77c OpenAI/Gemini \uc784\ubca0\ub529 \ud074\ub77c\uc774\uc5b8\ud2b8\ub97c \ub3cc\ub824\uc900\ub2e4.      \ub450 provider \ubaa8\ub450 \uacb0\uacfc \ucc28\uc6d0\uc744 EMBEDDI",
+      "file_type": "rationale",
+      "source_file": "embed.py",
+      "source_location": "L12",
+      "community": 11,
+      "norm_label": "provider \u1110\u1169\u1100\u1173\u11af\u110b\u1166 \u1104\u1161\u1105\u1161 openai/gemini \u110b\u1175\u11b7\u1107\u1166\u1103\u1175\u11bc \u110f\u1173\u11af\u1105\u1161\u110b\u1175\u110b\u1165\u11ab\u1110\u1173\u1105\u1173\u11af \u1103\u1169\u11af\u1105\u1167\u110c\u116e\u11ab\u1103\u1161.      \u1103\u116e provider \u1106\u1169\u1103\u116e \u1100\u1167\u11af\u1100\u116a \u110e\u1161\u110b\u116f\u11ab\u110b\u1173\u11af embeddi",
+      "id": "knu_ai_assistant_embed_rationale_12"
+    },
+    {
+      "label": "RecursiveCharacterTextSplitter \uc2f1\uae00\ud1a4. lazy import\ub85c cold start \uc601\ud5a5 \ud68c\ud53c.",
+      "file_type": "rationale",
+      "source_file": "embed.py",
+      "source_location": "L33",
+      "community": 11,
+      "norm_label": "recursivecharactertextsplitter \u1109\u1175\u11bc\u1100\u1173\u11af\u1110\u1169\u11ab. lazy import\u1105\u1169 cold start \u110b\u1167\u11bc\u1112\u1163\u11bc \u1112\u116c\u1111\u1175.",
+      "id": "knu_ai_assistant_embed_rationale_33"
+    },
+    {
+      "label": "\ud55c\uad6d\uc5b4 \uacf5\uc9c0 \uae30\uc900 \uc758\ubbf8 \ub2e8\uc704 \ubd84\ud560. CHUNK_SIZE \uc790 \uc0c1\ud55c, CHUNK_OVERLAP \uc790 overlap.",
+      "file_type": "rationale",
+      "source_file": "embed.py",
+      "source_location": "L46",
+      "community": 11,
+      "norm_label": "\u1112\u1161\u11ab\u1100\u116e\u11a8\u110b\u1165 \u1100\u1169\u11bc\u110c\u1175 \u1100\u1175\u110c\u116e\u11ab \u110b\u1174\u1106\u1175 \u1103\u1161\u11ab\u110b\u1171 \u1107\u116e\u11ab\u1112\u1161\u11af. chunk_size \u110c\u1161 \u1109\u1161\u11bc\u1112\u1161\u11ab, chunk_overlap \u110c\u1161 overlap.",
+      "id": "knu_ai_assistant_embed_rationale_46"
+    },
+    {
+      "label": "content\ub97c \uccad\ud06c\ub85c \ucabc\uac1c\uace0 \uac01 \uccad\ud06c \uc784\ubca0\ub529\uae4c\uc9c0 \uacc4\uc0b0\ud574\uc11c \ubc18\ud658.      title\uc774 \uc8fc\uc5b4\uc9c0\uba74 \ubaa8\ub4e0 \uccad\ud06c\uc758 \ub9e8 \uc55e\uc5d0 '[\ubb38\uc11c \uc81c\ubaa9: title",
+      "file_type": "rationale",
+      "source_file": "embed.py",
+      "source_location": "L53",
+      "community": 11,
+      "norm_label": "content\u1105\u1173\u11af \u110e\u1165\u11bc\u110f\u1173\u1105\u1169 \u110d\u1169\u1100\u1162\u1100\u1169 \u1100\u1161\u11a8 \u110e\u1165\u11bc\u110f\u1173 \u110b\u1175\u11b7\u1107\u1166\u1103\u1175\u11bc\u1101\u1161\u110c\u1175 \u1100\u1168\u1109\u1161\u11ab\u1112\u1162\u1109\u1165 \u1107\u1161\u11ab\u1112\u116a\u11ab.      title\u110b\u1175 \u110c\u116e\u110b\u1165\u110c\u1175\u1106\u1167\u11ab \u1106\u1169\u1103\u1173\u11ab \u110e\u1165\u11bc\u110f\u1173\u110b\u1174 \u1106\u1162\u11ab \u110b\u1161\u11c1\u110b\u1166 '[\u1106\u116e\u11ab\u1109\u1165 \u110c\u1166\u1106\u1169\u11a8: title",
+      "id": "knu_ai_assistant_embed_rationale_53"
+    },
+    {
+      "label": "graph.py",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L1",
+      "community": 3,
+      "norm_label": "graph.py",
+      "id": "graph_py"
+    },
+    {
+      "label": "RouteDecision",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L19",
+      "community": 3,
+      "norm_label": "routedecision",
+      "id": "knu_ai_assistant_graph_routedecision"
+    },
+    {
+      "label": "BaseModel",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "community": 3,
+      "norm_label": "basemodel",
+      "id": "basemodel"
+    },
+    {
+      "label": "VerificationResult",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L36",
+      "community": 3,
+      "norm_label": "verificationresult",
+      "id": "knu_ai_assistant_graph_verificationresult"
+    },
+    {
+      "label": "ChatState",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L42",
+      "community": 3,
+      "norm_label": "chatstate",
+      "id": "knu_ai_assistant_graph_chatstate"
+    },
+    {
+      "label": "TypedDict",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "community": 3,
+      "norm_label": "typeddict",
+      "id": "typeddict"
+    },
+    {
+      "label": "_history_messages()",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L126",
+      "community": 3,
+      "norm_label": "_history_messages()",
+      "id": "knu_ai_assistant_graph_history_messages"
+    },
+    {
+      "label": "router_node()",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L135",
+      "community": 3,
+      "norm_label": "router_node()",
+      "id": "knu_ai_assistant_graph_router_node"
+    },
+    {
+      "label": "_vector_search()",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L152",
+      "community": 3,
+      "norm_label": "_vector_search()",
+      "id": "knu_ai_assistant_graph_vector_search"
+    },
+    {
+      "label": "_rerank()",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L158",
+      "community": 3,
+      "norm_label": "_rerank()",
+      "id": "knu_ai_assistant_graph_rerank"
+    },
+    {
+      "label": "_retrieve()",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L166",
+      "community": 3,
+      "norm_label": "_retrieve()",
+      "id": "knu_ai_assistant_graph_retrieve"
+    },
+    {
+      "label": "retriever_node()",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L202",
+      "community": 3,
+      "norm_label": "retriever_node()",
+      "id": "knu_ai_assistant_graph_retriever_node"
+    },
+    {
+      "label": "_format_context()",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L210",
+      "community": 3,
+      "norm_label": "_format_context()",
+      "id": "knu_ai_assistant_graph_format_context"
+    },
+    {
+      "label": "answerer_node()",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L220",
+      "community": 3,
+      "norm_label": "answerer_node()",
+      "id": "knu_ai_assistant_graph_answerer_node"
+    },
+    {
+      "label": "casual_answerer_node()",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L249",
+      "community": 3,
+      "norm_label": "casual_answerer_node()",
+      "id": "knu_ai_assistant_graph_casual_answerer_node"
+    },
+    {
+      "label": "verifier_node()",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L261",
+      "community": 3,
+      "norm_label": "verifier_node()",
+      "id": "knu_ai_assistant_graph_verifier_node"
+    },
+    {
+      "label": "build_graph()",
+      "file_type": "code",
+      "source_file": "graph.py",
+      "source_location": "L284",
+      "community": 3,
+      "norm_label": "build_graph()",
+      "id": "knu_ai_assistant_graph_build_graph"
+    },
+    {
+      "label": "LangGraph: \ub77c\uc6b0\ud130(\ubd84\ub958+\ucffc\ub9ac\ud655\uc7a5) \u2192 retriever \u2192 answerer \u2192 verifier 4\ub178\ub4dc RAG \ud30c\uc774\ud504\ub77c\uc778.",
+      "file_type": "rationale",
+      "source_file": "graph.py",
+      "source_location": "L1",
+      "community": 3,
+      "norm_label": "langgraph: \u1105\u1161\u110b\u116e\u1110\u1165(\u1107\u116e\u11ab\u1105\u1172+\u110f\u116f\u1105\u1175\u1112\u116a\u11a8\u110c\u1161\u11bc) \u2192 retriever \u2192 answerer \u2192 verifier 4\u1102\u1169\u1103\u1173 rag \u1111\u1161\u110b\u1175\u1111\u1173\u1105\u1161\u110b\u1175\u11ab.",
+      "id": "knu_ai_assistant_graph_rationale_1"
+    },
+    {
+      "label": "history dict \ub9ac\uc2a4\ud2b8\ub97c LangChain Human/AI \uba54\uc2dc\uc9c0\ub85c \ubcc0\ud658.",
+      "file_type": "rationale",
+      "source_file": "graph.py",
+      "source_location": "L127",
+      "community": 3,
+      "norm_label": "history dict \u1105\u1175\u1109\u1173\u1110\u1173\u1105\u1173\u11af langchain human/ai \u1106\u1166\u1109\u1175\u110c\u1175\u1105\u1169 \u1107\u1167\u11ab\u1112\u116a\u11ab.",
+      "id": "knu_ai_assistant_graph_rationale_127"
+    },
+    {
+      "label": "trace \ub178\ucd9c\uc6a9 wrapper. output: vector top-N \ud6c4\ubcf4 row \ub9ac\uc2a4\ud2b8(reranker \uc785\ub825).",
+      "file_type": "rationale",
+      "source_file": "graph.py",
+      "source_location": "L153",
+      "community": 3,
+      "norm_label": "trace \u1102\u1169\u110e\u116e\u11af\u110b\u116d\u11bc wrapper. output: vector top-n \u1112\u116e\u1107\u1169 row \u1105\u1175\u1109\u1173\u1110\u1173(reranker \u110b\u1175\u11b8\u1105\u1167\u11a8).",
+      "id": "knu_ai_assistant_graph_rationale_153"
+    },
+    {
+      "label": "trace \ub178\ucd9c\uc6a9 wrapper. output: (row, cross-encoder score) \ub0b4\ub9bc\ucc28\uc21c \uc815\ub82c \ub9ac\uc2a4\ud2b8.",
+      "file_type": "rationale",
+      "source_file": "graph.py",
+      "source_location": "L159",
+      "community": 3,
+      "norm_label": "trace \u1102\u1169\u110e\u116e\u11af\u110b\u116d\u11bc wrapper. output: (row, cross-encoder score) \u1102\u1162\u1105\u1175\u11b7\u110e\u1161\u1109\u116e\u11ab \u110c\u1165\u11bc\u1105\u1167\u11af \u1105\u1175\u1109\u1173\u1110\u1173.",
+      "id": "knu_ai_assistant_graph_rationale_159"
+    },
+    {
+      "label": "vector top-N(\uccad\ud06c \ub2e8\uc704) \u2192 BGE-reranker\ub85c \uc7ac\uc815\ub82c \u2192 top-K \uccad\ud06c \u2192 \ubd80\ubaa8 \ubb38\uc11c dedupe.      \uac19\uc740 url\uc758",
+      "file_type": "rationale",
+      "source_file": "graph.py",
+      "source_location": "L171",
+      "community": 3,
+      "norm_label": "vector top-n(\u110e\u1165\u11bc\u110f\u1173 \u1103\u1161\u11ab\u110b\u1171) \u2192 bge-reranker\u1105\u1169 \u110c\u1162\u110c\u1165\u11bc\u1105\u1167\u11af \u2192 top-k \u110e\u1165\u11bc\u110f\u1173 \u2192 \u1107\u116e\u1106\u1169 \u1106\u116e\u11ab\u1109\u1165 dedupe.      \u1100\u1161\u11c0\u110b\u1173\u11ab url\u110b\u1174",
+      "id": "knu_ai_assistant_graph_rationale_171"
+    },
+    {
+      "label": "answerer/verifier \uacf5\uc6a9 \ucee8\ud14d\uc2a4\ud2b8 \ud3ec\ub9f7. start/end_date\ub97c \uba85\uc2dc\uc801\uc73c\ub85c \ub178\ucd9c.",
+      "file_type": "rationale",
+      "source_file": "graph.py",
+      "source_location": "L211",
+      "community": 3,
+      "norm_label": "answerer/verifier \u1100\u1169\u11bc\u110b\u116d\u11bc \u110f\u1165\u11ab\u1110\u1166\u11a8\u1109\u1173\u1110\u1173 \u1111\u1169\u1106\u1162\u11ba. start/end_date\u1105\u1173\u11af \u1106\u1167\u11bc\u1109\u1175\u110c\u1165\u11a8\u110b\u1173\u1105\u1169 \u1102\u1169\u110e\u116e\u11af.",
+      "id": "knu_ai_assistant_graph_rationale_211"
+    },
+    {
+      "label": "main.py",
+      "file_type": "code",
+      "source_file": "main.py",
+      "source_location": "L1",
+      "community": 17,
+      "norm_label": "main.py",
+      "id": "main_py"
+    },
+    {
+      "label": "_parse_posted_date()",
+      "file_type": "code",
+      "source_file": "main.py",
+      "source_location": "L13",
+      "community": 17,
+      "norm_label": "_parse_posted_date()",
+      "id": "knu_ai_assistant_main_parse_posted_date"
+    },
+    {
+      "label": "\ud06c\ub864\ub7ec\uac00 \uc218\uc9d1\ud55c \uc6d0\ubcf8 \ub4f1\ub85d\uc77c \ubb38\uc790\uc5f4\uc744 date\ub85c \ubcc0\ud658. \uc2e4\ud328\ud558\uba74 None.      \uacf5\uc8fc\ub300 \uc0ac\uc774\ud2b8\ub4e4\uc774 \ud754\ud788 \uc4f0\ub294 'YYYY.MM.DD', 'YY",
+      "file_type": "rationale",
+      "source_file": "main.py",
+      "source_location": "L14",
+      "community": 17,
+      "norm_label": "\u110f\u1173\u1105\u1169\u11af\u1105\u1165\u1100\u1161 \u1109\u116e\u110c\u1175\u11b8\u1112\u1161\u11ab \u110b\u116f\u11ab\u1107\u1169\u11ab \u1103\u1173\u11bc\u1105\u1169\u11a8\u110b\u1175\u11af \u1106\u116e\u11ab\u110c\u1161\u110b\u1167\u11af\u110b\u1173\u11af date\u1105\u1169 \u1107\u1167\u11ab\u1112\u116a\u11ab. \u1109\u1175\u11af\u1111\u1162\u1112\u1161\u1106\u1167\u11ab none.      \u1100\u1169\u11bc\u110c\u116e\u1103\u1162 \u1109\u1161\u110b\u1175\u1110\u1173\u1103\u1173\u11af\u110b\u1175 \u1112\u1173\u11ab\u1112\u1175 \u110a\u1173\u1102\u1173\u11ab 'yyyy.mm.dd', 'yy",
+      "id": "knu_ai_assistant_main_rationale_14"
     },
     {
       "label": "rerank.py",
@@ -1475,51 +1835,6 @@
       "id": "knu_ai_assistant_model_rationale_8"
     },
     {
-      "label": "check_pdf.py",
-      "file_type": "code",
-      "source_file": "check_pdf.py",
-      "source_location": "L1",
-      "community": 6,
-      "norm_label": "check_pdf.py",
-      "id": "check_pdf_py"
-    },
-    {
-      "label": "main()",
-      "file_type": "code",
-      "source_file": "check_pdf.py",
-      "source_location": "L11",
-      "community": 6,
-      "norm_label": "main()",
-      "id": "knu_ai_assistant_check_pdf_main"
-    },
-    {
-      "label": "test_synapview.py",
-      "file_type": "code",
-      "source_file": "test_synapview.py",
-      "source_location": "L1",
-      "community": 19,
-      "norm_label": "test_synapview.py",
-      "id": "test_synapview_py"
-    },
-    {
-      "label": "test_synap()",
-      "file_type": "code",
-      "source_file": "test_synapview.py",
-      "source_location": "L7",
-      "community": 19,
-      "norm_label": "test_synap()",
-      "id": "knu_ai_assistant_test_synapview_test_synap"
-    },
-    {
-      "label": "Playwright\ub97c \ub744\uc6cc \uacf5\uc8fc\ub300 SynapView \ubbf8\ub9ac\ubcf4\uae30 \ud398\uc774\uc9c0\uc5d0\uc11c \ud14d\uc2a4\ud2b8\ub97c \ucd94\ucd9c\ud574\uc635\ub2c8\ub2e4.",
-      "file_type": "rationale",
-      "source_file": "test_synapview.py",
-      "source_location": "L8",
-      "community": 19,
-      "norm_label": "playwright\u1105\u1173\u11af \u1104\u1174\u110b\u116f \u1100\u1169\u11bc\u110c\u116e\u1103\u1162 synapview \u1106\u1175\u1105\u1175\u1107\u1169\u1100\u1175 \u1111\u1166\u110b\u1175\u110c\u1175\u110b\u1166\u1109\u1165 \u1110\u1166\u11a8\u1109\u1173\u1110\u1173\u1105\u1173\u11af \u110e\u116e\u110e\u116e\u11af\u1112\u1162\u110b\u1169\u11b8\u1102\u1175\u1103\u1161.",
-      "id": "knu_ai_assistant_test_synapview_rationale_8"
-    },
-    {
       "label": "app.py",
       "file_type": "code",
       "source_file": "app.py",
@@ -1545,51 +1860,6 @@
       "community": 16,
       "norm_label": "knu \u110c\u1175\u1102\u1173\u11bc\u1112\u1167\u11bc \u1112\u1161\u11a8\u1109\u1162\u11bc \u1107\u1175\u1109\u1165 \u110c\u1175\u11ab\u110b\u1175\u11b8\u110c\u1165\u11b7. st.navigation\u110b\u1173\u1105\u1169 4\u1111\u1166\u110b\u1175\u110c\u1175 \u1105\u1161\u110b\u116e\u1110\u1175\u11bc.",
       "id": "knu_ai_assistant_app_rationale_1"
-    },
-    {
-      "label": "test_hwp_reader.py",
-      "file_type": "code",
-      "source_file": "test_hwp_reader.py",
-      "source_location": "L1",
-      "community": 25,
-      "norm_label": "test_hwp_reader.py",
-      "id": "test_hwp_reader_py"
-    },
-    {
-      "label": "test_hwp_reader()",
-      "file_type": "code",
-      "source_file": "test_hwp_reader.py",
-      "source_location": "L12",
-      "community": 25,
-      "norm_label": "test_hwp_reader()",
-      "id": "knu_ai_assistant_test_hwp_reader_test_hwp_reader"
-    },
-    {
-      "label": "test_hwpx_bytes.py",
-      "file_type": "code",
-      "source_file": "test_hwpx_bytes.py",
-      "source_location": "L1",
-      "community": 18,
-      "norm_label": "test_hwpx_bytes.py",
-      "id": "test_hwpx_bytes_py"
-    },
-    {
-      "label": "test_hwpx_custom_parser()",
-      "file_type": "code",
-      "source_file": "test_hwpx_bytes.py",
-      "source_location": "L11",
-      "community": 18,
-      "norm_label": "test_hwpx_custom_parser()",
-      "id": "knu_ai_assistant_test_hwpx_bytes_test_hwpx_custom_parser"
-    },
-    {
-      "label": "\ub85c\uceec hwpx \ud30c\uc77c\uc744 \ubc14\uc774\ub108\ub9ac\ub85c \uc77d\uc5b4 attachments.hwpx_bytes_to_text()\ub85c \ud30c\uc2f1\ud569\ub2c8\ub2e4.",
-      "file_type": "rationale",
-      "source_file": "test_hwpx_bytes.py",
-      "source_location": "L12",
-      "community": 18,
-      "norm_label": "\u1105\u1169\u110f\u1165\u11af hwpx \u1111\u1161\u110b\u1175\u11af\u110b\u1173\u11af \u1107\u1161\u110b\u1175\u1102\u1165\u1105\u1175\u1105\u1169 \u110b\u1175\u11b0\u110b\u1165 attachments.hwpx_bytes_to_text()\u1105\u1169 \u1111\u1161\u1109\u1175\u11bc\u1112\u1161\u11b8\u1102\u1175\u1103\u1161.",
-      "id": "knu_ai_assistant_test_hwpx_bytes_rationale_12"
     },
     {
       "label": "schema.py",
@@ -2445,222 +2715,6 @@
       "community": 40,
       "norm_label": "__init__.py",
       "id": "tests_init_py"
-    },
-    {
-      "label": "test_curriculum_parser.py",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L1",
-      "community": 6,
-      "norm_label": "test_curriculum_parser.py",
-      "id": "tests_parsers_test_curriculum_parser_py"
-    },
-    {
-      "label": "test_split_year_prefix_extracts_label()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L29",
-      "community": 6,
-      "norm_label": "test_split_year_prefix_extracts_label()",
-      "id": "parsers_test_curriculum_parser_test_split_year_prefix_extracts_label"
-    },
-    {
-      "label": "test_split_year_prefix_empty_label_returns_none()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L42",
-      "community": 6,
-      "norm_label": "test_split_year_prefix_empty_label_returns_none()",
-      "id": "parsers_test_curriculum_parser_test_split_year_prefix_empty_label_returns_none"
-    },
-    {
-      "label": "test_split_year_prefix_missing_prefix_returns_none()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L49",
-      "community": 6,
-      "norm_label": "test_split_year_prefix_missing_prefix_returns_none()",
-      "id": "parsers_test_curriculum_parser_test_split_year_prefix_missing_prefix_returns_none"
-    },
-    {
-      "label": "test_is_no_table_detects_marker()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L58",
-      "community": 6,
-      "norm_label": "test_is_no_table_detects_marker()",
-      "id": "parsers_test_curriculum_parser_test_is_no_table_detects_marker"
-    },
-    {
-      "label": "test_is_no_table_rejects_other_responses()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L63",
-      "community": 6,
-      "norm_label": "test_is_no_table_rejects_other_responses()",
-      "id": "parsers_test_curriculum_parser_test_is_no_table_rejects_other_responses"
-    },
-    {
-      "label": "test_render_text_returns_markdown_table_verbatim()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L71",
-      "community": 6,
-      "norm_label": "test_render_text_returns_markdown_table_verbatim()",
-      "id": "parsers_test_curriculum_parser_test_render_text_returns_markdown_table_verbatim"
-    },
-    {
-      "label": "_FakePILImage",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L82",
-      "community": 6,
-      "norm_label": "_fakepilimage",
-      "id": "parsers_test_curriculum_parser_fakepilimage"
-    },
-    {
-      "label": ".save()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L84",
-      "community": 6,
-      "norm_label": ".save()",
-      "id": "parsers_test_curriculum_parser_fakepilimage_save"
-    },
-    {
-      "label": "test_parse_filters_no_table_pages()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L88",
-      "community": 6,
-      "norm_label": "test_parse_filters_no_table_pages()",
-      "id": "parsers_test_curriculum_parser_test_parse_filters_no_table_pages"
-    },
-    {
-      "label": "test_parse_fails_fast_on_vlm_exception()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L125",
-      "community": 6,
-      "norm_label": "test_parse_fails_fast_on_vlm_exception()",
-      "id": "parsers_test_curriculum_parser_test_parse_fails_fast_on_vlm_exception"
-    },
-    {
-      "label": "test_parse_empty_pdf_returns_no_years()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L143",
-      "community": 6,
-      "norm_label": "test_parse_empty_pdf_returns_no_years()",
-      "id": "parsers_test_curriculum_parser_test_parse_empty_pdf_returns_no_years"
-    },
-    {
-      "label": "test_live_parse_returns_normalized_markdown()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L164",
-      "community": 6,
-      "norm_label": "test_live_parse_returns_normalized_markdown()",
-      "id": "parsers_test_curriculum_parser_test_live_parse_returns_normalized_markdown"
-    },
-    {
-      "label": "parsers/curriculum_parser.py \ud68c\uadc0 \ud14c\uc2a4\ud2b8.  \uc804\ub7b5: - Mock \ub2e8\uc704 \ud14c\uc2a4\ud2b8: image_to_text/convert_f",
-      "file_type": "rationale",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L1",
-      "community": 6,
-      "norm_label": "parsers/curriculum_parser.py \u1112\u116c\u1100\u1171 \u1110\u1166\u1109\u1173\u1110\u1173.  \u110c\u1165\u11ab\u1105\u1163\u11a8: - mock \u1103\u1161\u11ab\u110b\u1171 \u1110\u1166\u1109\u1173\u1110\u1173: image_to_text/convert_f",
-      "id": "parsers_test_curriculum_parser_rationale_1"
-    },
-    {
-      "label": "page_image.save(buf, format=\"PNG\") \ub9cc \ud638\ucd9c\ub418\ubbc0\ub85c \uadf8\uac83\ub9cc \ud749\ub0b4.",
-      "file_type": "rationale",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L83",
-      "community": 6,
-      "norm_label": "page_image.save(buf, format=\"png\") \u1106\u1161\u11ab \u1112\u1169\u110e\u116e\u11af\u1103\u116c\u1106\u1173\u1105\u1169 \u1100\u1173\u1100\u1165\u11ba\u1106\u1161\u11ab \u1112\u1172\u11bc\u1102\u1162.",
-      "id": "parsers_test_curriculum_parser_rationale_83"
-    },
-    {
-      "label": "\ud398\uc774\uc9c0 \ud55c \uc7a5\uc774\ub77c\ub3c4 VLM \ud638\ucd9c\uc5d0\uc11c \uc608\uc678\uac00 \ub098\uba74 \uadf8\ub300\ub85c raise (\ubd80\ubd84 \uc801\uc7ac \uae08\uc9c0).",
-      "file_type": "rationale",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L126",
-      "community": 6,
-      "norm_label": "\u1111\u1166\u110b\u1175\u110c\u1175 \u1112\u1161\u11ab \u110c\u1161\u11bc\u110b\u1175\u1105\u1161\u1103\u1169 vlm \u1112\u1169\u110e\u116e\u11af\u110b\u1166\u1109\u1165 \u110b\u1168\u110b\u116c\u1100\u1161 \u1102\u1161\u1106\u1167\u11ab \u1100\u1173\u1103\u1162\u1105\u1169 raise (\u1107\u116e\u1107\u116e\u11ab \u110c\u1165\u11a8\u110c\u1162 \u1100\u1173\u11b7\u110c\u1175).",
-      "id": "parsers_test_curriculum_parser_rationale_126"
-    },
-    {
-      "label": "test_document_parser.py",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L1",
-      "community": 0,
-      "norm_label": "test_document_parser.py",
-      "id": "tests_parsers_test_document_parser_py"
-    },
-    {
-      "label": "test_xlsx_to_text_nonempty()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L38",
-      "community": 0,
-      "norm_label": "test_xlsx_to_text_nonempty()",
-      "id": "parsers_test_document_parser_test_xlsx_to_text_nonempty"
-    },
-    {
-      "label": "test_hwpx_bytes_to_text_nonempty()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L46",
-      "community": 0,
-      "norm_label": "test_hwpx_bytes_to_text_nonempty()",
-      "id": "parsers_test_document_parser_test_hwpx_bytes_to_text_nonempty"
-    },
-    {
-      "label": "test_pdf_to_text_via_vlm_returns_pages()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L54",
-      "community": 0,
-      "norm_label": "test_pdf_to_text_via_vlm_returns_pages()",
-      "id": "parsers_test_document_parser_test_pdf_to_text_via_vlm_returns_pages"
-    },
-    {
-      "label": "test_hwp_via_synapview()",
-      "file_type": "code",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L64",
-      "community": 0,
-      "norm_label": "test_hwp_via_synapview()",
-      "id": "parsers_test_document_parser_test_hwp_via_synapview"
-    },
-    {
-      "label": "parsers/document_parser.py \ud68c\uadc0 \ud14c\uc2a4\ud2b8.  \uc624\ud504\ub77c\uc778 \ud14c\uc2a4\ud2b8 (fixture \ud544\uc694, \uc678\ubd80 API \ubd88\ud544\uc694):   - hwpx_",
-      "file_type": "rationale",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L1",
-      "community": 0,
-      "norm_label": "parsers/document_parser.py \u1112\u116c\u1100\u1171 \u1110\u1166\u1109\u1173\u1110\u1173.  \u110b\u1169\u1111\u1173\u1105\u1161\u110b\u1175\u11ab \u1110\u1166\u1109\u1173\u1110\u1173 (fixture \u1111\u1175\u11af\u110b\u116d, \u110b\u116c\u1107\u116e api \u1107\u116e\u11af\u1111\u1175\u11af\u110b\u116d):   - hwpx_",
-      "id": "parsers_test_document_parser_rationale_1"
-    },
-    {
-      "label": "\uc2e4\uc81c VLM API \ud638\ucd9c. \ube44\uc6a9 \ubc1c\uc0dd. pytest -m live \ub85c \ud65c\uc131\ud654.",
-      "file_type": "rationale",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L55",
-      "community": 0,
-      "norm_label": "\u1109\u1175\u11af\u110c\u1166 vlm api \u1112\u1169\u110e\u116e\u11af. \u1107\u1175\u110b\u116d\u11bc \u1107\u1161\u11af\u1109\u1162\u11bc. pytest -m live \u1105\u1169 \u1112\u116a\u11af\u1109\u1165\u11bc\u1112\u116a.",
-      "id": "parsers_test_document_parser_rationale_55"
-    },
-    {
-      "label": "\uc2e4\uc81c \uacf5\uc8fc\ub300 synapView URL + Playwright Chromium launch.     \ub124\ud2b8\uc6cc\ud06c + Playwright \uc758\uc874. pyt",
-      "file_type": "rationale",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L65",
-      "community": 0,
-      "norm_label": "\u1109\u1175\u11af\u110c\u1166 \u1100\u1169\u11bc\u110c\u116e\u1103\u1162 synapview url + playwright chromium launch.     \u1102\u1166\u1110\u1173\u110b\u116f\u110f\u1173 + playwright \u110b\u1174\u110c\u1169\u11ab. pyt",
-      "id": "parsers_test_document_parser_rationale_65"
     },
     {
       "label": "__init__.py",
@@ -4006,6 +4060,818 @@
   ],
   "links": [
     {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "check_pdf.py",
+      "source_location": "L11",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "check_pdf_py",
+      "target": "knu_ai_assistant_check_pdf_main"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "check_pdf.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "knu_ai_assistant_check_pdf_rationale_1",
+      "target": "check_pdf_py",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "check_pdf.py",
+      "source_location": "L16",
+      "weight": 1.0,
+      "source": "knu_ai_assistant_check_pdf_main",
+      "target": "parsers_curriculum_parser_parse"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L79",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "scripts_ingest_curriculum_local_py",
+      "target": "scripts_ingest_curriculum_local_expand_years"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L109",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "scripts_ingest_curriculum_local_py",
+      "target": "scripts_ingest_curriculum_local_lead_sentence"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L117",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "scripts_ingest_curriculum_local_py",
+      "target": "scripts_ingest_curriculum_local_pseudo_url"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L126",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "scripts_ingest_curriculum_local_py",
+      "target": "scripts_ingest_curriculum_local_ingest"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L190",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "scripts_ingest_curriculum_local_py",
+      "target": "scripts_ingest_curriculum_local_main"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "scripts_ingest_curriculum_local_rationale_1",
+      "target": "scripts_ingest_curriculum_local_py"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L157",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "scripts_ingest_curriculum_local_ingest",
+      "target": "scripts_ingest_curriculum_local_expand_years"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L83",
+      "weight": 1.0,
+      "source": "scripts_ingest_curriculum_local_rationale_83",
+      "target": "scripts_ingest_curriculum_local_expand_years",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L158",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "scripts_ingest_curriculum_local_ingest",
+      "target": "scripts_ingest_curriculum_local_lead_sentence"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L113",
+      "weight": 1.0,
+      "source": "scripts_ingest_curriculum_local_rationale_113",
+      "target": "scripts_ingest_curriculum_local_lead_sentence",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L147",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "scripts_ingest_curriculum_local_ingest",
+      "target": "scripts_ingest_curriculum_local_pseudo_url"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L121",
+      "weight": 1.0,
+      "source": "scripts_ingest_curriculum_local_rationale_121",
+      "target": "scripts_ingest_curriculum_local_pseudo_url",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L207",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "scripts_ingest_curriculum_local_main",
+      "target": "scripts_ingest_curriculum_local_ingest"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L130",
+      "weight": 1.0,
+      "source": "scripts_ingest_curriculum_local_rationale_130",
+      "target": "scripts_ingest_curriculum_local_ingest",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L183",
+      "weight": 1.0,
+      "source": "scripts_ingest_curriculum_local_ingest",
+      "target": "knu_ai_assistant_embed_embed_chunks"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L136",
+      "weight": 1.0,
+      "source": "scripts_ingest_curriculum_local_ingest",
+      "target": "knu_ai_assistant_db_upsert_source"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L169",
+      "weight": 1.0,
+      "source": "scripts_ingest_curriculum_local_ingest",
+      "target": "knu_ai_assistant_db_insert_document"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L182",
+      "weight": 1.0,
+      "source": "scripts_ingest_curriculum_local_ingest",
+      "target": "knu_ai_assistant_db_insert_assets"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L184",
+      "weight": 1.0,
+      "source": "scripts_ingest_curriculum_local_ingest",
+      "target": "knu_ai_assistant_db_insert_chunks"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L130",
+      "weight": 1.0,
+      "source": "scripts_ingest_curriculum_local_ingest",
+      "target": "parsers_curriculum_parser_parse"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "scripts/ingest_curriculum_local.py",
+      "source_location": "L159",
+      "weight": 1.0,
+      "source": "scripts_ingest_curriculum_local_ingest",
+      "target": "parsers_curriculum_parser_render_text"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L37",
+      "weight": 1.0,
+      "source": "scripts_rechunk_py",
+      "target": "scripts_rechunk_resolve_slug",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L46",
+      "weight": 1.0,
+      "source": "scripts_rechunk_py",
+      "target": "scripts_rechunk_iter_documents",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L61",
+      "weight": 1.0,
+      "source": "scripts_rechunk_py",
+      "target": "scripts_rechunk_embed_with_retry",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L77",
+      "weight": 1.0,
+      "source": "scripts_rechunk_py",
+      "target": "scripts_rechunk_process_one",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L91",
+      "weight": 1.0,
+      "source": "scripts_rechunk_py",
+      "target": "scripts_rechunk_rechunk_category",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L117",
+      "weight": 1.0,
+      "source": "scripts_rechunk_py",
+      "target": "scripts_rechunk_main",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "scripts_rechunk_rationale_1",
+      "target": "scripts_rechunk_py",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L126",
+      "weight": 1.0,
+      "source": "scripts_rechunk_main",
+      "target": "scripts_rechunk_resolve_slug",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L38",
+      "weight": 1.0,
+      "source": "scripts_rechunk_rationale_38",
+      "target": "scripts_rechunk_resolve_slug",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L94",
+      "weight": 1.0,
+      "source": "scripts_rechunk_rechunk_category",
+      "target": "scripts_rechunk_iter_documents",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L47",
+      "weight": 1.0,
+      "source": "scripts_rechunk_rationale_47",
+      "target": "scripts_rechunk_iter_documents",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L84",
+      "weight": 1.0,
+      "source": "scripts_rechunk_process_one",
+      "target": "scripts_rechunk_embed_with_retry",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L62",
+      "weight": 1.0,
+      "source": "scripts_rechunk_rationale_62",
+      "target": "scripts_rechunk_embed_with_retry",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L78",
+      "weight": 1.0,
+      "source": "scripts_rechunk_rationale_78",
+      "target": "scripts_rechunk_process_one",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L131",
+      "weight": 1.0,
+      "source": "scripts_rechunk_main",
+      "target": "scripts_rechunk_rechunk_category",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "scripts/rechunk.py",
+      "source_location": "L92",
+      "weight": 1.0,
+      "source": "scripts_rechunk_rationale_92",
+      "target": "scripts_rechunk_rechunk_category",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L29",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_curriculum_parser_py",
+      "target": "parsers_test_curriculum_parser_test_split_year_prefix_extracts_label"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L42",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_curriculum_parser_py",
+      "target": "parsers_test_curriculum_parser_test_split_year_prefix_empty_label_returns_none"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L49",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_curriculum_parser_py",
+      "target": "parsers_test_curriculum_parser_test_split_year_prefix_missing_prefix_returns_none"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L58",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_curriculum_parser_py",
+      "target": "parsers_test_curriculum_parser_test_is_no_table_detects_marker"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L63",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_curriculum_parser_py",
+      "target": "parsers_test_curriculum_parser_test_is_no_table_rejects_other_responses"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L71",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_curriculum_parser_py",
+      "target": "parsers_test_curriculum_parser_test_render_text_returns_markdown_table_verbatim"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L82",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_curriculum_parser_py",
+      "target": "parsers_test_curriculum_parser_fakepilimage"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L88",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_curriculum_parser_py",
+      "target": "parsers_test_curriculum_parser_test_parse_filters_no_table_pages"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L125",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_curriculum_parser_py",
+      "target": "parsers_test_curriculum_parser_test_parse_fails_fast_on_vlm_exception"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L143",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_curriculum_parser_py",
+      "target": "parsers_test_curriculum_parser_test_parse_empty_pdf_returns_no_years"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L164",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_curriculum_parser_py",
+      "target": "parsers_test_curriculum_parser_test_live_parse_returns_normalized_markdown"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "parsers_test_curriculum_parser_rationale_1",
+      "target": "tests_parsers_test_curriculum_parser_py"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L36",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_test_split_year_prefix_extracts_label",
+      "target": "parsers_curriculum_parser_split_year_prefix"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L44",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_test_split_year_prefix_empty_label_returns_none",
+      "target": "parsers_curriculum_parser_split_year_prefix"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L51",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_test_split_year_prefix_missing_prefix_returns_none",
+      "target": "parsers_curriculum_parser_split_year_prefix"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L59",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_test_is_no_table_detects_marker",
+      "target": "parsers_curriculum_parser_is_no_table"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L64",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_test_is_no_table_rejects_other_responses",
+      "target": "parsers_curriculum_parser_is_no_table"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L77",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_test_render_text_returns_markdown_table_verbatim",
+      "target": "parsers_curriculum_parser_render_text"
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L84",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "parsers_test_curriculum_parser_fakepilimage",
+      "target": "parsers_test_curriculum_parser_fakepilimage_save"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L106",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "parsers_test_curriculum_parser_test_parse_filters_no_table_pages",
+      "target": "parsers_test_curriculum_parser_fakepilimage"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L133",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "parsers_test_curriculum_parser_test_parse_fails_fast_on_vlm_exception",
+      "target": "parsers_test_curriculum_parser_fakepilimage"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L87",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_rationale_87",
+      "target": "parsers_test_curriculum_parser_fakepilimage",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L112",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_test_parse_filters_no_table_pages",
+      "target": "parsers_curriculum_parser_parse"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L130",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_rationale_130",
+      "target": "parsers_test_curriculum_parser_test_parse_fails_fast_on_vlm_exception",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L140",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_test_parse_fails_fast_on_vlm_exception",
+      "target": "parsers_curriculum_parser_parse"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L148",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_test_parse_empty_pdf_returns_no_years",
+      "target": "parsers_curriculum_parser_parse"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_curriculum_parser.py",
+      "source_location": "L165",
+      "weight": 1.0,
+      "source": "parsers_test_curriculum_parser_test_live_parse_returns_normalized_markdown",
+      "target": "parsers_curriculum_parser_parse"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L38",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_document_parser_py",
+      "target": "parsers_test_document_parser_test_xlsx_to_text_nonempty"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L46",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_document_parser_py",
+      "target": "parsers_test_document_parser_test_hwpx_bytes_to_text_nonempty"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L54",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_document_parser_py",
+      "target": "parsers_test_document_parser_test_pdf_to_text_via_vlm_returns_pages"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L64",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "tests_parsers_test_document_parser_py",
+      "target": "parsers_test_document_parser_test_hwp_via_synapview"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "confidence_score": 1.0,
+      "source": "parsers_test_document_parser_rationale_1",
+      "target": "tests_parsers_test_document_parser_py"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L40",
+      "weight": 1.0,
+      "source": "parsers_test_document_parser_test_xlsx_to_text_nonempty",
+      "target": "parsers_document_parser_xlsx_to_text"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L48",
+      "weight": 1.0,
+      "source": "parsers_test_document_parser_test_hwpx_bytes_to_text_nonempty",
+      "target": "parsers_document_parser_hwpx_bytes_to_text"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L57",
+      "weight": 1.0,
+      "source": "parsers_test_document_parser_rationale_57",
+      "target": "parsers_test_document_parser_test_pdf_to_text_via_vlm_returns_pages",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L57",
+      "weight": 1.0,
+      "source": "parsers_test_document_parser_test_pdf_to_text_via_vlm_returns_pages",
+      "target": "parsers_document_parser_pdf_to_text_via_vlm"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L67",
+      "weight": 1.0,
+      "source": "parsers_test_document_parser_rationale_67",
+      "target": "parsers_test_document_parser_test_hwp_via_synapview",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "tests/parsers/test_document_parser.py",
+      "source_location": "L74",
+      "weight": 1.0,
+      "source": "parsers_test_document_parser_test_hwp_via_synapview",
+      "target": "parsers_document_parser_hwpx_via_preview"
+    },
+    {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "config.py",
@@ -4158,17 +5024,6 @@
       "weight": 1.0,
       "confidence_score": 1.0,
       "source": "knu_ai_assistant_embed_rationale_53",
-      "target": "knu_ai_assistant_embed_embed_chunks"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L183",
-      "weight": 1.0,
-      "source": "scripts_ingest_curriculum_local_ingest",
       "target": "knu_ai_assistant_embed_embed_chunks"
     },
     {
@@ -4550,9 +5405,9 @@
       "source_file": "graph.py",
       "source_location": "L211",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "knu_ai_assistant_graph_rationale_211",
-      "target": "knu_ai_assistant_graph_format_context",
-      "confidence_score": 1.0
+      "target": "knu_ai_assistant_graph_format_context"
     },
     {
       "relation": "calls",
@@ -4606,216 +5461,6 @@
       "confidence_score": 1.0,
       "source": "knu_ai_assistant_main_rationale_14",
       "target": "knu_ai_assistant_main_parse_posted_date"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L79",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_py",
-      "target": "scripts_ingest_curriculum_local_expand_years"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L109",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_py",
-      "target": "scripts_ingest_curriculum_local_lead_sentence"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L117",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_py",
-      "target": "scripts_ingest_curriculum_local_pseudo_url"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L126",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_py",
-      "target": "scripts_ingest_curriculum_local_ingest"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L190",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_py",
-      "target": "scripts_ingest_curriculum_local_main"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L1",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_rationale_1",
-      "target": "scripts_ingest_curriculum_local_py"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L157",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_ingest",
-      "target": "scripts_ingest_curriculum_local_expand_years"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L80",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_rationale_80",
-      "target": "scripts_ingest_curriculum_local_expand_years"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L158",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_ingest",
-      "target": "scripts_ingest_curriculum_local_lead_sentence"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L110",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_rationale_110",
-      "target": "scripts_ingest_curriculum_local_lead_sentence"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L147",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_ingest",
-      "target": "scripts_ingest_curriculum_local_pseudo_url"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L118",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_rationale_118",
-      "target": "scripts_ingest_curriculum_local_pseudo_url"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L207",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_main",
-      "target": "scripts_ingest_curriculum_local_ingest"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L127",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_ingest_curriculum_local_rationale_127",
-      "target": "scripts_ingest_curriculum_local_ingest"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L136",
-      "weight": 1.0,
-      "source": "scripts_ingest_curriculum_local_ingest",
-      "target": "knu_ai_assistant_db_upsert_source"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L169",
-      "weight": 1.0,
-      "source": "scripts_ingest_curriculum_local_ingest",
-      "target": "knu_ai_assistant_db_insert_document"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L182",
-      "weight": 1.0,
-      "source": "scripts_ingest_curriculum_local_ingest",
-      "target": "knu_ai_assistant_db_insert_assets"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L184",
-      "weight": 1.0,
-      "source": "scripts_ingest_curriculum_local_ingest",
-      "target": "knu_ai_assistant_db_insert_chunks"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L130",
-      "weight": 1.0,
-      "source": "scripts_ingest_curriculum_local_ingest",
-      "target": "parsers_curriculum_parser_parse"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "scripts/ingest_curriculum_local.py",
-      "source_location": "L159",
-      "weight": 1.0,
-      "source": "scripts_ingest_curriculum_local_ingest",
-      "target": "parsers_curriculum_parser_render_text"
     },
     {
       "relation": "contains",
@@ -6040,47 +6685,6 @@
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
-      "source_file": "check_pdf.py",
-      "source_location": "L11",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "check_pdf_py",
-      "target": "knu_ai_assistant_check_pdf_main"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "check_pdf.py",
-      "source_location": "L16",
-      "weight": 1.0,
-      "source": "knu_ai_assistant_check_pdf_main",
-      "target": "parsers_curriculum_parser_parse"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "test_synapview.py",
-      "source_location": "L7",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "test_synapview_py",
-      "target": "knu_ai_assistant_test_synapview_test_synap"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "test_synapview.py",
-      "source_location": "L8",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "knu_ai_assistant_test_synapview_rationale_8",
-      "target": "knu_ai_assistant_test_synapview_test_synap"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
       "source_file": "app.py",
       "source_location": "L22",
       "weight": 1.0,
@@ -6097,36 +6701,6 @@
       "confidence_score": 1.0,
       "source": "knu_ai_assistant_app_rationale_1",
       "target": "app_py"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "test_hwp_reader.py",
-      "source_location": "L12",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "test_hwp_reader_py",
-      "target": "knu_ai_assistant_test_hwp_reader_test_hwp_reader"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "test_hwpx_bytes.py",
-      "source_location": "L11",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "test_hwpx_bytes_py",
-      "target": "knu_ai_assistant_test_hwpx_bytes_test_hwpx_custom_parser"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "test_hwpx_bytes.py",
-      "source_location": "L12",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "knu_ai_assistant_test_hwpx_bytes_rationale_12",
-      "target": "knu_ai_assistant_test_hwpx_bytes_test_hwpx_custom_parser"
     },
     {
       "relation": "contains",
@@ -6347,67 +6921,12 @@
     {
       "relation": "calls",
       "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L36",
-      "weight": 1.0,
-      "source": "parsers_test_curriculum_parser_test_split_year_prefix_extracts_label",
-      "target": "parsers_curriculum_parser_split_year_prefix"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L44",
-      "weight": 1.0,
-      "source": "parsers_test_curriculum_parser_test_split_year_prefix_empty_label_returns_none",
-      "target": "parsers_curriculum_parser_split_year_prefix"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L51",
-      "weight": 1.0,
-      "source": "parsers_test_curriculum_parser_test_split_year_prefix_missing_prefix_returns_none",
-      "target": "parsers_curriculum_parser_split_year_prefix"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "parsers/curriculum_parser.py",
       "source_location": "L72",
       "weight": 1.0,
       "confidence_score": 1.0,
       "source": "parsers_curriculum_parser_page_to_year",
-      "target": "parsers_curriculum_parser_is_no_table"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L59",
-      "weight": 1.0,
-      "source": "parsers_test_curriculum_parser_test_is_no_table_detects_marker",
-      "target": "parsers_curriculum_parser_is_no_table"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L64",
-      "weight": 1.0,
-      "source": "parsers_test_curriculum_parser_test_is_no_table_rejects_other_responses",
       "target": "parsers_curriculum_parser_is_no_table"
     },
     {
@@ -6442,50 +6961,6 @@
       "target": "parsers_curriculum_parser_parse"
     },
     {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L112",
-      "weight": 1.0,
-      "source": "parsers_test_curriculum_parser_test_parse_filters_no_table_pages",
-      "target": "parsers_curriculum_parser_parse"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L140",
-      "weight": 1.0,
-      "source": "parsers_test_curriculum_parser_test_parse_fails_fast_on_vlm_exception",
-      "target": "parsers_curriculum_parser_parse"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L148",
-      "weight": 1.0,
-      "source": "parsers_test_curriculum_parser_test_parse_empty_pdf_returns_no_years",
-      "target": "parsers_curriculum_parser_parse"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L165",
-      "weight": 1.0,
-      "source": "parsers_test_curriculum_parser_test_live_parse_returns_normalized_markdown",
-      "target": "parsers_curriculum_parser_parse"
-    },
-    {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "parsers/curriculum_parser.py",
@@ -6493,17 +6968,6 @@
       "weight": 1.0,
       "confidence_score": 1.0,
       "source": "parsers_curriculum_parser_rationale_110",
-      "target": "parsers_curriculum_parser_render_text"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L77",
-      "weight": 1.0,
-      "source": "parsers_test_curriculum_parser_test_render_text_returns_markdown_table_verbatim",
       "target": "parsers_curriculum_parser_render_text"
     },
     {
@@ -6797,17 +7261,6 @@
     {
       "relation": "calls",
       "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L48",
-      "weight": 1.0,
-      "source": "parsers_test_document_parser_test_hwpx_bytes_to_text_nonempty",
-      "target": "parsers_document_parser_hwpx_bytes_to_text"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "parsers/document_parser.py",
       "source_location": "L393",
@@ -6829,17 +7282,6 @@
     {
       "relation": "calls",
       "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L74",
-      "weight": 1.0,
-      "source": "parsers_test_document_parser_test_hwp_via_synapview",
-      "target": "parsers_document_parser_hwpx_via_preview"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "parsers/document_parser.py",
       "source_location": "L359",
@@ -6856,17 +7298,6 @@
       "weight": 1.0,
       "confidence_score": 1.0,
       "source": "parsers_document_parser_rationale_173",
-      "target": "parsers_document_parser_pdf_to_text_via_vlm"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L57",
-      "weight": 1.0,
-      "source": "parsers_test_document_parser_test_pdf_to_text_via_vlm_returns_pages",
       "target": "parsers_document_parser_pdf_to_text_via_vlm"
     },
     {
@@ -6930,17 +7361,6 @@
       "weight": 1.0,
       "confidence_score": 1.0,
       "source": "parsers_document_parser_rationale_243",
-      "target": "parsers_document_parser_xlsx_to_text"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L40",
-      "weight": 1.0,
-      "source": "parsers_test_document_parser_test_xlsx_to_text_nonempty",
       "target": "parsers_document_parser_xlsx_to_text"
     },
     {
@@ -7399,248 +7819,6 @@
       "confidence_score": 1.0,
       "source": "methods_board_notice_boardnoticecrawler_crawling",
       "target": "methods_board_notice_boardnoticecrawler_crawl_detail"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L29",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_curriculum_parser_py",
-      "target": "parsers_test_curriculum_parser_test_split_year_prefix_extracts_label"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L42",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_curriculum_parser_py",
-      "target": "parsers_test_curriculum_parser_test_split_year_prefix_empty_label_returns_none"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L49",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_curriculum_parser_py",
-      "target": "parsers_test_curriculum_parser_test_split_year_prefix_missing_prefix_returns_none"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L58",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_curriculum_parser_py",
-      "target": "parsers_test_curriculum_parser_test_is_no_table_detects_marker"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L63",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_curriculum_parser_py",
-      "target": "parsers_test_curriculum_parser_test_is_no_table_rejects_other_responses"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L71",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_curriculum_parser_py",
-      "target": "parsers_test_curriculum_parser_test_render_text_returns_markdown_table_verbatim"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L82",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_curriculum_parser_py",
-      "target": "parsers_test_curriculum_parser_fakepilimage"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L88",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_curriculum_parser_py",
-      "target": "parsers_test_curriculum_parser_test_parse_filters_no_table_pages"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L125",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_curriculum_parser_py",
-      "target": "parsers_test_curriculum_parser_test_parse_fails_fast_on_vlm_exception"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L143",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_curriculum_parser_py",
-      "target": "parsers_test_curriculum_parser_test_parse_empty_pdf_returns_no_years"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L164",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_curriculum_parser_py",
-      "target": "parsers_test_curriculum_parser_test_live_parse_returns_normalized_markdown"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L1",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "parsers_test_curriculum_parser_rationale_1",
-      "target": "tests_parsers_test_curriculum_parser_py"
-    },
-    {
-      "relation": "method",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L84",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "parsers_test_curriculum_parser_fakepilimage",
-      "target": "parsers_test_curriculum_parser_fakepilimage_save"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L106",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "parsers_test_curriculum_parser_test_parse_filters_no_table_pages",
-      "target": "parsers_test_curriculum_parser_fakepilimage"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L133",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "parsers_test_curriculum_parser_test_parse_fails_fast_on_vlm_exception",
-      "target": "parsers_test_curriculum_parser_fakepilimage"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L83",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "parsers_test_curriculum_parser_rationale_83",
-      "target": "parsers_test_curriculum_parser_fakepilimage"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_curriculum_parser.py",
-      "source_location": "L126",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "parsers_test_curriculum_parser_rationale_126",
-      "target": "parsers_test_curriculum_parser_test_parse_fails_fast_on_vlm_exception"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L38",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_document_parser_py",
-      "target": "parsers_test_document_parser_test_xlsx_to_text_nonempty"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L46",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_document_parser_py",
-      "target": "parsers_test_document_parser_test_hwpx_bytes_to_text_nonempty"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L54",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_document_parser_py",
-      "target": "parsers_test_document_parser_test_pdf_to_text_via_vlm_returns_pages"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L64",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_parsers_test_document_parser_py",
-      "target": "parsers_test_document_parser_test_hwp_via_synapview"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L1",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "parsers_test_document_parser_rationale_1",
-      "target": "tests_parsers_test_document_parser_py"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L55",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "parsers_test_document_parser_rationale_55",
-      "target": "parsers_test_document_parser_test_pdf_to_text_via_vlm_returns_pages"
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "tests/parsers/test_document_parser.py",
-      "source_location": "L65",
-      "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "parsers_test_document_parser_rationale_65",
-      "target": "parsers_test_document_parser_test_hwp_via_synapview"
     },
     {
       "relation": "contains",
@@ -9057,5 +9235,5 @@
       "source_file": "data/curriculums/\uacf5\uacfc\ub300\ud559/\uc804\uae30\uc804\uc790\uc81c\uc5b4\uacf5\ud559\ubd80"
     }
   ],
-  "built_at_commit": "c779a73d2a843dcb6d2672914e0ecb3e665219cf"
+  "built_at_commit": "80a8761766b7f34f822094b81013ecdf52ee2834"
 }

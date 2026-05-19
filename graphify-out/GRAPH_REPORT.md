@@ -1,16 +1,16 @@
 # Graph Report - knu_ai_assistant  (2026-05-19)
 
 ## Corpus Check
-- 48 files · ~23,578 words
+- 46 files · ~23,675 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 381 nodes · 476 edges · 47 communities (32 shown, 15 thin omitted)
+- 387 nodes · 488 edges · 45 communities (32 shown, 13 thin omitted)
 - Extraction: 86% EXTRACTED · 14% INFERRED · 0% AMBIGUOUS · INFERRED: 69 edges (avg confidence: 0.83)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `c779a73d`
+- Built from commit: `80a87617`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -34,7 +34,6 @@
 - [[_COMMUNITY_App Entry|App Entry]]
 - [[_COMMUNITY_Main Crawl Entry|Main Crawl Entry]]
 - [[_COMMUNITY_HWPX Tests|HWPX Tests]]
-- [[_COMMUNITY_SynapView Tests|SynapView Tests]]
 - [[_COMMUNITY_Chatbot Page|Chatbot Page]]
 - [[_COMMUNITY_Notices Page|Notices Page]]
 - [[_COMMUNITY_Profile Page|Profile Page]]
@@ -63,12 +62,12 @@
   README.md → CLAUDE.md
 - `Integrated RAG chatbot feature` --semantically_similar_to--> `RAG query pipeline (graph.py)`  [INFERRED] [semantically similar]
   README.md → CLAUDE.md
+- `main()` --calls--> `parse()`  [INFERRED]
+  check_pdf.py → parsers/curriculum_parser.py
 - `ingest()` --calls--> `embed_chunks()`  [INFERRED]
   scripts/ingest_curriculum_local.py → embed.py
-- `_retrieve()` --calls--> `embed_query()`  [INFERRED]
-  graph.py → embed.py
-- `_vector_search()` --calls--> `search_chunks()`  [INFERRED]
-  graph.py → db.py
+- `ingest()` --calls--> `insert_document()`  [INFERRED]
+  scripts/ingest_curriculum_local.py → db.py
 
 ## Hyperedges (group relationships)
 - **RAG query pipeline nodes** — claudemd_node_router, claudemd_node_retrieve, claudemd_node_answerer, claudemd_node_verifier [EXTRACTED 1.00]
@@ -84,7 +83,7 @@
 - **전자공학전공 학년도별 교과과정** — jeonjagonghak_major, jeonjagonghak_ee_electronics_2014_to_2020, jeonjagonghak_ee_electronics_2021_to_2024, jeonjagonghak_ee_electronics_2021_to_2025, jeonjagonghak_ee_electronics_2026 [EXTRACTED 1.00]
 - **교과과정 공통 분류 체계** — course_category_major_required, course_category_major_elective, course_category_general [INFERRED 0.85]
 
-## Communities (47 total, 15 thin omitted)
+## Communities (45 total, 13 thin omitted)
 
 ### Community 0 - "Document Parser"
 Cohesion: 0.07
@@ -112,7 +111,7 @@ Nodes (30): completed_in_recent_sessions, deferred_known_issues, last_updated, n
 
 ### Community 6 - "Curriculum Parser (VLM)"
 Cohesion: 0.10
-Nodes (25): main(), _is_no_table(), _page_to_year(), parse(), 학과 교육과정표 PDF → VLM 기반 범용 마크다운 표 추출.  정책 (2026-05-18 도입): - 학과별 표 양식이 다양해서 결정론 파서, parse() 결과의 한 year를 RAG 본문 텍스트로 직렬화.     VLM이 만들어준 markdown_table을 그대로 반환 (inges, VLM 응답의 `[YEAR: ...]` prefix를 떼어내 (year_label, markdown_table) 반환.     prefix 없거, 페이지 이미지 1장을 VLM에 던져 year dict 1개 반환. 표 없으면 None.     VLM 호출 실패 시 예외를 그대로 위로 던진다 (+17 more)
+Nodes (26): main(), 실행 방법:   docker compose exec app python check_pdf.py, _is_no_table(), _page_to_year(), parse(), 학과 교육과정표 PDF → VLM 기반 범용 마크다운 표 추출.  정책 (2026-05-18 도입): - 학과별 표 양식이 다양해서 결정론 파서, parse() 결과의 한 year를 RAG 본문 텍스트로 직렬화.     VLM이 만들어준 markdown_table을 그대로 반환 (inges, VLM 응답의 `[YEAR: ...]` prefix를 떼어내 (year_label, markdown_table) 반환.     prefix 없거 (+18 more)
 
 ### Community 7 - "Semiconductor Curriculum"
 Cohesion: 0.18
@@ -128,7 +127,7 @@ Nodes (4): BoardNoticeConfig, BoardNoticeCrawler, 제목·본문 등을 합쳐 X
 
 ### Community 10 - "Curriculum Ingest Script"
 Cohesion: 0.21
-Nodes (12): source 테이블에 UPSERT 후 id 반환., upsert_source(), _expand_years(), ingest(), _lead_sentence(), main(), _pseudo_url(), data/curriculums/**/<key>*.pdf 를 DB에 적재한다.  정책: 커리큘럼은 사람이 손으로 정제한 PDF를 data/curr (+4 more)
+Nodes (12): source 테이블에 UPSERT 후 id 반환., upsert_source(), _expand_years(), ingest(), _lead_sentence(), main(), _pseudo_url(), data/curriculums/**/<key>*.pdf 를 DB에 적재한다.  실행 방법:   docker compose exec app pyt (+4 more)
 
 ### Community 11 - "Embedding Module"
 Cohesion: 0.31
@@ -146,25 +145,29 @@ Nodes (6): _get_reranker(), BGE-reranker 로컬 cross-encoder 재정렬.  graph.
 Cohesion: 0.40
 Nodes (4): permissions, allow, worktree, bgIsolation
 
+### Community 18 - "HWPX Tests"
+Cohesion: 0.21
+Nodes (12): _embed_with_retry(), _iter_documents(), main(), _process_one(), DB document_*만으로 청크/임베딩 재생성. 크롤링 우회.  용도: CHUNK_SIZE / CHUNK_OVERLAP / 임베딩 정책 변경, 한글 카테고리 또는 영문 slug 입력 정규화., document_{slug} 전수 또는 단건 SELECT 제너레이터., exponential backoff 4회. 모든 예외 retry — auth 같은 영구 에러도 최대 7s 낭비 허용. (+4 more)
+
 ## Knowledge Gaps
 - **65 isolated node(s):** `project`, `working_directory`, `last_updated`, `vector_db`, `embedding` (+60 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **15 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **13 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `ingest()` connect `Curriculum Ingest Script` to `Embedding Module`, `DB Schema & Queries`, `Curriculum Parser (VLM)`?**
-  _High betweenness centrality (0.150) - this node is a cross-community bridge._
+  _High betweenness centrality (0.147) - this node is a cross-community bridge._
 - **Why does `parse()` connect `Curriculum Parser (VLM)` to `Curriculum Ingest Script`?**
-  _High betweenness centrality (0.131) - this node is a cross-community bridge._
+  _High betweenness centrality (0.129) - this node is a cross-community bridge._
 - **Why does `_page_to_year()` connect `Curriculum Parser (VLM)` to `Document Parser`?**
-  _High betweenness centrality (0.114) - this node is a cross-community bridge._
+  _High betweenness centrality (0.111) - this node is a cross-community bridge._
 - **Are the 7 inferred relationships involving `ingest()` (e.g. with `embed_chunks()` and `upsert_source()`) actually correct?**
   _`ingest()` has 7 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 6 inferred relationships involving `parse()` (e.g. with `main()` and `test_parse_filters_no_table_pages()`) actually correct?**
+- **Are the 6 inferred relationships involving `parse()` (e.g. with `ingest()` and `main()`) actually correct?**
   _`parse()` has 6 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `RAG 파이프라인 튜닝 상수와 환경 변수 일괄 관리.  기존에 embed.py / graph.py / rerank.py / db.py / mod`, `provider 토글에 따라 OpenAI/Gemini 임베딩 클라이언트를 돌려준다.      두 provider 모두 결과 차원을 EMBEDDI`, `RecursiveCharacterTextSplitter 싱글톤. lazy import로 cold start 영향 회피.` to the rest of the system?**
-  _156 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `실행 방법:   docker compose exec app python check_pdf.py`, `data/curriculums/**/<key>*.pdf 를 DB에 적재한다.  실행 방법:   docker compose exec app pyt`, `라벨에서 적용 연도를 모두 풀어낸다.      - "2011~2014학년도 입학자부터 적용" → [2011, ..., 2014] (range)` to the rest of the system?**
+  _161 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Document Parser` be split into smaller, more focused modules?**
   _Cohesion score 0.07087486157253599 - nodes in this community are weakly interconnected._
