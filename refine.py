@@ -59,12 +59,13 @@ def _user_prompt(item: dict) -> str:
 - 본문: "공과대학 재학생 한정" → ["공과대학", "재학생"]
 
 ## category
-- 다음 5가지 대분류 중 가장 적합한 **단 1개**만 무조건 선택한다.
+- 다음 6가지 대분류 중 가장 적합한 **단 1개**만 무조건 선택한다.
   1. 장학/등록 (국가장학금, 등록금 납부 등)
   2. 학사/수업 (수강신청, 휴학, 졸업, 성적 등)
   3. 진로/취업 (채용, 인턴, 자격증, 취업특강 등)
   4. 행사/공모전 (대회, 해커톤, 동아리, 축제 등)
   5. 일반/기타 (분실물, 시설안내, 예비군 등 위 4개에 속하지 않는 모든 것)
+  6. 규정/학칙 (학칙, 학사관리규정, 등록금규정 등 학교 공식 규정/조항)
 
 ## keywords
 - 본문의 핵심 주제, 혜택, 다루는 기술 등 사용자가 관심 가질만한 해시태그 단어를 1~3개 추출한다.
@@ -79,13 +80,10 @@ def _user_prompt(item: dict) -> str:
 """
 
 
-def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], dict | None]]:
-    """크롤링 결과를 LLM으로 구조화 + 원본 assets + extra(JSONB)를 동행시켜 반환.
+def refine(crawled_data: List[dict]) -> List[MetadataSchema]:
+    """크롤링 결과를 LLM으로 구조화해 반환.
 
-    반환: [(MetadataSchema, assets, extra), ...]  (입력 순서 유지)
-      - MetadataSchema: LLM이 추출한 정규화 메타데이터 (pre_refined면 크롤러가 직접 채움)
-      - assets: crawler가 모은 asset 메타 리스트
-      - extra: document.extra(JSONB)로 저장할 비정형 데이터 dict (없으면 None)
+    반환: [MetadataSchema, ...]  (입력 순서 유지)
 
     크롤러가 `pre_refined=True`를 세팅하면 LLM 호출 없이 `metadata` dict를 그대로 사용.
     정형 데이터(교과과정표 등)는 LLM 환각 피하려고 이 경로 사용.
@@ -131,13 +129,7 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
             result.url = item["url"]
             results[idx] = result
 
-    refined: List[Tuple[MetadataSchema, List[dict], dict | None]] = []
-    for idx, item in enumerate(crawled_data):
-        result = results[idx]
-        if result is None:
-            continue  # LLM 끝까지 실패한 항목은 스킵
-        refined.append((result, item.get("assets", []), item.get("extra")))
-    return refined
+    return [r for r in results if r is not None]
 
 
 def _invoke_with_retry(model, system_msg: SystemMessage, item: dict) -> MetadataSchema | None:

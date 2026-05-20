@@ -19,7 +19,7 @@ class MetadataSchema(BaseModel):
     end_date: Optional[str] = Field(description="접수 마감일 (yyyy-mm-dd 형식). 본문에 없으면 null")
     
     # [수정 2] 대학교의 모든 범주를 커버하는 '고정형 대분류' (DB의 게시판 탭 역할)
-    category: Literal["장학/등록", "학사/수업", "진로/취업", "행사/공모전", "일반/기타"] = Field(description="글의 대분류 카테고리")
+    category: Literal["장학/등록", "학사/수업", "진로/취업", "행사/공모전", "일반/기타", "규정/학칙"] = Field(description="글의 대분류 카테고리")
     
     # [수정 3] 유연성을 100% 보장하는 '개방형 키워드' 추가 (유사도 검색 및 해시태그 역할)
     keywords: List[str] = Field(description="본문의 핵심 주제나 관심사를 나타내는 단어 3개 (예: ['해커톤', '인공지능', 'AWS'])")

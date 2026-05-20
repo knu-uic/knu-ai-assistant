@@ -16,7 +16,7 @@ URL:
 - local://curriculum/<key>#year=<year_slug> 형태의 의사 URL.
   파일명이 아니라 key 기반이라 archive 파일 여러 개여도 url 정체성이 학과 단위로 고정.
 - insert_document 의 ON CONFLICT (url) UPDATE 가 곧 UPSERT 역할 — 같은 url 재실행 시
-  content/title/keywords/extra 갱신되고 document_id 유지, chunk 는 insert_chunks 가
+  content/title/keywords 갱신되고 document_id 유지, chunk 는 insert_chunks 가
   document_id 기준 delete+insert 하므로 결과적으로 풀 재처리와 동일.
 - 같은 key 의 PDF 여러 개에서 같은 year_label 이 두 번 등장하면 stderr 경고 출력
   (의도된 archive 덮어쓰기일 수도, 실수일 수도 — 관리자가 판단).
@@ -39,8 +39,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from db import insert_assets, insert_chunks, insert_document, upsert_source
-from embed import embed_chunks
+from db import insert_chunks, insert_document, upsert_source
+from embed import embed_query
 from parsers.curriculum_parser import parse, render_text
 
 
@@ -126,6 +126,37 @@ def _pseudo_url(key: str, year_label: str) -> str:
     return f"local://curriculum/{key}#year={slug}"
 
 
+def _row_chunks(title: str, lead: str, table_md: str) -> list[str]:
+    """markdown 표를 행 단위로 split 하고 각 행 청크 앞에 헤더+separator 를 강제 prepend.
+
+    이유: 단일 거대 chunk 는 임베딩 의미 dilution + reranker(max 256 tokens) truncate 로
+    retrieval 정확도가 떨어진다. row 단위로 쪼개되 헤더·구분선·lead 를 모든 chunk 가
+    가지고 있으면 "데이터구조 학점" 같은 구체 쿼리에 정확한 row 가 1등 매칭된다.
+
+    헤더 detect 실패 시 표 전체를 1 청크로 폴백 (VLM 응답 깨졌을 때 정보 보존 우선).
+    """
+    lines = [ln for ln in table_md.split("\n") if ln.strip()]
+    header = ""
+    sep = ""
+    rows: list[str] = []
+    for ln in lines:
+        if not ln.startswith("|"):
+            continue
+        if not header:
+            header = ln
+        elif not sep:
+            sep = ln
+        else:
+            rows.append(ln)
+    if not header or not sep or not rows:
+        body = f"{lead}\n\n{table_md}" if lead else table_md
+        return [f"[문서 제목: {title}]\n{body}"]
+    head_block = f"[문서 제목: {title}]\n"
+    lead_block = f"{lead}\n\n" if lead else ""
+    table_head = f"{header}\n{sep}\n"
+    return [f"{head_block}{lead_block}{table_head}{row}" for row in rows]
+
+
 def ingest(pdf_path: Path, meta: dict, key: str, seen_urls: set[str]) -> int:
     """1 PDF → 입학년도별 document 적재. 같은 key 의 다른 PDF 에서 이미 등록한 url 을
     또 만나면 stderr 경고 (archive overwrite 감지). 등록 개수 반환.
@@ -141,7 +172,6 @@ def ingest(pdf_path: Path, meta: dict, key: str, seen_urls: set[str]) -> int:
         name=meta["name"],
         kind="academic",
         department=meta["department"],
-        base_url="local://curriculum",
     )
 
     count = 0
@@ -163,11 +193,6 @@ def ingest(pdf_path: Path, meta: dict, key: str, seen_urls: set[str]) -> int:
         content = f"{lead}\n\n{body}" if lead else body
         title = f"{meta['name']} ({year_label})"
         keywords = ["교육과정", "전공", "학점"] + [f"{y}학년도" for y in applicable]
-        extra = {
-            "curriculum": {"years": [year]},
-            "page_url": meta["page_url"],
-            "applicable_years": applicable,
-        }
 
         document_id = insert_document(
             source_id=source_id,
@@ -179,11 +204,12 @@ def ingest(pdf_path: Path, meta: dict, key: str, seen_urls: set[str]) -> int:
             category="학사/수업",
             target=[meta["department"]],
             keywords=keywords,
-            extra=extra,
             posted_at=None,
         )
-        insert_assets("학사/수업", document_id, [])
-        chunks = embed_chunks(content, title=title)
+        # 행 단위 chunk + 헤더/separator/lead prepend. 단일 거대 chunk 는 임베딩 dilution
+        # + reranker 256토큰 truncate 로 retrieval 약점이라 row 단위로 쪼개 의미 매칭 강화.
+        row_chunk_texts = _row_chunks(title, lead, body)
+        chunks = [(idx, txt, embed_query(txt)) for idx, txt in enumerate(row_chunk_texts)]
         insert_chunks("학사/수업", document_id, chunks)
         count += 1
 

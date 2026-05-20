@@ -1,14 +1,10 @@
-import hashlib
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable, Iterator, List, Optional
 from urllib.parse import urljoin
 
 from playwright.sync_api import sync_playwright
 
 from parsers.document_parser import attachment_to_text, inline_image_to_text, xlsx_relevant
-
-ASSETS_DIR = Path("crawl_result/assets")
 
 
 @dataclass(frozen=True)
@@ -47,20 +43,6 @@ class BoardNoticeCrawler:
         if url.startswith("http"):
             return url
         return urljoin(self.BASE_URL, url)
-
-    def _save_image_asset(self, raw_bytes: bytes, mime) -> str:
-        ASSETS_DIR.mkdir(parents=True, exist_ok=True)
-        digest = hashlib.sha1(raw_bytes).hexdigest()
-        if mime == "image/png":
-            ext = ".png"
-        elif mime == "image/gif":
-            ext = ".gif"
-        else:
-            ext = ".jpg"
-        path = ASSETS_DIR / f"{digest}{ext}"
-        if not path.exists():
-            path.write_bytes(raw_bytes)
-        return str(path)
 
     def _collect_attachments(self, detail_page) -> List[dict]:
         items = []
@@ -180,45 +162,19 @@ class BoardNoticeCrawler:
             body_text = ""
 
         content_parts = [body_text] if body_text else []
-        assets: List[dict] = []
-        order = 0
 
         for img_url in self._collect_inline_images(detail_page):
             print(f"  - 본문 이미지 처리: {img_url}")
-            txt, raw_bytes, mime = inline_image_to_text(img_url, context)
+            txt, _raw_bytes, _mime = inline_image_to_text(img_url, context)
             if txt:
                 content_parts.append(f"[본문 이미지]\n{txt}")
-            if raw_bytes is not None:
-                assets.append({
-                    "kind": "inline_image",
-                    "filename": None,
-                    "source_url": img_url,
-                    "storage_path": self._save_image_asset(raw_bytes, mime),
-                    "mime_type": mime,
-                    "extracted_text": txt,
-                    "order_idx": order,
-                })
-                order += 1
 
         include_xlsx = xlsx_relevant(title, body_text)
         for att in self._collect_attachments(detail_page):
             print(f"  - 첨부 처리: {att['filename']}")
-            txt, meta = attachment_to_text(att, context, include_xlsx=include_xlsx)
+            txt, _meta = attachment_to_text(att, context, include_xlsx=include_xlsx)
             if txt:
                 content_parts.append(txt)
-            storage_path = None
-            if meta.get("raw_bytes") is not None:
-                storage_path = self._save_image_asset(meta["raw_bytes"], meta.get("mime_type"))
-            assets.append({
-                "kind": meta["kind"],
-                "filename": meta["filename"],
-                "source_url": meta["source_url"],
-                "storage_path": storage_path,
-                "mime_type": meta.get("mime_type"),
-                "extracted_text": meta.get("extracted_text", ""),
-                "order_idx": order,
-            })
-            order += 1
 
         content = "\n\n".join(content_parts) if content_parts else "내용을 찾을 수 없음"
         print(title)
@@ -230,5 +186,4 @@ class BoardNoticeCrawler:
             "date": date,
             "content": content,
             "url": post_url,
-            "assets": assets,
         }

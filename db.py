@@ -1,4 +1,3 @@
-import json
 import logging
 import psycopg
 from psycopg import sql
@@ -16,9 +15,15 @@ CATEGORY_SLUGS: dict[str, str] = {
     "진로/취업": "career",
     "행사/공모전": "event",
     "일반/기타": "etc",
+    "규정/학칙": "regulation",
 }
 SLUG_TO_CATEGORY: dict[str, str] = {v: k for k, v in CATEGORY_SLUGS.items()}
 SLUGS: list[str] = list(CATEGORY_SLUGS.values())
+
+# UI 노출에서 제외할 카테고리. RAG retriever(search_chunks) 는 SLUGS 전체를 그대로 검색하므로
+# 챗봇 답변 컨텍스트에는 들어가지만, get_documents 가 채우는 notices/home 카드 목록에는 안 보임.
+_HIDDEN_SLUGS = {"regulation"}
+_VISIBLE_SLUGS: list[str] = [s for s in SLUGS if s not in _HIDDEN_SLUGS]
 
 
 def _slug(category: str) -> str:
@@ -48,7 +53,7 @@ def reset_db():
     with psycopg.connect(DB_URL) as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
 
-        # 이전 스키마(단일 document) 잔재 제거
+        # 이전 스키마(단일 document, document_asset) 잔재 제거
         for legacy in ("notice_asset", "notice", "document_chunk", "document_asset", "document"):
             conn.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE;").format(sql.Identifier(legacy)))
         for slug in SLUGS:
@@ -61,9 +66,7 @@ def reset_db():
                 code VARCHAR(50) UNIQUE NOT NULL,
                 name VARCHAR(100) NOT NULL,
                 kind VARCHAR(20) NOT NULL CHECK (kind IN ('notice', 'academic')),
-                department VARCHAR(100),
-                base_url VARCHAR(500),
-                created_at TIMESTAMPTZ DEFAULT now()
+                department VARCHAR(100)
             );
         """)
 
@@ -80,9 +83,7 @@ def reset_db():
                     end_date DATE,
                     target VARCHAR(100)[],
                     keywords VARCHAR(50)[],
-                    extra JSONB,
-                    crawled_at TIMESTAMPTZ DEFAULT now(),
-                    updated_at TIMESTAMPTZ DEFAULT now()
+                    crawled_at TIMESTAMPTZ DEFAULT now()
                 );
             """).format(doc=_doc_ident(slug)))
             conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {doc}(source_id);").format(
@@ -104,9 +105,7 @@ def reset_db():
                     document_id BIGINT NOT NULL REFERENCES {doc}(id) ON DELETE CASCADE,
                     chunk_idx INT NOT NULL,
                     content TEXT NOT NULL,
-                    source_asset_id BIGINT,
                     embedding vector({dim}) NOT NULL,
-                    created_at TIMESTAMPTZ DEFAULT now(),
                     UNIQUE(document_id, chunk_idx)
                 );
             """).format(
@@ -125,56 +124,32 @@ def reset_db():
                 chunk=_chunk_ident(slug),
             ))
 
-        # asset은 검색 경로가 아니라 부속 데이터 — 통합 유지하되 (category, document_id)로 식별.
-        # FK는 5개 테이블에 걸 수 없어 application-level cascade.
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS document_asset (
-                id BIGSERIAL PRIMARY KEY,
-                category VARCHAR(20) NOT NULL,
-                document_id BIGINT NOT NULL,
-                kind VARCHAR(30) NOT NULL,
-                filename VARCHAR(300),
-                source_url VARCHAR(800) NOT NULL,
-                storage_path VARCHAR(800),
-                mime_type VARCHAR(80),
-                extracted_text TEXT,
-                order_idx INT NOT NULL DEFAULT 0,
-                created_at TIMESTAMPTZ DEFAULT now()
-            );
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_document_asset_doc  ON document_asset(category, document_id);")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_document_asset_kind ON document_asset(kind);")
-
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 student_id VARCHAR(20) PRIMARY KEY,
                 major VARCHAR(50),
                 name VARCHAR(50),
                 year INT,
-                interests TEXT,
-                courses TEXT
+                interests TEXT
             );
         """)
-        # year 컬럼이 없는 기존 dev DB도 흡수.
-        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
         conn.commit()
-        logger.info("✅ source + %d개 category 테이블(%s) + asset/users 생성 완료",
+        logger.info("✅ source + %d개 category 테이블(%s) + users 생성 완료",
                     len(SLUGS), ", ".join(SLUGS))
 
 
-def upsert_source(code: str, name: str, kind: str, department: str | None, base_url: str | None) -> int:
+def upsert_source(code: str, name: str, kind: str, department: str | None) -> int:
     """source 테이블에 UPSERT 후 id 반환."""
     with psycopg.connect(DB_URL) as conn:
         cur = conn.execute("""
-            INSERT INTO source (code, name, kind, department, base_url)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO source (code, name, kind, department)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT (code) DO UPDATE SET
                 name = EXCLUDED.name,
                 kind = EXCLUDED.kind,
-                department = EXCLUDED.department,
-                base_url = EXCLUDED.base_url
+                department = EXCLUDED.department
             RETURNING id;
-        """, (code, name, kind, department, base_url))
+        """, (code, name, kind, department))
         row = cur.fetchone()
         assert row is not None
         source_id = row[0]
@@ -196,33 +171,19 @@ def document_exists(url: str) -> bool:
 
 
 def delete_document_by_url(url: str) -> int:
-    """URL로 5개 category 테이블을 훑어 일치하는 문서·청크·자산을 삭제.
+    """URL로 5개 category 테이블을 훑어 일치하는 문서·청크를 삭제.
 
-    chunks는 FK ON DELETE CASCADE로 자동 정리되지만, document_asset은 FK가 없어서
-    (category, document_id)로 직접 지운 뒤 document를 지운다.
-
-    재크롤 테스트 전 기존 레코드를 깔끔히 비울 용도.
+    chunks는 FK ON DELETE CASCADE로 자동 정리. 재크롤 테스트 전 기존 레코드를 깔끔히 비울 용도.
     """
     total = 0
     with psycopg.connect(DB_URL) as conn:
         for slug in SLUGS:
-            sel_q = sql.SQL("SELECT id FROM {} WHERE url = %s;").format(_doc_ident(slug))
-            cur = conn.execute(sel_q, (url,))
-            rows = cur.fetchall()
-            if not rows:
-                continue
-            category = SLUG_TO_CATEGORY[slug]
-            for (doc_id,) in rows:
-                conn.execute(
-                    "DELETE FROM document_asset WHERE category = %s AND document_id = %s;",
-                    (category, doc_id),
-                )
             del_q = sql.SQL("DELETE FROM {} WHERE url = %s;").format(_doc_ident(slug))
             cur = conn.execute(del_q, (url,))
             total += cur.rowcount or 0
         conn.commit()
     if total:
-        logger.info("🗑  url 삭제 완료 — %d개 document + 종속 chunk/asset 제거", total)
+        logger.info("🗑  url 삭제 완료 — %d개 document + 종속 chunk 제거", total)
     return total
 
 
@@ -253,7 +214,6 @@ def insert_document(
     category: str,
     target,
     keywords,
-    extra: dict | None = None,
     posted_at=None,
 ) -> int:
     """category에 해당하는 document_{slug} 테이블에 UPSERT 후 id 반환."""
@@ -263,13 +223,11 @@ def insert_document(
     end_date = _normalize_date(end_date)
     posted_at = _normalize_date(posted_at)
 
-    extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
-
     query = sql.SQL("""
         INSERT INTO {doc}
             (source_id, url, title, content, posted_at, start_date, end_date,
-             target, keywords, extra, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+             target, keywords)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (url) DO UPDATE SET
             source_id = EXCLUDED.source_id,
             title = EXCLUDED.title,
@@ -278,54 +236,20 @@ def insert_document(
             start_date = EXCLUDED.start_date,
             end_date = EXCLUDED.end_date,
             target = EXCLUDED.target,
-            keywords = EXCLUDED.keywords,
-            extra = EXCLUDED.extra,
-            updated_at = now()
+            keywords = EXCLUDED.keywords
         RETURNING id;
     """).format(doc=_doc_ident(slug))
 
     with psycopg.connect(DB_URL) as conn:
         cur = conn.execute(query, (source_id, url, title, content, posted_at,
                                    start_date, end_date,
-                                   target, keywords, extra_json))
+                                   target, keywords))
         row = cur.fetchone()
         assert row is not None
         document_id = row[0]
         conn.commit()
         logger.info("✅ [%s] document_%s 저장 완료 (id=%d)", title, slug, document_id)
         return document_id
-
-
-def insert_assets(category: str, document_id: int, assets: list[dict]):
-    """document_asset(통합)에 일괄 저장. (category, document_id) 키로 기존 자산 삭제 후 재삽입."""
-    if not assets:
-        return
-    _slug(category)  # 유효성 검증만
-
-    with psycopg.connect(DB_URL) as conn:
-        conn.execute(
-            "DELETE FROM document_asset WHERE category = %s AND document_id = %s;",
-            (category, document_id),
-        )
-        for a in assets:
-            conn.execute("""
-                INSERT INTO document_asset
-                    (category, document_id, kind, filename, source_url, storage_path,
-                     mime_type, extracted_text, order_idx)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                category,
-                document_id,
-                a["kind"],
-                a.get("filename"),
-                a["source_url"],
-                a.get("storage_path"),
-                a.get("mime_type"),
-                a.get("extracted_text", ""),
-                a.get("order_idx", 0),
-            ))
-        conn.commit()
-        logger.info("  ↳ asset %d건 저장 완료", len(assets))
 
 
 def insert_chunks(category: str, document_id: int, chunks: list[tuple[int, str, list[float]]]):
@@ -484,7 +408,7 @@ def get_documents(
 
     정렬: posted_at(원본 등록일) 내림차순. NULL은 crawled_at(크롤링 시각)으로 fallback.
     """
-    target_slugs = [_slug(category)] if category else list(SLUGS)
+    target_slugs = [_slug(category)] if category else list(_VISIBLE_SLUGS)
 
     conditions: list[sql.Composable] = []
     base_params: list = []
@@ -535,11 +459,9 @@ def ensure_users_schema():
                 major VARCHAR(50),
                 name VARCHAR(50),
                 year INT,
-                interests TEXT,
-                courses TEXT
+                interests TEXT
             );
         """)
-        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
         conn.commit()
 
 

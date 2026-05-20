@@ -7,7 +7,6 @@ DEPARTMENT_CRAWLERS = {
 
 CRAWLERS = [
     KONGJU_CRAWLERS["main_notice"],
-    DEPARTMENT_CRAWLERS["cse_curriculum"],
     DEPARTMENT_CRAWLERS["cse_notice"],
     KONGJU_CRAWLERS["scholarship_info"],
 ]

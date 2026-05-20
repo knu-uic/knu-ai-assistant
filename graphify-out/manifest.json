@@ -5,9 +5,9 @@
     "semantic_hash": "d16b532d5ae7af06fa89b62f960d3b5e"
   },
   "/Users/iseung-won/knu_ai_assistant/db.py": {
-    "mtime": 1779012357.4513004,
-    "ast_hash": "b6cb418f98074fff0deedda367669d0c",
-    "semantic_hash": "b6cb418f98074fff0deedda367669d0c"
+    "mtime": 1779212272.9522479,
+    "ast_hash": "77784120a7737cb3fb509e1fd992b3a0",
+    "semantic_hash": ""
   },
   "/Users/iseung-won/knu_ai_assistant/state.json": {
     "mtime": 1778883887.3909922,
@@ -25,19 +25,19 @@
     "semantic_hash": ""
   },
   "/Users/iseung-won/knu_ai_assistant/ui.py": {
-    "mtime": 1778750509.9613037,
-    "ast_hash": "ee2eca8462c47288d194db9e8482b252",
-    "semantic_hash": "ee2eca8462c47288d194db9e8482b252"
+    "mtime": 1779212319.5676587,
+    "ast_hash": "690cfb60eeada03e3519317833116d02",
+    "semantic_hash": ""
   },
   "/Users/iseung-won/knu_ai_assistant/graph.py": {
-    "mtime": 1779157963.9549797,
-    "ast_hash": "dff1915411eacf6b2d6f02b4ad2f8581",
+    "mtime": 1779212298.1289012,
+    "ast_hash": "ef7083e299e9c53e2c0ebbad9f63b8e9",
     "semantic_hash": ""
   },
   "/Users/iseung-won/knu_ai_assistant/refine.py": {
-    "mtime": 1778944061.1840227,
-    "ast_hash": "3f01f6648a5350b864a6ba684759fdab",
-    "semantic_hash": "3f01f6648a5350b864a6ba684759fdab"
+    "mtime": 1779212307.394682,
+    "ast_hash": "c1be86bf69c2bde31dc4d3ebcdfb3421",
+    "semantic_hash": ""
   },
   "/Users/iseung-won/knu_ai_assistant/model.py": {
     "mtime": 1778944061.183533,
@@ -55,37 +55,37 @@
     "semantic_hash": "01b7e7508fb9f9ea4b2c89a01bb1ad83"
   },
   "/Users/iseung-won/knu_ai_assistant/main.py": {
-    "mtime": 1779160117.6090555,
-    "ast_hash": "d04e0bfc1552e72b21354d3476f379c1",
+    "mtime": 1779202756.3937154,
+    "ast_hash": "c331fb992191859472285c4cbeb94f9d",
     "semantic_hash": ""
   },
   "/Users/iseung-won/knu_ai_assistant/schema.py": {
-    "mtime": 1778690474.4777792,
-    "ast_hash": "3dc1c2619e9f7da027df18fc5939bcff",
-    "semantic_hash": "3dc1c2619e9f7da027df18fc5939bcff"
+    "mtime": 1779212279.4943376,
+    "ast_hash": "5308ec2c43da15c840e6b4d4eed4c585",
+    "semantic_hash": ""
   },
   "/Users/iseung-won/knu_ai_assistant/.hf_cache/hub/models--BAAI--bge-reranker-v2-m3/.no_exist/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e/processor_config.json": {
-    "mtime": 1779159104.615486,
+    "mtime": 1779201822.976679,
     "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/Users/iseung-won/knu_ai_assistant/.hf_cache/hub/models--BAAI--bge-reranker-v2-m3/.no_exist/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e/adapter_config.json": {
-    "mtime": 1779159103.862905,
+    "mtime": 1779201822.295773,
     "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/Users/iseung-won/knu_ai_assistant/.hf_cache/hub/models--BAAI--bge-reranker-v2-m3/.no_exist/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e/modules.json": {
-    "mtime": 1779159102.852594,
+    "mtime": 1779201821.643165,
     "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/Users/iseung-won/knu_ai_assistant/.hf_cache/hub/models--BAAI--bge-reranker-v2-m3/.no_exist/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e/video_preprocessor_config.json": {
-    "mtime": 1779159105.054937,
+    "mtime": 1779201823.405577,
     "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/Users/iseung-won/knu_ai_assistant/.hf_cache/hub/models--BAAI--bge-reranker-v2-m3/.no_exist/953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e/preprocessor_config.json": {
-    "mtime": 1779159105.273864,
+    "mtime": 1779201823.613539,
     "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
@@ -135,9 +135,9 @@
     "semantic_hash": "d1a505d8c8a2c3184d94fd934d8e186d"
   },
   "/Users/iseung-won/knu_ai_assistant/crawlers/registry.py": {
-    "mtime": 1778944216.8288457,
-    "ast_hash": "2bfcbff9ff13f9455ec02827fa15a379",
-    "semantic_hash": "2bfcbff9ff13f9455ec02827fa15a379"
+    "mtime": 1779203731.1709068,
+    "ast_hash": "ef613d9f0eeed8bb765430602403a1a1",
+    "semantic_hash": ""
   },
   "/Users/iseung-won/knu_ai_assistant/crawlers/__init__.py": {
     "mtime": 1778944287.349732,
@@ -155,9 +155,9 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/Users/iseung-won/knu_ai_assistant/crawlers/methods/board_notice.py": {
-    "mtime": 1779080206.29698,
-    "ast_hash": "07be0a2931fdad9601ff2a37eef2065e",
-    "semantic_hash": "07be0a2931fdad9601ff2a37eef2065e"
+    "mtime": 1779202803.3490324,
+    "ast_hash": "c2cba67e6983b43efcc4ed9f56396052",
+    "semantic_hash": ""
   },
   "/Users/iseung-won/knu_ai_assistant/crawlers/sites/__init__.py": {
     "mtime": 1778944288.9112835,
@@ -205,8 +205,8 @@
     "semantic_hash": "582b225e37f0f8f495c2646785bd6a8a"
   },
   "/Users/iseung-won/knu_ai_assistant/scripts/ingest_curriculum_local.py": {
-    "mtime": 1779162664.4625893,
-    "ast_hash": "d26d590605de00026a98cdeabb2ea9e0",
+    "mtime": 1779241080.842204,
+    "ast_hash": "67c5c9e5ac723e9fff3fab9ade4b920c",
     "semantic_hash": ""
   },
   "/Users/iseung-won/knu_ai_assistant/requirements.txt": {
@@ -382,6 +382,11 @@
   "/Users/iseung-won/knu_ai_assistant/scripts/rechunk.py": {
     "mtime": 1779162487.011487,
     "ast_hash": "432f77789ff1301d50af00fc10a6c616",
+    "semantic_hash": ""
+  },
+  "/Users/iseung-won/knu_ai_assistant/scripts/ingest_regulation.py": {
+    "mtime": 1779241048.759255,
+    "ast_hash": "215a4e71aa58d4d0cdaaa4c397175ac8",
     "semantic_hash": ""
   }
 }

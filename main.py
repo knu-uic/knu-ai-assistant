@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from crawlers import CRAWLERS
 from refine import refine
-from db import reset_db, upsert_source, insert_document, insert_assets, insert_chunks, document_exists
+from db import reset_db, upsert_source, insert_document, insert_chunks, document_exists
 from embed import embed_chunks
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,6 @@ if __name__ == "__main__":
                 name=mod.SOURCE_NAME,
                 kind=mod.KIND,
                 department=mod.DEPARTMENT,
-                base_url=mod.BASE_URL,
             )
             logger.info("[%s] source 등록 완료 (id=%d)", mod.SOURCE_CODE, source_id)
 
@@ -90,12 +89,12 @@ if __name__ == "__main__":
             failed_sources.append((mod.SOURCE_CODE, str(e)))
             continue
 
-        for doc, assets, extra in refined_data:
+        for doc in refined_data:
             try:
                 logger.info(
-                    "제목: %s | 카테고리: %s | 대상: %s | 등록일: %s | 접수: %s ~ %s | url: %s | keywords: %s | assets: %d건",
+                    "제목: %s | 카테고리: %s | 대상: %s | 등록일: %s | 접수: %s ~ %s | url: %s | keywords: %s",
                     doc.title, doc.category, doc.target, posted_by_url.get(doc.url),
-                    doc.start_date, doc.end_date, doc.url, doc.keywords, len(assets),
+                    doc.start_date, doc.end_date, doc.url, doc.keywords,
                 )
 
                 document_id = insert_document(
@@ -108,10 +107,8 @@ if __name__ == "__main__":
                     category=doc.category,
                     target=doc.target,
                     keywords=doc.keywords,
-                    extra=extra,
                     posted_at=posted_by_url.get(doc.url),
                 )
-                insert_assets(doc.category, document_id, assets)
 
                 chunks = embed_chunks(doc.content, title=doc.title)
                 insert_chunks(doc.category, document_id, chunks)
