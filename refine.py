@@ -1,4 +1,5 @@
 import time
+from datetime import date, datetime
 from typing import Any, List, Tuple, cast
 import httpx
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -13,6 +14,10 @@ _MAX_ATTEMPTS = 4
 _BACKOFF_BASE = 2.0  # 2s, 4s, 8s
 # Gemini Tier 1 RPM 1000 — 동시성 10이면 RPM 600 정도라 안전 마진.
 _BATCH_CONCURRENCY = 10
+# 메타데이터 추출에는 첨부 원문 전체가 필요 없다. 긴 XLSX/PDF가 붙은
+# 공지는 LLM 입력만 줄이고, 저장/임베딩에는 원문을 보존한다.
+_REFINE_FULL_CONTENT_LIMIT = 3200
+_REFINE_ASSET_NAME_LIMIT = 12
 
 
 SYSTEM_PROMPT = """
@@ -32,6 +37,7 @@ def _user_prompt(item: dict) -> str:
 # 입력
 - 제목: {item['title']}
 - URL: {item['url']}
+- 등록일: {item.get('date') or '미상'}
 - 본문:
 {item['content']}
 
@@ -70,13 +76,123 @@ def _user_prompt(item: dict) -> str:
 - 본문의 핵심 주제, 혜택, 다루는 기술 등 사용자가 관심 가질만한 해시태그 단어를 1~3개 추출한다.
 - 예시: ["멘토링"], ["해외연수", "어학"], ["파이썬", "특강"]
 
+## summary
+- 공지의 핵심 내용을 2~3문장으로 요약한다.
+- 대상, 기간, 장소, 신청/참여 방법, 혜택, 문의처가 명시되어 있으면 포함한다.
+- 본문에 없는 사실은 절대 추가하지 않는다.
+- 날짜는 본문에 적힌 표현을 기준으로 하되, 연도 없는 날짜는 게시글 등록연도 기준으로 해석한다.
+
 ## start_date / end_date
 - 접수기간을 시작일(start_date)과 마감일(end_date)로 분리해서 각각 yyyy-mm-dd 형식으로 추출한다.
 - "2026-04-15 ~ 2026-05-04" → start_date="2026-04-15", end_date="2026-05-04"
 - 마감일만 있는 경우(예: "~ 2026-05-04", "5월 4일까지") → start_date=null, end_date="2026-05-04"
 - 시작일만 있는 경우 → start_date만 채우고 end_date=null
 - 본문에 날짜가 전혀 없으면 둘 다 null.
-"""
+	"""
+
+
+def _clip(text: str, limit: int) -> str:
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + f"\n... [LLM 입력 축소: {len(text)}자 중 {limit}자만 포함]"
+
+
+def _content_before_first_attachment(content: str) -> str:
+    markers = ["\n[첨부:"]
+    positions = [content.find(marker) for marker in markers if content.find(marker) != -1]
+    if not positions:
+        return content
+    return content[:min(positions)]
+
+
+def _asset_name_lines(assets: list[dict]) -> list[str]:
+    lines = []
+    for asset in assets[:_REFINE_ASSET_NAME_LIMIT]:
+        extracted = asset.get("extracted_text") or ""
+        filename = asset.get("filename") or "(본문 이미지)"
+        lines.append(
+            f"- {asset.get('kind')}: {filename} (추출 {len(extracted)}자)"
+        )
+    return lines
+
+
+def _parse_posted_year(raw: str | None) -> int | None:
+    """게시글 등록일에서 연도만 뽑는다. 실패하면 None."""
+    if not raw:
+        return None
+    s = raw.strip()
+    if not s or "찾을 수 없음" in s:
+        return None
+    s = s.split()[0].replace(".", "-").replace("/", "-").rstrip("-")
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").year
+    except ValueError:
+        pass
+    try:
+        return int(s.split("-")[0])
+    except (ValueError, TypeError, IndexError):
+        return None
+
+
+def _adjust_relative_date_year(value: str | None, posted_year: int | None, evidence: str) -> str | None:
+    """LLM이 연도 없는 날짜에 임의 연도를 붙인 경우 게시글 등록연도로 보정한다.
+
+    원문에 LLM이 고른 연도가 직접 등장하면 명시 날짜일 가능성이 있으므로 건드리지 않는다.
+    """
+    if not value or posted_year is None:
+        return value
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return value
+    if parsed.year == posted_year:
+        return value
+    if str(parsed.year) in evidence:
+        return value
+    try:
+        return parsed.replace(year=posted_year).isoformat()
+    except ValueError:
+        return value
+
+
+def _adjust_result_dates(result: MetadataSchema, item: dict) -> None:
+    posted_year = _parse_posted_year(item.get("date"))
+    evidence = "\n".join([
+        item.get("title") or "",
+        item.get("content") or "",
+    ])
+    result.start_date = _adjust_relative_date_year(result.start_date, posted_year, evidence)
+    result.end_date = _adjust_relative_date_year(result.end_date, posted_year, evidence)
+
+
+def _llm_item(item: dict) -> dict:
+    """LLM 메타데이터 추출용 입력 축소본. 원본 item은 저장 단계에서 보존된다.
+
+    짧은 공지는 전체 텍스트를 그대로 보낸다. 긴 공지는 본문 앞부분과
+    첨부파일 목록만 전달한다.
+    """
+    content = item.get("content") or ""
+    if len(content) <= _REFINE_FULL_CONTENT_LIMIT:
+        return item
+
+    assets = item.get("assets") or []
+    body_text = _content_before_first_attachment(content)
+    asset_names = "\n".join(_asset_name_lines(assets))
+    body_budget = _REFINE_FULL_CONTENT_LIMIT - len(asset_names) - 120
+    compact_parts = [
+        "[본문 앞부분]",
+        _clip(body_text, max(800, body_budget)),
+    ]
+    if asset_names:
+        compact_parts.extend(["", "[첨부파일 목록]", asset_names])
+    compact_parts.append(
+        f"\n[원문 길이: {len(content)}자, 저장/임베딩에는 원문 전체 사용]"
+    )
+
+    compact = dict(item)
+    compact["content"] = "\n".join(compact_parts)
+    return compact
 
 
 def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], dict | None]]:
@@ -103,7 +219,7 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
         if item.get("pre_refined"):
             results[idx] = MetadataSchema(**item["metadata"])
         else:
-            needs_llm.append((idx, item))
+            needs_llm.append((idx, _llm_item(item)))
 
     if needs_llm:
         model = get_llm().with_structured_output(MetadataSchema)
@@ -117,18 +233,20 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
             config={"max_concurrency": _BATCH_CONCURRENCY},
             return_exceptions=True,
         )
-        for (idx, item), out in zip(needs_llm, batch_out):
+        for (idx, llm_item), out in zip(needs_llm, batch_out):
+            original_item = crawled_data[idx]
             if isinstance(out, Exception):
                 # batch에서 죽은 항목만 단건 retry로 흡수 (네트워크 흔들림 대부분 여기서 회복)
-                print(f"  ↻ batch 실패 항목 단건 재시도 [{item.get('url')}] — {type(out).__name__}")
-                out = _invoke_with_retry(model, system_msg, item)
+                print(f"  ↻ batch 실패 항목 단건 재시도 [{original_item.get('url')}] — {type(out).__name__}")
+                out = _invoke_with_retry(model, system_msg, llm_item)
                 if out is None:
                     continue  # 끝까지 실패 → 이 항목만 드롭
             result = cast(MetadataSchema, out)
             # LLM이 content를 요약/축약하면 RAG 청크화 시 정보 손실 → 항상 원본 덮어쓰기.
-            result.content = item["content"]
-            result.title = item["title"]
-            result.url = item["url"]
+            result.content = original_item["content"]
+            result.title = original_item["title"]
+            result.url = original_item["url"]
+            result.summary = (result.summary or "").strip()
             results[idx] = result
 
     refined: List[Tuple[MetadataSchema, List[dict], dict | None]] = []
@@ -136,6 +254,7 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
         result = results[idx]
         if result is None:
             continue  # LLM 끝까지 실패한 항목은 스킵
+        _adjust_result_dates(result, item)
         refined.append((result, item.get("assets", []), item.get("extra")))
     return refined
 

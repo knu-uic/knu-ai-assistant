@@ -1,4 +1,3 @@
-# db.py에서 f-string 안에 중첩 쌍따옴표를 쓰고 있어서 Python 3.12 이상 필요 (PEP 701)
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -10,6 +9,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
         poppler-utils \
         fonts-noto-cjk \
+        libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # 파이썬 패키지 설치

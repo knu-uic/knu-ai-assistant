@@ -1,6 +1,7 @@
 """LangGraph: 라우터(분류+쿼리확장) → retriever → answerer → verifier 4노드 RAG 파이프라인."""
 
 from datetime import date
+import re
 from typing import TypedDict, Literal, List, Dict, Any
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -139,6 +140,7 @@ def _retrieve(
         {
             "url": r[0], "title": r[1], "snippet": r[2], "score": r[3],
             "posted_at": r[4], "start_date": r[5], "end_date": r[6],
+            "summary": r[14] if len(r) > 14 else None,
         }
         for r in (rows or [])
     ]
@@ -149,6 +151,8 @@ def _retrieve(
 # 한정우 환경(설정 파일 보호)을 위해 모듈 상수로 인라인.
 RERANK_CANDIDATES = 15  # vector 1차 후보 수
 RERANK_TOP_N = 3        # cross-encoder 통과 후 최종 컨텍스트 수
+ANSWER_CONTEXT_CHAR_BUDGET = 9000
+ATTACHMENT_NAME_RESERVE = 1200
 
 
 @traceable(run_type="retriever", name="vector_search")
@@ -173,7 +177,7 @@ def _retrieve_with_rerank(
     """vector top-N → BGE-reranker로 재정렬 → top-K → 각 doc 풀문서 전달.
 
     score 필드는 cross-encoder 점수(0~1)로 덮어쓴다.
-    snippet은 매칭 청크가 아닌 document 전체 content (표 등 정보 손실 방지).
+    snippet은 document 전체 content, matched_chunk는 실제 검색/리랭크된 대표 청크.
     """
     q_vec = embed_query(query)
     rows = _vector_search(q_vec, major, categories)
@@ -186,6 +190,8 @@ def _retrieve_with_rerank(
         snippet = full or r[2]
         contexts.append({
             "url": r[0], "title": r[1], "snippet": snippet, "score": s,
+            "matched_chunk": r[2],
+            "summary": r[14] if len(r) > 14 else None,
             "posted_at": r[4], "start_date": r[5], "end_date": r[6],
         })
     return contexts
@@ -206,14 +212,170 @@ def retriever_node(state: ChatState) -> dict:
     return {"contexts": contexts}
 
 
-def _format_context(c: Dict[str, Any]) -> str:
-    """answerer/verifier 공용 컨텍스트 포맷. start/end_date를 명시적으로 노출."""
+_ATTACHMENT_RE = re.compile(r"^\[첨부: (?P<name>.+?)\]\s*$", re.MULTILINE)
+
+
+def _split_content(content: str) -> tuple[str, list[tuple[str, str]]]:
+    matches = list(_ATTACHMENT_RE.finditer(content or ""))
+    if not matches:
+        return content or "", []
+
+    body = content[:matches[0].start()].strip()
+    attachments: list[tuple[str, str]] = []
+    for idx, match in enumerate(matches):
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
+        attachments.append((match.group("name").strip(), content[start:end].strip()))
+    return body, attachments
+
+
+def _append_budget(parts: list[str], text: str, remaining: int) -> int:
+    if remaining <= 0 or not text:
+        return remaining
+    if len(text) <= remaining:
+        parts.append(text)
+        return remaining - len(text)
+    note = f"\n... [컨텍스트 길이 제한으로 이후 {len(text) - remaining}자 제외]"
+    if remaining <= len(note):
+        parts.append(text[:remaining].rstrip())
+    else:
+        keep = remaining - len(note)
+        parts.append(text[:keep].rstrip() + note)
+    return 0
+
+
+def _context_header(c: Dict[str, Any]) -> str:
     sd = c.get("start_date")
     ed = c.get("end_date")
     date_line = ""
     if sd or ed:
         date_line = f"\n접수기간: {sd or '미상'} ~ {ed or '미상'}"
-    return f"[{c['title']}]({c['url']}){date_line}\n{c['snippet']}"
+    return f"[{c['title']}]({c['url']}){date_line}"
+
+
+def _format_context_with_budget(c: Dict[str, Any], budget: int) -> str:
+    """답변 생성용 컨텍스트.
+
+    길면 검색/리랭크가 실제로 고른 청크를 먼저 보존한 뒤,
+    본문 > 첨부파일명 > 첨부내용 순으로 남은 공간을 채운다.
+    """
+    header = _context_header(c)
+    content = c.get("snippet") or ""
+    matched_chunk = (c.get("matched_chunk") or "").strip()
+    full = f"{header}\n{content}"
+    if len(full) <= budget:
+        return full
+
+    body, attachments = _split_content(content)
+    attachment_names = "\n".join(f"- {name}" for name, _ in attachments)
+    attachment_contents = "\n\n".join(
+        f"[첨부: {name}]\n{text}" for name, text in attachments if text
+    )
+    name_heading = "\n[첨부파일명]"
+
+    parts = [header]
+    remaining = budget - len(header)
+
+    if matched_chunk:
+        matched_heading = "\n[검색 매칭 청크]"
+        parts.append(matched_heading)
+        remaining -= len(matched_heading)
+        remaining = _append_budget(parts, matched_chunk, remaining)
+
+    body_heading = "\n[본문]"
+    parts.append(body_heading)
+    remaining -= len(body_heading)
+    name_reserve = (
+        min(len(name_heading) + len(attachment_names), ATTACHMENT_NAME_RESERVE)
+        if attachment_names else 0
+    )
+    body_budget = max(0, remaining - name_reserve)
+
+    body_parts: list[str] = []
+    _append_budget(body_parts, body, body_budget)
+    body_text = "\n".join(body_parts)
+    parts.append(body_text)
+    remaining -= len(body_text)
+
+    if attachment_names and remaining > 0:
+        parts.append(name_heading)
+        remaining -= len(name_heading)
+        remaining = _append_budget(parts, attachment_names, remaining)
+
+    if attachment_contents and remaining > 0:
+        heading = "\n[첨부파일 내용]"
+        parts.append(heading)
+        remaining -= len(heading)
+        _append_budget(parts, attachment_contents, remaining)
+
+    return "\n".join(part for part in parts if part)
+
+
+def _format_context(c: Dict[str, Any]) -> str:
+    """answerer/verifier 공용 fallback 포맷."""
+    return f"{_context_header(c)}\n{c.get('snippet') or ''}"
+
+
+def _format_support_context(c: Dict[str, Any], budget: int) -> str:
+    """2등 이하 보조 문서는 요약 + 매칭 청크 중심으로 짧게 넣는다."""
+    header = _context_header(c)
+    content = c.get("snippet") or ""
+    matched_chunk = (c.get("matched_chunk") or "").strip()
+    summary = (c.get("summary") or "").strip()
+    _, attachments = _split_content(content)
+    attachment_names = "\n".join(f"- {name}" for name, _ in attachments)
+
+    parts = [header]
+    remaining = budget - len(header)
+
+    if summary and remaining > 0:
+        heading = "\n[요약]"
+        parts.append(heading)
+        remaining -= len(heading)
+        remaining = _append_budget(parts, summary, remaining)
+
+    if matched_chunk and remaining > 0:
+        heading = "\n[검색 매칭 청크]"
+        parts.append(heading)
+        remaining -= len(heading)
+        remaining = _append_budget(parts, matched_chunk, remaining)
+
+    if attachment_names and remaining > 0:
+        heading = "\n[첨부파일명]"
+        parts.append(heading)
+        remaining -= len(heading)
+        _append_budget(parts, attachment_names, remaining)
+
+    return "\n".join(part for part in parts if part)
+
+
+def _pack_contexts(contexts: List[Dict[str, Any]], budget: int = ANSWER_CONTEXT_CHAR_BUDGET) -> str:
+    if not contexts:
+        return "(컨텍스트 없음)"
+
+    packed: list[str] = []
+    remaining = budget
+    for idx, context in enumerate(contexts):
+        if remaining <= 0:
+            break
+
+        full = _format_context(context)
+        separator_cost = len("\n\n---\n\n") if packed else 0
+        available = remaining - separator_cost
+        if available <= 0:
+            break
+
+        if idx == 0 and len(full) <= available:
+            rendered = full
+        elif idx == 0:
+            rendered = _format_context_with_budget(context, available)
+        else:
+            rendered = _format_support_context(context, available)
+
+        packed.append(rendered)
+        remaining -= separator_cost + len(rendered)
+
+    return "\n\n---\n\n".join(packed)
 
 
 def answerer_node(state: ChatState) -> dict:
@@ -221,7 +383,7 @@ def answerer_node(state: ChatState) -> dict:
     if not contexts:
         return {"answer": "관련 공지를 찾지 못했습니다."}
 
-    context_text = "\n\n---\n\n".join(_format_context(c) for c in contexts)
+    context_text = _pack_contexts(contexts)
     today = date.today().isoformat()
     model = get_llm()
     resp = model.invoke([
@@ -238,9 +400,7 @@ def answerer_node(state: ChatState) -> dict:
 
 def verifier_node(state: ChatState) -> dict:
     contexts = state.get("contexts") or []
-    context_text = "\n\n---\n\n".join(
-        _format_context(c) for c in contexts
-    ) or "(컨텍스트 없음)"
+    context_text = _pack_contexts(contexts)
     today = date.today().isoformat()
 
     model = get_llm().with_structured_output(VerificationResult)

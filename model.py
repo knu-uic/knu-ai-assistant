@@ -8,20 +8,24 @@ import os
 
 
 # providers
-VLM_PROVIDER = "lmstudio"
-EMBEDDING_PROVIDER = "lmstudio"
+VLM_PROVIDER = os.getenv("VLM_PROVIDER", "lmstudio")
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "lmstudio")
 
 # model names
-LLM_MODEL = "gemma-4-e4b"
-EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
+LLM_MODEL = os.getenv("LLM_MODEL", "gemma-4-e4b")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-nomic-embed-text-v1.5")
+LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
 
 RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 RERANKER_MAX_LENGTH = 512
 
 def get_llm():
     load_dotenv()
+    vlm_provider = os.getenv("VLM_PROVIDER", VLM_PROVIDER)
+    llm_model = os.getenv("LLM_MODEL", LLM_MODEL)
+    lmstudio_base_url = os.getenv("LMSTUDIO_BASE_URL", LMSTUDIO_BASE_URL)
     
-    if VLM_PROVIDER == "google":
+    if vlm_provider == "google":
         return ChatGoogleGenerativeAI(
             model="gemini-2.0-pro-preview",
             google_api_key=(
@@ -30,10 +34,10 @@ def get_llm():
             temperature=0,
         )
 
-    elif VLM_PROVIDER == "lmstudio":
+    elif vlm_provider == "lmstudio":
         return ChatOpenAI(
-            model="gemma-4-e4b",
-            base_url="http://localhost:1234/v1",
+            model=llm_model,
+            base_url=lmstudio_base_url,
             api_key="lm-studio",
             temperature=0,
         )
@@ -42,7 +46,7 @@ def get_llm():
 
         raise ValueError(
 
-            f"지원하지 않는 provider: {VLM_PROVIDER}"
+            f"지원하지 않는 provider: {vlm_provider}"
 
         )
     
@@ -50,7 +54,10 @@ def get_llm():
 
 def get_embeddings():
     load_dotenv()
-    if EMBEDDING_PROVIDER == "google":
+    embedding_provider = os.getenv("EMBEDDING_PROVIDER", EMBEDDING_PROVIDER)
+    embedding_model = os.getenv("EMBEDDING_MODEL", EMBEDDING_MODEL)
+    lmstudio_base_url = os.getenv("LMSTUDIO_BASE_URL", LMSTUDIO_BASE_URL)
+    if embedding_provider == "google":
 
         return GoogleGenerativeAIEmbeddings(
 
@@ -60,21 +67,23 @@ def get_embeddings():
 
         )
 
-    elif EMBEDDING_PROVIDER == "lmstudio":
+    elif embedding_provider == "lmstudio":
 
         return OpenAIEmbeddings(
 
-            model="text-embedding-nomic-embed-text-v1.5",
+            model=embedding_model,
 
-            base_url="http://localhost:1234/v1",
+            base_url=lmstudio_base_url,
 
             api_key="lm-studio",
+
+            check_embedding_ctx_length=False,
 
         )
 
     else:
 
-        raise ValueError(f"지원하지 않는 provider: {EMBEDDING_PROVIDER}")
+        raise ValueError(f"지원하지 않는 provider: {embedding_provider}")
     
 
     

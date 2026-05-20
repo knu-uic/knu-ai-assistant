@@ -1,13 +1,24 @@
 import json
 import os
+from datetime import date
 import psycopg
 from psycopg import sql
 from pgvector.psycopg import register_vector
 from dotenv import load_dotenv
 
-load_dotenv()
-DB_URL = f"postgresql://knu-uic:{os.getenv('DB_PASSWORD')}@localhost:5432/knu-uic"
 
+
+load_dotenv()
+DB_URL = os.getenv("DATABASE_URL") or (
+    f"postgresql://{os.getenv('DB_USER', 'knu-uic')}:"
+    f"{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST', 'localhost')}:"
+    f"{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'knu-uic')}" )
+"""""
+DB_URL 결정 로직:
+1. 먼저 환경변수 DATABASE_URL 이 있는지 확인
+2. 있으면 그 값을 그대로 사용
+3. 없으면 DB_USER, DB_PASSWORD 같은 개별 환경변수들을 조합해서 URL 생성load_dotenv()
+"""""
 
 # schema.py의 category Literal과 1:1 매핑 — SQL 식별자에 한글/슬래시 못 쓰므로 영문 슬러그로 변환.
 CATEGORY_SLUGS: dict[str, str] = {
@@ -43,17 +54,34 @@ def _connect_with_vector():
     return conn
 
 
-def init_db():
-    """category별 document/chunk 물리 분리 스키마 생성. 기존 단일 document 잔재는 DROP."""
-    with psycopg.connect(DB_URL) as conn:
-        conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+def _months_ago(today: date, months: int) -> date:
+    month_index = today.month - 1 - months
+    year = today.year + month_index // 12
+    month = month_index % 12 + 1
+    days_in_month = [
+        31,
+        29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
+        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+    ][month - 1]
+    return date(year, month, min(today.day, days_in_month))
 
-        # 이전 스키마(단일 document) 잔재 제거
+
+def reset_db():
+    """개발용 전체 초기화. 모든 문서/청크/자산 테이블을 DROP한다."""
+    with psycopg.connect(DB_URL) as conn:
         for legacy in ("notice_asset", "notice", "document_chunk", "document_asset", "document"):
             conn.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE;").format(sql.Identifier(legacy)))
         for slug in SLUGS:
             conn.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE;").format(_chunk_ident(slug)))
             conn.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE;").format(_doc_ident(slug)))
+        conn.commit()
+    init_db()
+
+
+def init_db():
+    """category별 document/chunk 스키마를 비파괴적으로 준비한다."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS source (
@@ -75,9 +103,11 @@ def init_db():
                     url VARCHAR(500) UNIQUE NOT NULL,
                     title VARCHAR(255) NOT NULL,
                     content TEXT NOT NULL,
+                    summary TEXT,
                     posted_at DATE,
                     start_date DATE,
                     end_date DATE,
+                    is_pinned BOOLEAN NOT NULL DEFAULT false,
                     target VARCHAR(100)[],
                     keywords VARCHAR(50)[],
                     extra JSONB,
@@ -97,6 +127,16 @@ def init_db():
                 idx=sql.Identifier(f"idx_document_{slug}_posted_at"),
                 doc=_doc_ident(slug),
             ))
+            conn.execute(sql.SQL("ALTER TABLE {doc} ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT false;").format(
+                doc=_doc_ident(slug),
+            ))
+            conn.execute(sql.SQL("ALTER TABLE {doc} ADD COLUMN IF NOT EXISTS summary TEXT;").format(
+                doc=_doc_ident(slug),
+            ))
+            conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {doc}(is_pinned);").format(
+                idx=sql.Identifier(f"idx_document_{slug}_is_pinned"),
+                doc=_doc_ident(slug),
+            ))
 
             conn.execute(sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {chunk} (
@@ -104,12 +144,14 @@ def init_db():
                     document_id BIGINT NOT NULL REFERENCES {doc}(id) ON DELETE CASCADE,
                     chunk_idx INT NOT NULL,
                     content TEXT NOT NULL,
-                    source_asset_id BIGINT,
                     embedding vector(768) NOT NULL,
                     created_at TIMESTAMPTZ DEFAULT now(),
                     UNIQUE(document_id, chunk_idx)
                 );
             """).format(chunk=_chunk_ident(slug), doc=_doc_ident(slug)))
+            conn.execute(sql.SQL("ALTER TABLE {chunk} DROP COLUMN IF EXISTS source_asset_id;").format(
+                chunk=_chunk_ident(slug),
+            ))
             conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {chunk}(document_id);").format(
                 idx=sql.Identifier(f"idx_document_{slug}_chunk_document"),
                 chunk=_chunk_ident(slug),
@@ -157,6 +199,90 @@ def init_db():
         print(f"✅ source + {len(SLUGS)}개 category 테이블({', '.join(SLUGS)}) + asset/users 생성 완료")
 
 
+def prune_documents(
+    retention_months: int = 6,
+    delete_expired: bool = True,
+    protected_urls: set[str] | None = None,
+) -> int:
+    """오래되었거나 마감된 문서만 삭제한다.
+
+    삭제 조건:
+    - delete_expired=True이면 end_date가 오늘보다 과거인 문서
+    - posted_at이 있으면 posted_at, 없으면 crawled_at 기준 retention_months개월 이전 문서
+    - is_pinned=true 또는 protected_urls에 포함된 문서는 보존
+
+    chunk 테이블은 FK ON DELETE CASCADE로 지워지고, document_asset은 FK가 없어
+    category/document_id 기준으로 직접 삭제한다.
+    """
+    today = date.today()
+    cutoff = _months_ago(today, retention_months)
+    protected_urls = protected_urls or set()
+    total = 0
+
+    with psycopg.connect(DB_URL) as conn:
+        for slug in SLUGS:
+            category = SLUG_TO_CATEGORY[slug]
+            expired_clause = (
+                sql.SQL(" OR (end_date IS NOT NULL AND end_date < %s)")
+                if delete_expired else sql.SQL("")
+            )
+            query = sql.SQL("""
+                DELETE FROM {doc}
+                WHERE NOT is_pinned
+                  AND NOT (url = ANY(%s))
+                  AND (
+                    COALESCE(posted_at, crawled_at::date) < %s
+                    {expired}
+                  )
+                RETURNING id;
+            """).format(
+                doc=_doc_ident(slug),
+                expired=expired_clause,
+            )
+            params = [list(protected_urls), cutoff]
+            if delete_expired:
+                params.append(today)
+
+            deleted_ids = [row[0] for row in conn.execute(query, params).fetchall()]
+            if not deleted_ids:
+                continue
+
+            conn.execute(
+                "DELETE FROM document_asset WHERE category = %s AND document_id = ANY(%s);",
+                (category, deleted_ids),
+            )
+            total += len(deleted_ids)
+            print(f"  ↳ 오래된/마감 문서 정리: {category} {len(deleted_ids)}건")
+
+        conn.commit()
+
+    if total:
+        print(f"🧹 문서 정리 완료: {total}건 삭제 (보존 {retention_months}개월, 마감문서 삭제={delete_expired}, 보호 URL {len(protected_urls)}건)")
+    else:
+        print(f"🧹 문서 정리 대상 없음 (보존 {retention_months}개월, 마감문서 삭제={delete_expired}, 보호 URL {len(protected_urls)}건)")
+    return total
+
+
+def sync_pinned_urls(pinned_urls: set[str]) -> None:
+    """현재 게시판에서 고정으로 확인된 URL만 is_pinned=true로 동기화."""
+    with psycopg.connect(DB_URL) as conn:
+        for slug in SLUGS:
+            conn.execute(
+                sql.SQL("UPDATE {doc} SET is_pinned = false WHERE is_pinned = true;").format(
+                    doc=_doc_ident(slug),
+                )
+            )
+            if pinned_urls:
+                conn.execute(
+                    sql.SQL("UPDATE {doc} SET is_pinned = true WHERE url = ANY(%s);").format(
+                        doc=_doc_ident(slug),
+                    ),
+                    (list(pinned_urls),),
+                )
+        conn.commit()
+    print(f"📌 고정 공지 동기화 완료: 현재 고정 URL {len(pinned_urls)}건")
+
+
 def upsert_source(code: str, name: str, kind: str, department: str | None, base_url: str | None) -> int:
     """source 테이블에 UPSERT 후 id 반환."""
     with psycopg.connect(DB_URL) as conn:
@@ -200,8 +326,10 @@ def insert_document(
     category: str,
     target,
     keywords,
+    summary: str | None = None,
     extra: dict | None = None,
     posted_at=None,
+    is_pinned: bool = False,
 ) -> int:
     """category에 해당하는 document_{slug} 테이블에 UPSERT 후 id 반환."""
     slug = _slug(category)
@@ -217,16 +345,18 @@ def insert_document(
 
     query = sql.SQL("""
         INSERT INTO {doc}
-            (source_id, url, title, content, posted_at, start_date, end_date,
-             target, keywords, extra, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+            (source_id, url, title, content, summary, posted_at, start_date, end_date,
+             is_pinned, target, keywords, extra, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
         ON CONFLICT (url) DO UPDATE SET
             source_id = EXCLUDED.source_id,
             title = EXCLUDED.title,
             content = EXCLUDED.content,
+            summary = EXCLUDED.summary,
             posted_at = EXCLUDED.posted_at,
             start_date = EXCLUDED.start_date,
             end_date = EXCLUDED.end_date,
+            is_pinned = EXCLUDED.is_pinned,
             target = EXCLUDED.target,
             keywords = EXCLUDED.keywords,
             extra = EXCLUDED.extra,
@@ -235,8 +365,9 @@ def insert_document(
     """).format(doc=_doc_ident(slug))
 
     with psycopg.connect(DB_URL) as conn:
-        cur = conn.execute(query, (source_id, url, title, content, posted_at,
+        cur = conn.execute(query, (source_id, url, title, content, summary, posted_at,
                                    start_date, end_date,
+                                   is_pinned,
                                    target, keywords, extra_json))
         row = cur.fetchone()
         assert row is not None
@@ -319,7 +450,8 @@ def _search_subquery(slug: str, major_filter: bool) -> tuple[sql.Composable, lis
                d.posted_at, d.start_date, d.end_date,
                {cat_lit}::text AS category,
                d.target, d.keywords,
-               s.code, s.name, s.kind, s.department
+               s.code, s.name, s.kind, s.department,
+               d.summary
         FROM {chunk} c
         JOIN {doc} d ON d.id = c.document_id
         JOIN source s ON s.id = d.source_id
@@ -346,7 +478,7 @@ def search_chunks(
 
     반환 튜플:
     (url, title, snippet, score, posted_at, start_date, end_date, category, target, keywords,
-     source_code, source_name, source_kind, source_department)
+     source_code, source_name, source_kind, source_department, summary)
     """
     target_slugs = [_slug(c) for c in categories] if categories else list(SLUGS)
 
@@ -365,7 +497,7 @@ def search_chunks(
     final_q = sql.SQL("""
         SELECT url, title, content, score, posted_at, start_date, end_date,
                category, target, keywords,
-               code, name, kind, department
+               code, name, kind, department, summary
         FROM ({union}) merged
         ORDER BY score DESC
         LIMIT %s
@@ -396,7 +528,8 @@ def _list_subquery(slug: str, where: sql.Composable) -> sql.Composable:
                {cat_lit}::text AS category,
                d.target, d.keywords,
                s.code, s.name, s.kind, s.department,
-               d.crawled_at
+               d.crawled_at,
+               d.summary
         FROM {doc} d
         JOIN source s ON s.id = d.source_id
         {where}
@@ -418,7 +551,7 @@ def get_documents(
 
     반환 튜플:
     (url, title, content, posted_at, start_date, end_date, category, target, keywords,
-     source_code, source_name, source_kind, source_department)
+     source_code, source_name, source_kind, source_department, summary)
 
     정렬: posted_at(원본 등록일) 내림차순. NULL은 crawled_at(크롤링 시각)으로 fallback.
     """
@@ -450,7 +583,7 @@ def get_documents(
     final_q = sql.SQL("""
         SELECT url, title, content, posted_at, start_date, end_date,
                category, target, keywords,
-               code, name, kind, department
+               code, name, kind, department, summary
         FROM ({union}) merged
         ORDER BY COALESCE(posted_at::timestamp, crawled_at) DESC NULLS LAST
         LIMIT %s

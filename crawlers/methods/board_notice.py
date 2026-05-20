@@ -111,20 +111,57 @@ class BoardNoticeCrawler:
         list_page.get_by_title(cfg.page_title_template.format(page=page_num)).first.click()
         list_page.wait_for_load_state("networkidle")
 
-    def _collect_post_urls(self, list_page, page_num: int) -> List[str]:
+    def _row_is_pinned(self, row) -> bool:
+        try:
+            class_name = row.get_attribute("class") or ""
+            if "notice" in class_name.split():
+                return True
+        except Exception:
+            pass
+        try:
+            first_cell = row.locator("td").first.inner_text().strip()
+            return first_cell in {"공지", "알림"}
+        except Exception:
+            return False
+
+    def _collect_post_records(self, list_page, page_num: int) -> List[dict]:
         row_selector = self.config.row_selector
         if page_num != 1 and self.config.row_selector_after_first:
             row_selector = self.config.row_selector_after_first
 
-        urls: List[str] = []
+        records: List[dict] = []
         for row in list_page.locator(row_selector).all():
             try:
                 href = row.locator(".td-subject a").first.get_attribute("href")
             except Exception:
                 continue
             if href:
-                urls.append(self._abs(href))
-        return urls
+                records.append({
+                    "url": self._abs(href),
+                    "is_pinned": self._row_is_pinned(row),
+                })
+        return records
+
+    def _collect_post_urls(self, list_page, page_num: int) -> List[str]:
+        return [record["url"] for record in self._collect_post_records(list_page, page_num)]
+
+    def collect_pinned_urls(self) -> set[str]:
+        """현재 목록 첫 페이지의 고정 공지 URL 집합."""
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context()
+            page = context.new_page()
+            page.on("dialog", lambda dialog: dialog.accept())
+            try:
+                self._goto_list_page(page, 1)
+                page.wait_for_selector(self.config.list_wait_selector)
+                return {
+                    record["url"]
+                    for record in self._collect_post_records(page, 1)
+                    if record.get("is_pinned")
+                }
+            finally:
+                browser.close()
 
     def crawling(self, should_skip: Optional[Callable[[str], bool]] = None) -> Iterator[dict]:
         seen_urls: set[str] = set()
@@ -141,26 +178,33 @@ class BoardNoticeCrawler:
                     self._goto_list_page(list_page, page_num)
                     list_page.wait_for_selector(self.config.list_wait_selector)
 
-                    post_urls = self._collect_post_urls(list_page, page_num)
+                    post_records = self._collect_post_records(list_page, page_num)
                     if self.config.dedupe_urls:
-                        new_urls = [u for u in post_urls if u not in seen_urls]
-                        seen_urls.update(new_urls)
+                        new_records = [r for r in post_records if r["url"] not in seen_urls]
+                        seen_urls.update(r["url"] for r in new_records)
                     else:
-                        new_urls = post_urls
+                        new_records = post_records
 
-                    print(f"\n=== {page_num}페이지: 게시글 {len(post_urls)}건, 처리 대상 {len(new_urls)}건 ===")
+                    print(f"\n=== {page_num}페이지: 게시글 {len(post_records)}건, 처리 대상 {len(new_records)}건 ===")
 
                     if should_skip:
-                        before = len(new_urls)
-                        new_urls = [u for u in new_urls if not should_skip(u)]
-                        print(f"     ↳ DB 중복 제외: {before - len(new_urls)}건 스킵, {len(new_urls)}건 처리")
+                        before = len(new_records)
+                        new_records = [r for r in new_records if not should_skip(r["url"])]
+                        print(f"     ↳ DB 중복 제외: {before - len(new_records)}건 스킵, {len(new_records)}건 처리")
 
-                    for idx, post_url in enumerate(new_urls, 1):
-                        yield self._crawl_detail(context, detail_page, post_url, idx, len(new_urls))
+                    for idx, record in enumerate(new_records, 1):
+                        yield self._crawl_detail(
+                            context,
+                            detail_page,
+                            record["url"],
+                            idx,
+                            len(new_records),
+                            is_pinned=record.get("is_pinned", False),
+                        )
             finally:
                 browser.close()
 
-    def _crawl_detail(self, context, detail_page, post_url: str, idx: int, total: int) -> dict:
+    def _crawl_detail(self, context, detail_page, post_url: str, idx: int, total: int, is_pinned: bool = False) -> dict:
         print(f"[{idx}/{total}] {post_url} 접속 중...")
         detail_page.goto(post_url, wait_until="networkidle")
 
@@ -200,7 +244,9 @@ class BoardNoticeCrawler:
                 })
                 order += 1
 
-        include_xlsx = xlsx_relevant(title, body_text)
+        include_xlsx = True  # 현재는 모든 첨부파일을 텍스트로 변환해서 포함하도록 설정되어 있습니다.
+        # xlsx_relevant(title, body_text) >> 만약 제목이나 본문에 '공고', '모집', '채용' 같은 단어가 있으면, 첨부된 엑셀 파일도 텍스트로 변환해서 내용에 포함할지 여부 판단하고 싶으면 이 함수를 활용할 수 있습니다. 
+       
         for att in self._collect_attachments(detail_page):
             print(f"  - 첨부 처리: {att['filename']}")
             txt, meta = attachment_to_text(att, context, include_xlsx=include_xlsx)
@@ -231,4 +277,5 @@ class BoardNoticeCrawler:
             "content": content,
             "url": post_url,
             "assets": assets,
+            "is_pinned": is_pinned,
         }

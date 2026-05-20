@@ -90,9 +90,11 @@ def row_to_notice_search(row):
     """search_chunks 결과 row → notice dict."""
     (url, title, snippet, score, posted_at, start_date, end_date,
      category, target, keywords,
-     _source_code, source_name, _source_kind, source_department) = row
+     _source_code, source_name, _source_kind, source_department, *rest) = row
+    summary = rest[0] if rest else None
     return {
         "url": url, "title": title, "content": snippet, "score": score,
+        "summary": summary,
         "posted_at": posted_at,
         "start_date": start_date, "end_date": end_date, "category": category,
         "target": target, "keywords": keywords,
@@ -104,9 +106,11 @@ def row_to_notice_list(row):
     """get_documents 결과 row → notice dict."""
     (url, title, content, posted_at, start_date, end_date,
      category, target, keywords,
-     _source_code, source_name, _source_kind, source_department) = row
+     _source_code, source_name, _source_kind, source_department, *rest) = row
+    summary = rest[0] if rest else None
     return {
         "url": url, "title": title, "content": content, "score": None,
+        "summary": summary,
         "posted_at": posted_at,
         "start_date": start_date, "end_date": end_date, "category": category,
         "target": target, "keywords": keywords,

@@ -82,7 +82,7 @@ def _render_recommendation_card(rank: int, notice: dict, matched: list[str], tod
 
         st.markdown(f"**[{notice['title']}]({notice['url']})**")
 
-        body = (notice.get("content") or "").strip().replace("\n", " ")
+        body = (notice.get("summary") or notice.get("content") or "").strip().replace("\n", " ")
         if len(body) > 120:
             body = body[:120] + "…"
         if body:

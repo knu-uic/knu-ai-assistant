@@ -34,7 +34,15 @@ services:
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_USER=${DB_USER:-knu-uic}
       - DB_NAME=${DB_NAME:-knu-uic}
-      - DATABASE_URL=postgresql+psycopg://${DB_USER:-knu-uic}:${DB_PASSWORD}@db:5432/${DB_NAME:-knu-uic}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DATABASE_URL=postgresql://${DB_USER:-knu-uic}:${DB_PASSWORD}@db:5432/${DB_NAME:-knu-uic}
+      # LM Studio를 호스트 머신에서 실행할 때 Docker 컨테이너가 접근하는 주소
+      - VLM_PROVIDER=${VLM_PROVIDER:-lmstudio}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-lmstudio}
+      - LLM_MODEL=${LLM_MODEL:-gemma-4-e4b}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-nomic-embed-text-v1.5}
+      - LMSTUDIO_BASE_URL=${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
       # LangSmith 트레이싱 (LANGSMITH_TRACING이 비어있거나 false면 비활성화)
       - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}
@@ -46,6 +54,8 @@ services:
     depends_on:
       db:
         condition: service_healthy   # pg_isready 통과 후에만 app 기동
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - bot_network
 

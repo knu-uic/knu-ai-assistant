@@ -60,6 +60,7 @@ class CurriculumCrawler:
             "metadata": {
                 "title": title,
                 "content": content,
+                "summary": f"{self.SOURCE_NAME}의 {latest.get('year_label') or '최신'} 교육과정표입니다. 전공 교과목, 학점, 이수 구분 등 교육과정 정보를 확인할 수 있습니다.",
                 "target": [self.DEPARTMENT],
                 "start_date": None,
                 "end_date": None,

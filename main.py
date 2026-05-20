@@ -4,7 +4,16 @@ from datetime import date, datetime
 
 from crawlers import CRAWLERS
 from refine import refine
-from db import init_db, upsert_source, insert_document, insert_assets, insert_chunks, document_exists
+from db import (
+    init_db,
+    prune_documents,
+    sync_pinned_urls,
+    upsert_source,
+    insert_document,
+    insert_assets,
+    insert_chunks,
+    document_exists,
+)
 from embed import embed_chunks
 
 
@@ -34,6 +43,16 @@ def _parse_posted_date(raw: str | None) -> date | None:
 
 if __name__ == "__main__":
     init_db()
+    pinned_urls: set[str] = set()
+    for crawler in CRAWLERS:
+        collect_pinned_urls = getattr(crawler, "collect_pinned_urls", None)
+        if collect_pinned_urls:
+            try:
+                pinned_urls.update(collect_pinned_urls())
+            except Exception as e:
+                print(f"  ⚠️ 고정 공지 수집 실패 [{crawler.SOURCE_CODE}] — {type(e).__name__}: {e}")
+    sync_pinned_urls(pinned_urls)
+    prune_documents(retention_months=6, delete_expired=True, protected_urls=pinned_urls)
 
     for mod in CRAWLERS:
         source_id = upsert_source(
@@ -77,6 +96,7 @@ if __name__ == "__main__":
             print(f'접수 마감일: {doc.end_date}')
             print(f'url: {doc.url}')
             print(f'keywords: {doc.keywords}')
+            print(f'요약: {doc.summary}')
             print(f'assets: {len(assets)}건')
 
             document_id = insert_document(
@@ -89,8 +109,10 @@ if __name__ == "__main__":
                 category=doc.category,
                 target=doc.target,
                 keywords=doc.keywords,
+                summary=doc.summary,
                 extra=extra,
                 posted_at=posted_at,
+                is_pinned=bool(item.get("is_pinned")),
             )
             insert_assets(doc.category, document_id, assets)
 

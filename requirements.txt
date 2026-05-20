@@ -4,26 +4,34 @@ pgvector
 python-dotenv
 pydantic
 
-# LangChain
+# LangChain / LangGraph
+# - langchain-openai: LM Studio가 OpenAI 호환 API라서 필요
+# - langchain-google-genai: provider를 google로 바꿀 때 사용
 langchain
 langchain-core
 langchain-community
-langchain-postgres
 langchain-google-genai
-langchain-ollama
+langchain-openai
+langchain-postgres
 langgraph
 langsmith
 
 # 크롤링
+# 설치 후 로컬에서는 별도로 실행:
+#   python3 -m playwright install chromium
+# Dockerfile에서는 자동 실행함
 playwright
-(이후 playwright install chromium도 해야함)
 
-# 첨부파일 처리 (attachments.py)
+# 첨부파일 처리
+# - pdfplumber: 텍스트 PDF 추출
+# - pdf2image: 스캔 PDF를 이미지로 렌더링
+# - openpyxl: XLSX 추출
+# macOS 로컬에서 pdf2image를 쓰려면:
+#   brew install poppler
 pdfplumber
 openpyxl
 pdf2image
 
-# === [seungwon/bge-reranker] BGE-reranker cross-encoder (rerank.py) ===
-# CPU-only torch를 원하면 사전에:
-#   pip install --index-url https://download.pytorch.org/whl/cpu torch
+# 리랭커
+# 첫 실행 시 HuggingFace에서 BGE reranker 모델을 내려받음
 sentence-transformers

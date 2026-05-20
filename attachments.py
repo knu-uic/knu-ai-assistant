@@ -132,6 +132,54 @@ def _preview_failed(text: str) -> bool:
 XLSX_KEYWORDS = ("교양", "수강신청", "교과목", "편성", "시간표", "강의계획", "개설")
 
 
+def _trim_empty_tail(cells: list[str]) -> list[str]:
+    """오른쪽 끝 빈 셀 제거. 엑셀은 사용 범위가 넓게 잡히는 일이 많다."""
+    end = len(cells)
+    while end > 0 and not cells[end - 1].strip():
+        end -= 1
+    return cells[:end]
+
+
+def _looks_numeric_or_code(value: str) -> bool:
+    s = value.strip().replace(",", "")
+    if not s:
+        return False
+    if s.replace(".", "", 1).isdigit():
+        return True
+    # 2026-1, 3-3-0, 2009094 같은 학기/학점/코드형 값.
+    compact = s.replace("-", "").replace(".", "").replace("/", "")
+    return compact.isdigit()
+
+
+def _looks_like_header(row: list[str], next_rows: list[list[str]]) -> bool:
+    non_empty = [c.strip() for c in row if c.strip()]
+    if len(non_empty) < 2:
+        return False
+
+    following_width = max(
+        (sum(1 for c in r if c.strip()) for r in next_rows),
+        default=0,
+    )
+    if following_width < 2:
+        return False
+
+    unique_ratio = len(set(non_empty)) / len(non_empty)
+    textish_ratio = sum(not _looks_numeric_or_code(c) for c in non_empty) / len(non_empty)
+    avg_len = sum(len(c) for c in non_empty) / len(non_empty)
+
+    return unique_ratio >= 0.7 and textish_ratio >= 0.55 and avg_len <= 40
+
+
+def _dedupe_headers(row: list[str]) -> list[str]:
+    headers = []
+    seen: dict[str, int] = {}
+    for idx, cell in enumerate(row):
+        base = cell.strip() or f"열{idx + 1}"
+        seen[base] = seen.get(base, 0) + 1
+        headers.append(base if seen[base] == 1 else f"{base}_{seen[base]}")
+    return headers
+
+
 def xlsx_relevant(*texts: str) -> bool:
     """제목·본문 등을 합쳐 XLSX_KEYWORDS 중 하나라도 포함하면 True."""
     blob = "\n".join(t for t in texts if t)
@@ -139,18 +187,40 @@ def xlsx_relevant(*texts: str) -> bool:
 
 
 def xlsx_to_text(data: bytes) -> str:
-    """XLSX 시트의 모든 셀을 탭으로 구분된 텍스트로 직렬화."""
+    """XLSX 시트를 검색 친화적인 텍스트로 직렬화.
+
+    표 헤더는 [표 헤더]로 표시하고, 데이터 행은 [행] 값 나열로 둔다.
+    청킹 단계(embed.py)가 표 안에서 잘린 chunk 앞에 현재 헤더를 다시
+    붙여주므로, 여기서는 행마다 컬럼명을 반복하지 않는다.
+    """
     # data_only=True: 수식(=A1+B1) 대신 마지막으로 계산된 값을 가져옴
     wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
     out = []
     for sheet in wb.worksheets:
         out.append(f"[Sheet: {sheet.title}]")  # 시트 경계 표시
+        headers: list[str] | None = None
+        rows = []
         for row in sheet.iter_rows(values_only=True):
             # None은 빈 문자열로, 나머지는 str로 일괄 변환
-            cells = ["" if v is None else str(v) for v in row]
+            cells = _trim_empty_tail(["" if v is None else str(v).strip() for v in row])
             # 완전히 빈 행은 스킵 (엑셀에 흔한 공백 행 제거)
             if any(c.strip() for c in cells):
-                out.append("\t".join(cells))  # 탭 구분 → 표 구조 어느 정도 보존
+                rows.append(cells)
+
+        for idx, row in enumerate(rows):
+            if headers is None and _looks_like_header(row, rows[idx + 1:idx + 4]):
+                headers = _dedupe_headers(row)
+                out.append("[표 헤더] " + " | ".join(headers))
+                continue
+
+            if headers:
+                row_text = " | ".join(c for c in row if c)
+                if not row_text:
+                    continue
+                out.append("[행] " + row_text)
+            else:
+                out.append(" | ".join(c for c in row if c))
+        out.append(f"[End Sheet: {sheet.title}]")
     return "\n".join(out).strip()
 
 

@@ -122,3 +122,7 @@ for n in notices:
         score = n.get("score")
         if score is not None:
             st.caption(f"🔍 유사도: {score:.3f}")
+
+        summary = (n.get("summary") or "").strip()
+        if summary:
+            st.caption(summary)
