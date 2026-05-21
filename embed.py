@@ -2,14 +2,8 @@ from typing import List, Tuple
 from model import get_embeddings
 
 
-
-EMBEDDING_DIM = 768  # HNSW 한계(2000) 회피 + 비용/속도 우선. MTEB는 3072 대비 ~0.2점 손실로 무시 가능.
-CHUNK_SIZE = 800 # 청크사이즈란 한번에 처리할 텍스트의 길이를 의미합니다. 이 값을 늘리면 메모리 사용량이 증가하지만, 처리 속도는 빨라집니다. 반대로 줄이면 메모리 사용량은 감소하지만, 처리 속도는 느려집니다.
-CHUNK_OVERLAP = 100  #청크오버랩이란 두 청크 사이의 겹치는 부분을 의미합니다. 이것은 청크 사이의 유사성을 높이는 데 도움이 됩니다.
-TABLE_HEADER_MARKER = "[표 헤더]"
-TABLE_ROW_MARKER = "[행]"
-SHEET_MARKER = "[Sheet:"
-SHEET_END_MARKER = "[End Sheet:"
+CHUNK_SIZE = 400 
+CHUNK_OVERLAP = 100 
 
 
 def _line_at(content: str, pos: int) -> str:
@@ -29,24 +23,28 @@ def _last_marker_line(content: str, marker: str, before: int) -> tuple[int, str]
 
 def _table_context_prefix(content: str, start: int, end: int, chunk: str) -> str:
     """청킹 경계로 잘린 엑셀 표 조각 앞에 현재 Sheet/헤더를 보강."""
-    if TABLE_HEADER_MARKER in chunk:
+    table_header_marker = "[표 헤더]"
+    table_row_marker = "[행]"
+    sheet_marker = "[Sheet:"
+    sheet_end_marker = "[End Sheet:"
+    if table_header_marker in chunk:
         return ""
 
-    header_pos, header_line = _last_marker_line(content, TABLE_HEADER_MARKER, start)
+    header_pos, header_line = _last_marker_line(content, table_header_marker, start)
     if header_pos == -1:
         return ""
 
-    end_pos = content.rfind(SHEET_END_MARKER, 0, start)
+    end_pos = content.rfind(sheet_end_marker, 0, start)
     if end_pos > header_pos:
         return ""
 
     # 지금 chunk가 표 데이터 근처일 때만 보강한다. 문서 뒤쪽 일반 본문에
     # 마지막 표 헤더가 계속 붙는 것을 막기 위한 방어 조건.
-    last_row_pos = content.rfind(TABLE_ROW_MARKER, 0, end)
+    last_row_pos = content.rfind(table_row_marker, 0, end)
     if last_row_pos < header_pos:
         return ""
 
-    _, sheet_line = _last_marker_line(content, SHEET_MARKER, start)
+    _, sheet_line = _last_marker_line(content, sheet_marker, start)
     lines = []
     if sheet_line:
         lines.append(sheet_line)
@@ -79,7 +77,7 @@ def _choose_chunk_start(content: str, proposed_start: int, n: int, overlap: int)
 
 
 def chunk_text(content: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
-    """800자 슬라이딩 윈도우 + 100자 overlap. 한국어 공지 기준."""
+    """줄 경계와 표 문맥을 고려해 텍스트를 청킹."""
     if not content:
         return []
     chunks: List[str] = []

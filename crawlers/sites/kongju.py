@@ -6,7 +6,7 @@ KONGJU_CRAWLERS = {
     "main_notice": BoardNoticeCrawler(BoardNoticeConfig(
         source_code="main_notice",
         source_name="공주대학교 일반 공지",
-        department=None,
+        department="공통",
         base_url="https://www.kongju.ac.kr",
         list_url="https://www.kongju.ac.kr/KNU/16909/subview.do",
         page_title_template="{page}페이지",
@@ -17,7 +17,7 @@ KONGJU_CRAWLERS = {
     "scholarship_info": StaticPageCrawler(StaticPageConfig(
         source_code="scholarship_info",
         source_name="공주대학교 장학안내",
-        department=None,
+        department="공통",
         kind="academic",
         base_url="https://www.kongju.ac.kr",
         page_url="https://www.kongju.ac.kr/KNU/16842/subview.do",

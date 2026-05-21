@@ -5,28 +5,27 @@ import psycopg
 from psycopg import sql
 from pgvector.psycopg import register_vector
 from dotenv import load_dotenv
+from model import EMBEDDING_DIM
 
 
 
 load_dotenv()
+#DB_URL 결정 로직: 먼저 DATABASE_URL 확인 -> 있으면 그대로 사용 -> 없으면 개별 환경변수 조합
 DB_URL = os.getenv("DATABASE_URL") or (
     f"postgresql://{os.getenv('DB_USER', 'knu-uic')}:"
     f"{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST', 'localhost')}:"
     f"{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'knu-uic')}" )
-"""""
-DB_URL 결정 로직:
-1. 먼저 환경변수 DATABASE_URL 이 있는지 확인
-2. 있으면 그 값을 그대로 사용
-3. 없으면 DB_USER, DB_PASSWORD 같은 개별 환경변수들을 조합해서 URL 생성load_dotenv()
-"""""
+
+
+
 
 # schema.py의 category Literal과 1:1 매핑 — SQL 식별자에 한글/슬래시 못 쓰므로 영문 슬러그로 변환.
 CATEGORY_SLUGS: dict[str, str] = {
-    "장학/등록": "scholarship",
-    "학사/수업": "academic",
-    "진로/취업": "career",
-    "행사/공모전": "event",
-    "일반/기타": "etc",
+    "장학": "scholarship",
+    "수강": "academic",
+    "취업(진로)": "career",
+    "행사(공모전)": "event",
+    "일반(기타)": "etc",
 }
 SLUG_TO_CATEGORY: dict[str, str] = {v: k for k, v in CATEGORY_SLUGS.items()}
 SLUGS: list[str] = list(CATEGORY_SLUGS.values())
@@ -144,11 +143,15 @@ def init_db():
                     document_id BIGINT NOT NULL REFERENCES {doc}(id) ON DELETE CASCADE,
                     chunk_idx INT NOT NULL,
                     content TEXT NOT NULL,
-                    embedding vector(768) NOT NULL,
+                    embedding vector({embedding_dim}) NOT NULL,
                     created_at TIMESTAMPTZ DEFAULT now(),
                     UNIQUE(document_id, chunk_idx)
                 );
-            """).format(chunk=_chunk_ident(slug), doc=_doc_ident(slug)))
+            """).format(
+                chunk=_chunk_ident(slug),
+                doc=_doc_ident(slug),
+                embedding_dim=sql.SQL(str(EMBEDDING_DIM)),
+            ))
             conn.execute(sql.SQL("ALTER TABLE {chunk} DROP COLUMN IF EXISTS source_asset_id;").format(
                 chunk=_chunk_ident(slug),
             ))
@@ -434,12 +437,12 @@ def insert_chunks(category: str, document_id: int, chunks: list[tuple[int, str, 
 def _search_subquery(slug: str, major_filter: bool) -> tuple[sql.Composable, list]:
     """카테고리 하나에 대한 DISTINCT ON 서브쿼리 Composable + placeholder 순서대로의 params.
 
-    placeholder 순서: [vec, (major, major)?, vec]
+    placeholder 순서: [vec, major?, vec]
     """
     category_literal = SLUG_TO_CATEGORY[slug]
 
     where_clause = (
-        sql.SQL(" WHERE (s.department = %s OR %s = ANY(d.target) OR '전체' = ANY(d.target)) ")
+        sql.SQL(" WHERE (s.department = %s OR s.department = '공통' OR s.department IS NULL) ")
         if major_filter else sql.SQL(" ")
     )
 
@@ -487,10 +490,10 @@ def search_chunks(
     for slug in target_slugs:
         sub, _ = _search_subquery(slug, major_filter=bool(major))
         subs.append(sql.SQL("(") + sub + sql.SQL(")"))
-        # subquery placeholder 순서: 1st vec, (major, major)?, 2nd vec(ORDER BY)
+        # subquery placeholder 순서: 1st vec, major?, 2nd vec(ORDER BY)
         params.append(query_embedding)
         if major:
-            params.extend([major, major])
+            params.append(major)
         params.append(query_embedding)
 
     union = sql.SQL(" UNION ALL ").join(subs)
@@ -560,8 +563,8 @@ def get_documents(
     conditions: list[sql.Composable] = []
     base_params: list = []
     if major:
-        conditions.append(sql.SQL("(s.department = %s OR %s = ANY(d.target) OR '전체' = ANY(d.target))"))
-        base_params.extend([major, major])
+        conditions.append(sql.SQL("(s.department = %s OR s.department = '공통' OR s.department IS NULL)"))
+        base_params.append(major)
     if kind:
         conditions.append(sql.SQL("s.kind = %s"))
         base_params.append(kind)

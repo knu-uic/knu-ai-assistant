@@ -29,6 +29,7 @@ class BoardNoticeConfig:
     list_url_template: str | None = None
     page_title_template: str | None = None
     dedupe_urls: bool = False
+    wait_until: str = "networkidle"
 
 
 class BoardNoticeCrawler:
@@ -97,19 +98,19 @@ class BoardNoticeCrawler:
         if cfg.list_url_template:
             url = cfg.list_url_template.format(page=page_num)
             print(f"\n=== {page_num}페이지 수집: {url} ===")
-            list_page.goto(url, wait_until="networkidle")
+            list_page.goto(url, wait_until=cfg.wait_until)
             return
 
         if page_num == 1:
             if not cfg.list_url:
                 raise ValueError(f"{self.SOURCE_CODE}: list_url 또는 list_url_template이 필요합니다.")
-            list_page.goto(cfg.list_url, wait_until="networkidle")
+            list_page.goto(cfg.list_url, wait_until=cfg.wait_until)
             return
 
         if not cfg.page_title_template:
             raise ValueError(f"{self.SOURCE_CODE}: page_title_template이 필요합니다.")
         list_page.get_by_title(cfg.page_title_template.format(page=page_num)).first.click()
-        list_page.wait_for_load_state("networkidle")
+        list_page.wait_for_load_state(cfg.wait_until)
 
     def _row_is_pinned(self, row) -> bool:
         try:
@@ -206,7 +207,7 @@ class BoardNoticeCrawler:
 
     def _crawl_detail(self, context, detail_page, post_url: str, idx: int, total: int, is_pinned: bool = False) -> dict:
         print(f"[{idx}/{total}] {post_url} 접속 중...")
-        detail_page.goto(post_url, wait_until="networkidle")
+        detail_page.goto(post_url, wait_until=self.config.wait_until)
 
         try:
             title = detail_page.locator(self.config.title_selector).first.inner_text().strip()

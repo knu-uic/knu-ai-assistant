@@ -6,8 +6,10 @@
 
 - 공주대학교 일반 공지 크롤링
 - 컴퓨터공학과 학과공지 크롤링
+- 경영학과 학과공지 크롤링
 - 컴퓨터공학과 교과과정표 PDF 결정론적 파싱
-- 본문 이미지 OCR, 이미지/PDF/HWPX/XLSX 첨부 텍스트 추출
+- 경영학과 교과과정표 HWP 텍스트 추출
+- 본문 이미지 OCR, 이미지/PDF/HWPX/HWP/XLSX/XLS/ZIP 첨부 텍스트 추출
 - LLM 기반 `summary`, `category`, `target`, `start_date`, `end_date`, `keywords` 생성
 - 원문 `content` 보존 및 청크 임베딩 저장
 - 카테고리별 물리 테이블과 pgvector HNSW 검색
@@ -46,7 +48,7 @@
 → refine.py에서 summary/category/target/date/keywords 생성
 → document_* 테이블에 원문 content와 summary 저장
 → embed.py에서 title + content 청킹 및 임베딩
-→ document_*_chunk 테이블에 vector(768) 저장
+→ document_*_chunk 테이블에 model.py의 EMBEDDING_DIM 차원 vector 저장
 → graph.py에서 router → retriever → reranker → answerer → verifier 실행
 ```
 
@@ -78,7 +80,7 @@ document_etc
 | `posted_at` | 게시글 등록일 |
 | `start_date`, `end_date` | 접수/행사 기간 |
 | `is_pinned` | 게시판 고정 공지 보존 플래그 |
-| `target` | 학과/학년/학적 대상 |
+| `target` | 학년/재적상태 대상 (`source.department`가 학과/공통 범위를 담당) |
 | `keywords` | 추천/필터용 키워드 |
 | `extra` | 교과과정표 등 구조화 부가 JSON |
 
@@ -92,7 +94,7 @@ document_event_chunk
 document_etc_chunk
 ```
 
-chunk 테이블은 `embedding vector(768)`과 HNSW cosine index를 사용합니다.
+chunk 테이블은 `model.py`의 `EMBEDDING_DIM`과 같은 차원의 `embedding vector(...)` 및 HNSW cosine index를 사용합니다.
 
 첨부/본문 이미지는 통합 `document_asset` 테이블에 저장합니다. 현재 검색은 `document_asset`을 직접 보지 않고, 추출 텍스트가 `document.content`에 붙은 뒤 청킹되어 검색됩니다.
 
@@ -119,10 +121,11 @@ chunk 테이블은 `embedding vector(768)`과 HNSW cosine index를 사용합니�
 | 이미지 첨부 | VLM OCR, 원본 이미지 sha1 파일 저장 |
 | PDF | `pdfplumber` 텍스트 추출, 텍스트가 없으면 `pdf2image` + VLM OCR |
 | HWPX | synapView 미리보기 또는 ZIP XML 파싱 |
-| HWP | synapView 미리보기 시도, 바이너리 직접 파싱은 미지원 |
+| HWP | synapView 미리보기 → `pyhwp2md` Markdown 변환 → LibreOffice headless PDF 변환 → 내부 문자열 fallback |
 | XLSX | `openpyxl`로 전체 추출, 표 헤더 보존 |
-| XLS | openpyxl 미지원으로 안내문만 저장 |
-| ZIP/기타 | 안내문 저장, 내부 파일 파싱은 미구현 |
+| XLS | `xlrd`로 전체 추출, 표 헤더 보존 |
+| ZIP | 내부의 PDF/HWPX/HWP/XLSX/이미지를 풀어 각각 기존 파이프라인으로 처리 |
+| 기타 | 안내문 저장 |
 
 XLSX는 행마다 헤더를 반복하지 않고 `[표 헤더]`, `[행]` 형식으로 저장합니다. 청킹 중 표가 잘리면 `embed.py`가 현재 시트/헤더를 청크 앞에 보강합니다.
 
@@ -135,6 +138,16 @@ XLSX는 행마다 헤더를 반복하지 않고 `[표 헤더]`, `[행]` 형식�
 5. 컨텍스트가 부족하면 1순위 문서를 우선 보존하고, 2~3순위는 `summary + matched_chunk + 첨부파일명` 중심으로 넣습니다.
 6. answerer가 컨텍스트 기반 답변을 생성합니다.
 7. verifier가 답변 충실도를 검증합니다.
+
+답변/정제 단계의 LLM 입력 예산은 `model.py`에서 모델 컨텍스트 윈도우를 기준으로 계산합니다.
+
+```text
+기본 답변 컨텍스트 문자 예산
+= LLM_CONTEXT_WINDOW_TOKENS * LLM_CONTEXT_USAGE_RATIO * LLM_CHARS_PER_TOKEN
+= 8192 * 0.8 * 1.4 ≈ 9175자
+```
+
+`refine.py`의 긴 문서 축소 기준은 위 예산에 `REFINE_CONTEXT_RATIO_MULTIPLIER`를 곱해 정합니다. 기본값 `0.35`는 약 3200자입니다. 긴 첨부파일은 LLM 메타데이터 추출 입력에서 축소되지만, DB 저장과 임베딩에는 원문 전체가 사용됩니다.
 
 ## 환경변수
 
@@ -152,6 +165,10 @@ EMBEDDING_PROVIDER=lmstudio
 LLM_MODEL=gemma-4-e4b
 EMBEDDING_MODEL=text-embedding-nomic-embed-text-v1.5
 LMSTUDIO_BASE_URL=http://localhost:1234/v1
+LLM_CONTEXT_WINDOW_TOKENS=8192
+LLM_CONTEXT_USAGE_RATIO=0.8
+LLM_CHARS_PER_TOKEN=1.4
+REFINE_CONTEXT_RATIO_MULTIPLIER=0.35
 
 GOOGLE_API_KEY=
 GEMINI_API_KEY=
@@ -159,6 +176,8 @@ GEMINI_API_KEY=
 LANGSMITH_TRACING=false
 LANGSMITH_API_KEY=
 LANGSMITH_PROJECT=knu-ai-assistant
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+RERANKER_MAX_LENGTH=512
 ```
 
 `VLM_PROVIDER`와 `EMBEDDING_PROVIDER`는 `lmstudio` 또는 `google`을 사용할 수 있습니다. 현재 기본값은 LM Studio입니다.
@@ -181,12 +200,13 @@ python3 main.py
 streamlit run app.py
 ```
 
-스캔 PDF OCR을 쓰려면 로컬에도 poppler가 필요합니다.
+스캔 PDF OCR을 쓰려면 로컬에도 poppler가 필요합니다. HWP를 LibreOffice PDF 변환 fallback으로 처리하려면 LibreOffice도 필요합니다. 대부분의 HWP 텍스트 추출은 `pyhwp2md`가 먼저 처리합니다.
 
 macOS:
 
 ```bash
 brew install poppler
+brew install --cask libreoffice
 ```
 
 ## Docker 실행
@@ -228,14 +248,16 @@ crawl_result/reports/
 학과 게시판을 추가할 때는 `crawlers/sites/departments/`에 설정을 추가하고 `crawlers/registry.py`에 등록합니다.
 
 학과 추천은 `source.department`와 사용자 프로필의 `major`를 비교합니다.
+학교 공통 크롤러는 `source.department = '공통'`으로 저장합니다.
 
 ```sql
 s.department = :major
-OR :major = ANY(d.target)
-OR '전체' = ANY(d.target)
+OR s.department = '공통'
+OR s.department IS NULL
 ```
 
 따라서 학과 게시판 크롤러의 `department` 값을 정확히 넣는 것이 중요합니다.
+`target`에는 학과명을 넣지 않고, 본문에 명시된 학년/재적상태 제한만 저장합니다.
 
 ## 검증 명령
 
@@ -256,6 +278,6 @@ python3 -m pip install --dry-run -r requirements.txt
 ## 주의사항
 
 - 기존 DB에 이미 들어간 문서는 새 `summary` 컬럼이 비어 있을 수 있습니다. 재크롤링 또는 백필이 필요합니다.
-- `.xls`, `.zip`은 현재 실질 내용 파싱 대상이 아닙니다.
+- `.xls`도 `xlrd`로 텍스트화하지만, 서식/병합 셀 복원은 제한적입니다.
 - `document_asset.extracted_text`는 디버깅/재처리용이고, 검색은 `document.content`에서 만들어진 chunk를 사용합니다.
 - Docker에서 LM Studio를 쓰려면 호스트 LM Studio 서버가 켜져 있어야 합니다.

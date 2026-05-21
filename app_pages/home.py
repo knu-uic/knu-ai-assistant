@@ -13,7 +13,13 @@ from ui import (
 )
 
 
-def _score_notice(notice: dict, interests: list[str], major: str | None, today: date) -> tuple[int, list[str]]:
+def _score_notice(
+    notice: dict,
+    interests: list[str],
+    major: str | None,
+    year: int | None,
+    today: date,
+) -> tuple[int, list[str]]:
     """관심키워드 매칭 + 학과 일치 + 마감 임박도로 점수 산출.
 
     임베딩 호출 없이 결정적으로 동작. 반환: (score, matched_keywords)
@@ -34,16 +40,17 @@ def _score_notice(notice: dict, interests: list[str], major: str | None, today: 
             matched.append(kw)
     score += len(matched) * 10
 
-    if major:
-        target = notice.get("target") or []
-        if isinstance(target, str):
-            target = [target]
-        if notice.get("source_department") == major:
-            score += 5
-        if major in target:
-            score += 3
-        if "전체" in target:
-            score += 1
+    target = notice.get("target") or []
+    if isinstance(target, str):
+        target = [target]
+
+    if major and notice.get("source_department") == major:
+        score += 5
+
+    if year and f"{year}학년" in target:
+        score += 3
+    if "전체" in target:
+        score += 1
 
     end_date = notice.get("end_date")
     if end_date:
@@ -118,6 +125,7 @@ user = get_current_user()
 today = date.today()
 interests = user.get("interests") or []
 major = user.get("major")
+year = user.get("year")
 
 st.caption(today.strftime("%Y년 %-m월 %-d일"))
 st.title(f"{user.get('name', '학생')}님, 오늘 꼭 필요한 3가지예요")
@@ -141,7 +149,7 @@ candidates = [n for n in candidates if not is_expired(n, today)]
 
 scored = []
 for n in candidates:
-    s, matched = _score_notice(n, interests, major, today)
+    s, matched = _score_notice(n, interests, major, year, today)
     if s > 0:
         scored.append((s, n, matched))
 scored.sort(key=lambda x: x[0], reverse=True)

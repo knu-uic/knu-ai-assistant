@@ -9,18 +9,28 @@ from model import get_llm
 import io           # 바이트 데이터를 "파일처럼" 다루기 위한 BytesIO 용도 (pdfplumber/openpyxl/zipfile이 파일객체를 요구함)
 import base64       # 이미지 바이트를 Gemini에 보낼 때 base64 문자열로 인코딩
 import zipfile      # HWPX 파일은 사실상 ZIP 컨테이너라서 직접 열어서 내부 XML을 꺼냄
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path                       # 파일 확장자(.pdf, .hwpx 등) 추출용
 from xml.etree import ElementTree as ET        # HWPX 내부 XML 파싱
 
 # --- 외부 라이브러리 ---
 import pdfplumber                              # PDF에서 텍스트 추출 (텍스트 PDF용)
 import openpyxl                                # XLSX 읽기 (현재 라우터에서는 미사용)
+import xlrd                                    # XLS 읽기
 from langchain_core.messages import HumanMessage          # LangChain 멀티모달 메시지 포맷
 
 
 # HWPX 본문(paragraph)의 XML 네임스페이스.
 # 이 prefix를 붙여야 ElementTree가 <hp:t> 같은 텍스트 노드를 찾을 수 있다.
 _HWPX_PARA_NS = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
+_SUPPORTED_ZIP_EXTS = {".zip", ".pdf", ".hwpx", ".hwp", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".gif"}
+_MAX_ZIP_MEMBERS = 30
+_MAX_ZIP_DEPTH = 2
 
 
 def hwpx_bytes_to_text(data: bytes) -> str:
@@ -116,6 +126,139 @@ def _pdf_bytes_full(data: bytes) -> str:
     return "\n".join(chunks).strip()
 
 
+def _find_soffice() -> str | None:
+    configured = os.getenv("LIBREOFFICE_BIN")
+    candidates = [
+        configured,
+        shutil.which("soffice"),
+        shutil.which("libreoffice"),
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    ]
+    return next((c for c in candidates if c and Path(c).exists()), None)
+
+
+def _run_soffice_convert(input_path: Path, out_dir: Path, page_range: str | None = None) -> Path | None:
+    soffice = _find_soffice()
+    if not soffice:
+        raise RuntimeError("LibreOffice(soffice)를 찾을 수 없습니다. LIBREOFFICE_BIN을 설정하세요.")
+
+    convert_to = "pdf:writer_pdf_Export"
+    if page_range:
+        options = {"PageRange": {"type": "string", "value": page_range}}
+        convert_to = f"{convert_to}:{json.dumps(options, separators=(',', ':'))}"
+
+    cmd = [
+        soffice,
+        "--headless",
+        "--nologo",
+        "--nofirststartwizard",
+        "--nodefault",
+        "--norestore",
+        "--convert-to",
+        convert_to,
+        input_path.name,
+        "--outdir",
+        str(out_dir),
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=input_path.parent,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=int(os.getenv("LIBREOFFICE_TIMEOUT_SECONDS", "90")),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+    pdf_path = out_dir / f"{input_path.stem}.pdf"
+    return pdf_path if pdf_path.exists() and pdf_path.stat().st_size > 0 else None
+
+
+def _hwp_ole_strings_to_text(data: bytes) -> str:
+    """LibreOffice 변환 실패 시 HWP 5.x 내부 UTF-16LE 문자열을 최대한 회수."""
+    decoded = data.decode("utf-16le", "ignore")
+    runs: list[str] = []
+    pattern = r"[\uAC00-\uD7A3A-Za-z0-9\s().,/%·\-:]{3,}"
+    for match in re.finditer(pattern, decoded):
+        text = " ".join(match.group(0).split())
+        if any("가" <= ch <= "힣" for ch in text):
+            runs.append(text)
+
+    extracted = "\n".join(dict.fromkeys(runs))
+    meta_markers = ["표 및 글자", "문단모양 등의 변경 금지"]
+    cut_points = [extracted.find(marker) for marker in meta_markers if marker in extracted]
+    if cut_points:
+        extracted = extracted[:min(cut_points)].rstrip()
+    return extracted
+
+
+def _hwp_bytes_to_markdown(data: bytes, filename: str) -> str:
+    """pyhwp2md로 HWP/HWPX를 Markdown 텍스트로 변환한다."""
+    suffix = Path(filename).suffix or ".hwp"
+    with tempfile.TemporaryDirectory(prefix="hwp-md-") as tmp:
+        input_path = Path(tmp) / f"input{suffix}"
+        input_path.write_bytes(data)
+        from pyhwp2md import convert
+        return convert(input_path).strip()
+
+
+def hwp_bytes_to_text(data: bytes, filename: str = "attachment.hwp") -> str:
+    """HWP를 Markdown 변환 우선, 실패 시 LibreOffice/PDF와 내부 문자열 fallback으로 텍스트화."""
+    try:
+        markdown = _hwp_bytes_to_markdown(data, filename)
+        if markdown:
+            return markdown
+    except Exception:
+        pass
+
+    suffix = Path(filename).suffix or ".hwp"
+    with tempfile.TemporaryDirectory(prefix="hwp-convert-") as tmp:
+        tmp_dir = Path(tmp)
+        input_path = tmp_dir / f"input{suffix}"
+        input_path.write_bytes(data)
+        full_dir = tmp_dir / "full"
+        full_dir.mkdir()
+
+        pdf_path = _run_soffice_convert(input_path, full_dir)
+        if pdf_path:
+            return _pdf_bytes_full(pdf_path.read_bytes())
+
+        page_texts: list[str] = []
+        max_pages = int(os.getenv("HWP_CONVERT_MAX_PAGE_PROBES", "3"))
+        empty_streak = 0
+        for page_no in range(1, max_pages + 1):
+            page_dir = tmp_dir / f"page-{page_no}"
+            page_dir.mkdir()
+            page_pdf = _run_soffice_convert(input_path, page_dir, str(page_no))
+            if not page_pdf:
+                empty_streak += 1
+                if empty_streak >= 3:
+                    break
+                continue
+
+            text = _pdf_bytes_full(page_pdf.read_bytes()).strip()
+            if text:
+                page_texts.append(text)
+                empty_streak = 0
+            else:
+                empty_streak += 1
+                if empty_streak >= 3:
+                    break
+
+        if page_texts:
+            return "\n\n".join(page_texts).strip()
+
+    fallback = _hwp_ole_strings_to_text(data)
+    if fallback:
+        return fallback
+
+    raise RuntimeError("LibreOffice HWP→PDF 변환 실패")
+
+
 def _preview_failed(text: str) -> bool:
     """synapView 미리보기 결과가 "실패"인지 판정."""
     if not text:
@@ -125,6 +268,87 @@ def _preview_failed(text: str) -> bool:
         return True
     # 진짜 짧은 응답도 의심 (정상 공지면 보통 수백 자 이상)
     return len(text.strip()) < 30
+
+
+def _zip_member_text(
+    member_name: str,
+    data: bytes,
+    source_url: str,
+    context,
+    include_xlsx: bool,
+    depth: int,
+) -> str:
+    ext = Path(member_name.lower()).suffix
+    label = f"[압축 내부 파일: {member_name}]"
+
+    if ext == ".zip":
+        nested = _zip_bytes_to_text(data, source_url, context, include_xlsx, depth + 1)
+        return f"{label}\n{nested}" if nested else f"{label}\n(압축 내부 텍스트 없음)"
+
+    if ext == ".pdf":
+        return f"{label}\n{_pdf_bytes_full(data)}"
+
+    if ext == ".hwpx":
+        return f"{label}\n{hwpx_bytes_to_text(data)}"
+
+    if ext == ".hwp":
+        return f"{label}\n{hwp_bytes_to_text(data, member_name)}"
+
+    if ext == ".xlsx":
+        if include_xlsx:
+            return f"{label}\n{xlsx_to_text(data)}"
+        return f"{label}\n(엑셀 첨부 — 임베딩 제외. 원본 ZIP: {source_url})"
+
+    if ext == ".xls":
+        if include_xlsx:
+            return f"{label}\n{xls_to_text(data)}"
+        return f"{label}\n(엑셀 첨부 — 임베딩 제외. 원본 ZIP: {source_url})"
+
+    if ext in (".jpg", ".jpeg", ".png", ".gif"):
+        mime = "image/png" if ext == ".png" else "image/jpeg"
+        return f"{label}\n{_image_to_text(data, mime).strip()}"
+
+    return f"{label}\n(지원하지 않는 압축 내부 확장자, 건너뜀)"
+
+
+def _zip_bytes_to_text(data: bytes, source_url: str, context, include_xlsx: bool, depth: int = 0) -> str:
+    if depth > _MAX_ZIP_DEPTH:
+        return "(ZIP 중첩 깊이 제한으로 내부 압축 해제 중단)"
+
+    parts: list[str] = []
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        members = [
+            info for info in z.infolist()
+            if not info.is_dir()
+            and "__MACOSX/" not in info.filename
+            and not Path(info.filename).name.startswith(".")
+        ]
+        handled = 0
+        for info in members:
+            if handled >= _MAX_ZIP_MEMBERS:
+                parts.append(f"(ZIP 내부 파일 {len(members)}개 중 {_MAX_ZIP_MEMBERS}개만 처리)")
+                break
+
+            ext = Path(info.filename.lower()).suffix
+            if ext not in _SUPPORTED_ZIP_EXTS:
+                continue
+
+            handled += 1
+            try:
+                parts.append(
+                    _zip_member_text(
+                        info.filename,
+                        z.read(info),
+                        source_url,
+                        context,
+                        include_xlsx,
+                        depth,
+                    )
+                )
+            except Exception as e:
+                parts.append(f"[압축 내부 파일: {info.filename}]\n(처리 실패: {e})")
+
+    return "\n\n".join(part for part in parts if part.strip()).strip()
 
 
 # XLSX 첨부는 노이즈가 많아 기본은 임베딩 제외. 단 아래 키워드가 제목/본문에 보이면 활성화.
@@ -222,6 +446,43 @@ def xlsx_to_text(data: bytes) -> str:
                 out.append(" | ".join(c for c in row if c))
         out.append(f"[End Sheet: {sheet.title}]")
     return "\n".join(out).strip()
+
+
+def xls_to_text(data: bytes) -> str:
+    """구형 XLS 시트를 검색 친화적인 텍스트로 직렬화."""
+    book = xlrd.open_workbook(file_contents=data)
+    out = []
+    for sheet in book.sheets():
+        out.append(f"[Sheet: {sheet.name}]")
+        headers: list[str] | None = None
+        rows = []
+        for r in range(sheet.nrows):
+            cells = _trim_empty_tail([
+                "" if sheet.cell_value(r, c) is None else str(sheet.cell_value(r, c)).strip()
+                for c in range(sheet.ncols)
+            ])
+            if any(c.strip() for c in cells):
+                rows.append(cells)
+
+        for idx, row in enumerate(rows):
+            if headers is None and _looks_like_header(row, rows[idx + 1:idx + 4]):
+                headers = _dedupe_headers(row)
+                out.append("[표 헤더] " + " | ".join(headers))
+                continue
+
+            row_text = " | ".join(c for c in row if c)
+            if row_text:
+                out.append(("[행] " if headers else "") + row_text)
+        out.append(f"[End Sheet: {sheet.name}]")
+    return "\n".join(out).strip()
+
+
+def _office_preview_fallback(att: dict, context) -> str:
+    preview_url = att.get("preview_url")
+    if not preview_url:
+        return ""
+    text = hwpx_via_preview(preview_url, context)
+    return "" if _preview_failed(text) else text
 
 
 def hwpx_via_preview(preview_url: str, context) -> str:
@@ -337,10 +598,23 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             )
             if include_xlsx and ext == ".xlsx":
                 # 키워드 매칭(수강신청·교양·편성 등)이 걸린 공지 → 표 전체를 텍스트화해서 임베딩 대상에 포함.
-                data = _download(source_url, context)
-                body = xlsx_to_text(data)
+                try:
+                    data = _download(source_url, context)
+                    body = xlsx_to_text(data)
+                except Exception:
+                    body = _office_preview_fallback(att, context)
+                    if not body:
+                        raise
+            elif include_xlsx and ext == ".xls":
+                try:
+                    data = _download(source_url, context)
+                    body = xls_to_text(data)
+                except Exception:
+                    body = _office_preview_fallback(att, context)
+                    if not body:
+                        raise
             else:
-                # 기본: 노이즈 많은 엑셀은 임베딩 제외하고 안내문만 남김 (.xls는 openpyxl 미지원이라 항상 제외)
+                # 기본: 노이즈 많은 엑셀은 임베딩 제외하고 안내문만 남김.
                 body = f"(엑셀 첨부 — 임베딩 제외. 원본 다운로드: {source_url})"
 
         # ───────── 분기 3: HWPX / HWP ─────────
@@ -362,10 +636,9 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                     file_data = _download(source_url, context)
                     body = hwpx_bytes_to_text(file_data)
                 else:
-                    # .hwp(구버전 바이너리)는 ZIP이 아니라서 여기서는 파싱 포기 → 사유만 남기고 early return
-                    body = "(synapView 변환 실패, .hwp 바이너리는 직접 파싱 미지원)"
-                    meta["extracted_text"] = body
-                    return f"{label}\n{body}", meta
+                    # .hwp는 LibreOffice headless로 PDF 변환 후 기존 PDF 텍스트/OCR 파이프라인에 태운다.
+                    file_data = _download(source_url, context)
+                    body = hwp_bytes_to_text(file_data, name)
 
         # ───────── 분기 4: 이미지 첨부 ─────────
         elif ext in (".jpg", ".jpeg", ".png", ".gif"):
@@ -375,7 +648,16 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             meta["raw_bytes"] = data       # 멀티모달 임베딩/재처리를 위해 원본 바이트도 보존
             body = _image_to_text(data, meta["mime_type"]).strip()
 
-        # ───────── 분기 5: 그 외 확장자 ─────────
+        # ───────── 분기 5: ZIP ─────────
+        elif ext == ".zip":
+            meta["kind"] = "attachment_zip"
+            meta["mime_type"] = "application/zip"
+            data = _download(source_url, context)
+            body = _zip_bytes_to_text(data, source_url, context, include_xlsx)
+            if not body:
+                body = "(ZIP 내부에서 처리 가능한 파일을 찾지 못했습니다.)"
+
+        # ───────── 분기 6: 그 외 확장자 ─────────
         else:
             # 모르는 포맷은 처리 시도조차 하지 않고 안내문만 남기고 early return
             body = "(지원하지 않는 확장자, 건너뜀)"

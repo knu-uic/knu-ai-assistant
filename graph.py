@@ -14,10 +14,10 @@ from db import get_document_content
 from rerank import rerank_scores
 # === [seungwon/bge-reranker] 끝 ===
 from embed import embed_query
-from model import get_llm
+from model import get_attachment_name_reserve, get_answer_context_char_budget, get_llm
 
 
-Category = Literal["장학/등록", "학사/수업", "진로/취업", "행사/공모전", "일반/기타"]
+Category = Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"]
 
 
 class RouteDecision(BaseModel):
@@ -54,11 +54,11 @@ ROUTER_SYSTEM = """너는 공주대 학생 질문을 분석해 RAG 파이프라�
 
 ## 카테고리 분류 (categories)
 다음 5개 중 질문과 관련 있는 카테고리를 모두 고른다.
-1. 장학/등록 — 국가장학금, 등록금 납부, 학자금 대출 등
-2. 학사/수업 — 수강신청, 휴학·복학, 졸업요건, 성적, 교과과정표, 학점
-3. 진로/취업 — 채용, 인턴, 자격증, 취업특강, 진로상담
-4. 행사/공모전 — 대회, 해커톤, 동아리, 축제, 세미나
-5. 일반/기타 — 분실물, 시설, 예비군, 위 4개에 속하지 않는 그 외
+1. 장학 — 국가장학금, 교내장학금, 등록금 납부, 학자금 대출 등
+2. 수강 — 수강신청, 휴학·복학, 졸업요건, 성적, 교과과정표, 학점
+3. 취업(진로) — 채용, 인턴, 자격증, 취업특강, 진로상담
+4. 행사(공모전) — 대회, 해커톤, 동아리, 축제, 세미나
+5. 일반(기타) — 분실물, 시설, 예비군, 위 4개에 속하지 않는 그 외
 
 - 질문이 한 카테고리에 명확하면 1개만.
 - 두 영역에 걸치거나 모호하면 여러 개. 진짜 광범위하면 5개 전부.
@@ -151,8 +151,8 @@ def _retrieve(
 # 한정우 환경(설정 파일 보호)을 위해 모듈 상수로 인라인.
 RERANK_CANDIDATES = 15  # vector 1차 후보 수
 RERANK_TOP_N = 3        # cross-encoder 통과 후 최종 컨텍스트 수
-ANSWER_CONTEXT_CHAR_BUDGET = 9000
-ATTACHMENT_NAME_RESERVE = 1200
+ANSWER_CONTEXT_CHAR_BUDGET = get_answer_context_char_budget()
+ATTACHMENT_NAME_RESERVE = get_attachment_name_reserve()
 
 
 @traceable(run_type="retriever", name="vector_search")

@@ -16,6 +16,7 @@ class CurriculumConfig:
     pdf_url: str
     page_url: str
     cache_path: Path
+    verify_ssl: bool = True
 
 
 class CurriculumCrawler:
@@ -30,7 +31,11 @@ class CurriculumCrawler:
 
     def _download_pdf(self) -> Path:
         self.config.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        ctx = ssl.create_default_context()
+        ctx = (
+            ssl.create_default_context()
+            if self.config.verify_ssl
+            else ssl._create_unverified_context()
+        )
         ctx.set_ciphers("DEFAULT@SECLEVEL=1")
         req = urllib.request.Request(self.config.pdf_url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
@@ -61,10 +66,10 @@ class CurriculumCrawler:
                 "title": title,
                 "content": content,
                 "summary": f"{self.SOURCE_NAME}의 {latest.get('year_label') or '최신'} 교육과정표입니다. 전공 교과목, 학점, 이수 구분 등 교육과정 정보를 확인할 수 있습니다.",
-                "target": [self.DEPARTMENT],
+                "target": ["전체"],
                 "start_date": None,
                 "end_date": None,
-                "category": "학사/수업",
+                "category": "수강",
                 "keywords": ["교육과정", "전공", "학점"],
                 "url": self.config.pdf_url,
             },
