@@ -14,7 +14,12 @@ from db import get_document_content
 from rerank import rerank_scores
 # === [seungwon/bge-reranker] 끝 ===
 from embed import embed_query
-from model import get_attachment_name_reserve, get_answer_context_char_budget, get_llm
+from model import (
+    get_attachment_name_reserve,
+    get_answer_context_char_budget,
+    get_llm,
+)
+import os
 
 
 Category = Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"]
@@ -44,6 +49,7 @@ class ChatState(TypedDict, total=False):
     expanded_query: str
     route_rationale: str
     contexts: List[Dict[str, Any]]
+    evidence_chunks: List[Dict[str, Any]]
     answer: str
     grounded: bool
     fidelity: float
@@ -80,13 +86,20 @@ ROUTER_SYSTEM = """너는 공주대 학생 질문을 분석해 RAG 파이프라�
 
 
 ANSWERER_SYSTEM = """너는 공주대학교 학생을 돕는 AI 비서다.
-아래 컨텍스트만 근거로 답하라.
-- 컨텍스트에 명시된 사실에서 **논리적으로 도출되는 결론**은 허용한다.
+
+반드시 아래 컨텍스트만 근거로 답변하라.
+
+규칙:
+- 컨텍스트에 명시된 사실에서 논리적으로 도출되는 결론은 허용한다.
   예: 오늘 날짜와 컨텍스트의 start_date/end_date를 비교해 "현재 접수 중", "이미 마감" 같이 판단하는 것.
-- 단, 컨텍스트에 없는 **새로운 사실**(날짜·금액·자격·연락처 등)을 만들어내지 마라.
-- 컨텍스트에 사용자 질문에 답할 정보가 전혀 없을 때만 "관련 공지를 찾지 못했습니다"라고 답한다.
+- 컨텍스트에 없는 새로운 사실(날짜·금액·자격·연락처 등)은 만들지 마라.
+- 컨텍스트에 사용자 질문에 답할 정보가 전혀 없을 때만 "관련 공지를 찾지 못했습니다"라고 답하라.
+- 내부 분석 과정, 검토 과정, 추론 과정은 절대 출력하지 마라.
+- "사용자 질문 분석", "정보 추출", "논리적 결론", "검토 결과" 같은 중간 단계 설명을 출력하지 마라.
+- 반드시 사용자에게 보여줄 최종 답변만 자연스럽게 출력하라.
 - 답변 끝에 참고한 공지 제목과 URL을 목록으로 붙인다.
-- 한국어로 간결하게 답한다."""
+- 한국어로 간결하게 답한다.
+"""
 
 
 VERIFIER_SYSTEM = """너는 RAG 답변의 사실 충실도를 검증한다.
@@ -149,15 +162,17 @@ def _retrieve(
 # === [seungwon/bge-reranker] 시작 ===
 # 원래 seungwon/bge-reranker 브랜치는 config.py에서 import하던 상수.
 # 한정우 환경(설정 파일 보호)을 위해 모듈 상수로 인라인.
-RERANK_CANDIDATES = 15  # vector 1차 후보 수
-RERANK_TOP_N = 3        # cross-encoder 통과 후 최종 컨텍스트 수
+RERANK_CANDIDATES = 50   # vector similarity 기준 rerank 입력 chunk 수
+EVIDENCE_TOP_K = 5       # answerer에 직접 주입할 핵심 evidence chunk 수
+SUPPORT_DOC_TOP_K = 3    # support document 개수
 ANSWER_CONTEXT_CHAR_BUDGET = get_answer_context_char_budget()
 ATTACHMENT_NAME_RESERVE = get_attachment_name_reserve()
+ENABLE_VERIFIER = os.getenv("ENABLE_VERIFIER", "false").lower() == "true"
 
 
 @traceable(run_type="retriever", name="vector_search")
 def _vector_search(q_vec, major, categories):
-    """trace 노출용 wrapper. output: vector top-N 후보 row 리스트(reranker 입력)."""
+    """trace 노출용 wrapper. output: vector similarity top-N chunk 후보 리스트."""
     return search_chunks(q_vec, major=major, categories=categories, limit=RERANK_CANDIDATES)
 
 
@@ -168,33 +183,89 @@ def _rerank(query: str, rows):
     return sorted(zip(rows, scores), key=lambda pair: pair[1], reverse=True)
 
 
+def _dedup_text(base: str, remove: list[str]) -> str:
+    """이미 evidence chunk로 사용된 텍스트를 support document에서 제거한다."""
+    result = base
+    for text in remove:
+        text = (text or "").strip()
+        if text:
+            result = result.replace(text, "")
+    return result.strip()
+
+
 @traceable(run_type="retriever", name="search_chunks_reranked")
 def _retrieve_with_rerank(
     query: str,
     major: str | None,
     categories: List[str] | None,
-) -> List[Dict[str, Any]]:
-    """vector top-N → BGE-reranker로 재정렬 → top-K → 각 doc 풀문서 전달.
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """chunk-first retrieval + evidence chunk packing.
 
-    score 필드는 cross-encoder 점수(0~1)로 덮어쓴다.
-    snippet은 document 전체 content, matched_chunk는 실제 검색/리랭크된 대표 청크.
+    1. 전체 chunk에서 vector top-N 검색
+    2. chunk 단위 rerank
+    3. 상위 evidence chunks 보존
+    4. 관련 문서를 document-level context로 병합
     """
     q_vec = embed_query(query)
     rows = _vector_search(q_vec, major, categories)
+
     if not rows:
-        return []
-    ranked = _rerank(query, rows)[:RERANK_TOP_N]
-    contexts: List[Dict[str, Any]] = []
+        return [], []
+
+    ranked = _rerank(query, rows)
+
+    evidence_ranked = ranked[:EVIDENCE_TOP_K]
+    evidence_chunks: List[Dict[str, Any]] = []
+
+    for r, s in evidence_ranked:
+        evidence_chunks.append({
+            "url": r[0],
+            "title": r[1],
+            "chunk": r[2],
+            "score": s,
+        })
+
+    doc_best: dict[str, tuple[Any, float]] = {}
+
     for r, s in ranked:
-        full = get_document_content(r[7], r[0])
-        snippet = full or r[2]
+        key = f"{r[7]}::{r[0]}"
+        prev = doc_best.get(key)
+        if prev is None or s > prev[1]:
+            doc_best[key] = (r, s)
+
+    top_docs = sorted(
+        doc_best.values(),
+        key=lambda pair: pair[1],
+        reverse=True,
+    )[:SUPPORT_DOC_TOP_K]
+
+    evidence_by_url: dict[str, list[str]] = {}
+    for ev in evidence_chunks:
+        evidence_by_url.setdefault(ev["url"], []).append(ev["chunk"])
+
+    contexts: List[Dict[str, Any]] = []
+
+    for r, s in top_docs:
+        full = get_document_content(r[7], r[0]) or r[2]
+
+        deduped_full = _dedup_text(
+            full,
+            evidence_by_url.get(r[0], []),
+        )
+
         contexts.append({
-            "url": r[0], "title": r[1], "snippet": snippet, "score": s,
+            "url": r[0],
+            "title": r[1],
+            "snippet": deduped_full,
+            "score": s,
             "matched_chunk": r[2],
             "summary": r[14] if len(r) > 14 else None,
-            "posted_at": r[4], "start_date": r[5], "end_date": r[6],
+            "posted_at": r[4],
+            "start_date": r[5],
+            "end_date": r[6],
         })
-    return contexts
+
+    return contexts, evidence_chunks
 # === [seungwon/bge-reranker] 끝 ===
 
 
@@ -202,14 +273,21 @@ def retriever_node(state: ChatState) -> dict:
     """라우터 결과를 바탕으로 관련 공지 컨텍스트를 검색하는 노드.
 
     router_node가 만든 확장 질의와 카테고리, 사용자의 전공 정보를 사용해
-    벡터 저장소에서 관련 공지 조각을 찾고 answerer_node가 참고할 contexts를
-    상태에 추가한다.
+    chunk-first retrieval + rerank를 수행한다.
     """
-    # 라우터가 확장한 쿼리로 임베딩. 빈 문자열이면 원본 질문으로 폴백.
     query = state.get("expanded_query") or state["question"]
     categories = list(state.get("categories") or []) or None
-    contexts = _retrieve_with_rerank(query, state.get("major"), categories)  # [seungwon/bge-reranker] _retrieve → _retrieve_with_rerank
-    return {"contexts": contexts}
+
+    contexts, evidence_chunks = _retrieve_with_rerank(
+        query,
+        state.get("major"),
+        categories,
+    )
+
+    return {
+        "contexts": contexts,
+        "evidence_chunks": evidence_chunks,
+    }
 
 
 _ATTACHMENT_RE = re.compile(r"^\[첨부: (?P<name>.+?)\]\s*$", re.MULTILINE)
@@ -349,23 +427,68 @@ def _format_support_context(c: Dict[str, Any], budget: int) -> str:
     return "\n".join(part for part in parts if part)
 
 
-def _pack_contexts(contexts: List[Dict[str, Any]], budget: int = ANSWER_CONTEXT_CHAR_BUDGET) -> str:
-    if not contexts:
+def _pack_evidence_chunks(
+    evidence_chunks: List[Dict[str, Any]],
+    budget: int,
+) -> str:
+    if not evidence_chunks or budget <= 0:
+        return ""
+
+    parts: list[str] = ["# 핵심 검색 청크"]
+    remaining = budget - len(parts[0])
+
+    for idx, ev in enumerate(evidence_chunks, 1):
+        if remaining <= 0:
+            break
+
+        block = (
+            f"\n\n[{idx}] {ev['title']}\n"
+            f"URL: {ev['url']}\n"
+            f"{ev['chunk']}"
+        )
+
+        before = len("".join(parts))
+        remaining = _append_budget(parts, block, remaining)
+
+        if len("".join(parts)) == before:
+            break
+
+    return "".join(parts).strip()
+
+
+def _pack_contexts(
+    contexts: List[Dict[str, Any]],
+    evidence_chunks: List[Dict[str, Any]] | None = None,
+    budget: int = ANSWER_CONTEXT_CHAR_BUDGET,
+) -> str:
+    if not contexts and not evidence_chunks:
         return "(컨텍스트 없음)"
 
     packed: list[str] = []
     remaining = budget
+
+    evidence_text = _pack_evidence_chunks(
+        evidence_chunks or [],
+        max(0, int(budget * 0.35)),
+    )
+
+    if evidence_text:
+        packed.append(evidence_text)
+        remaining -= len(evidence_text)
+
     for idx, context in enumerate(contexts):
         if remaining <= 0:
             break
 
-        full = _format_context(context)
         separator_cost = len("\n\n---\n\n") if packed else 0
         available = remaining - separator_cost
+
         if available <= 0:
             break
 
-        if idx == 0 and len(full) <= available:
+        full = _format_context(context)
+
+        if len(full) <= available:
             rendered = full
         elif idx == 0:
             rendered = _format_context_with_budget(context, available)
@@ -383,7 +506,10 @@ def answerer_node(state: ChatState) -> dict:
     if not contexts:
         return {"answer": "관련 공지를 찾지 못했습니다."}
 
-    context_text = _pack_contexts(contexts)
+    context_text = _pack_contexts(
+        contexts,
+        state.get("evidence_chunks") or [],
+    )
     today = date.today().isoformat()
     model = get_llm()
     resp = model.invoke([
@@ -400,7 +526,10 @@ def answerer_node(state: ChatState) -> dict:
 
 def verifier_node(state: ChatState) -> dict:
     contexts = state.get("contexts") or []
-    context_text = _pack_contexts(contexts)
+    context_text = _pack_contexts(
+        contexts,
+        state.get("evidence_chunks") or [],
+    )
     today = date.today().isoformat()
 
     model = get_llm().with_structured_output(VerificationResult)
@@ -422,22 +551,25 @@ def verifier_node(state: ChatState) -> dict:
 def build_graph():
     """LangGraph RAG 파이프라인을 구성하고 실행 가능한 그래프로 컴파일한다.
 
-    router -> retriever -> answerer -> verifier 순서로 노드를 연결해
-    질문 분류, 공지 검색, 답변 생성, 근거 검증까지 이어지는 흐름을 만든다.
-    반환된 그래프는 앱 시작 시 GRAPH 상수에 바인딩되어 재사용된다.
-    각 노드는 ChatState를 공유하며 이전 노드의 결과를 다음 노드 입력으로 넘긴다.
+    router -> retriever -> answerer -> verifier(optional) 순서로 노드를 연결한다.
+    ENABLE_VERIFIER=true 환경변수일 때만 verifier를 활성화한다.
     """
     g = StateGraph(ChatState)
     g.add_node("router", router_node)
     g.add_node("retriever", retriever_node)
     g.add_node("answerer", answerer_node)
-    g.add_node("verifier", verifier_node)
 
     g.set_entry_point("router")
     g.add_edge("router", "retriever")
     g.add_edge("retriever", "answerer")
-    g.add_edge("answerer", "verifier")
-    g.add_edge("verifier", END)
+
+    if ENABLE_VERIFIER:
+        g.add_node("verifier", verifier_node)
+        g.add_edge("answerer", "verifier")
+        g.add_edge("verifier", END)
+    else:
+        g.add_edge("answerer", END)
+
     return g.compile()
 
 GRAPH = build_graph()

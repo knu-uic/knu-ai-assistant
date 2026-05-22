@@ -85,16 +85,138 @@ def _image_to_text(image_bytes: bytes, mime: str) -> str:
     return resp.content if isinstance(resp.content, str) else str(resp.content)
 
 
-def _download(url: str, context) -> bytes:
-    """playwright context의 request로 가져온다 (같은 TLS·쿠키·UA)."""
-    # 일부러 requests를 안 쓰는 이유:
-    #   브라우저 세션(쿠키/UA/Referer)을 그대로 들고 가야 통과되는 공지 시스템이 있다.
-    #   context.request를 쓰면 별도 로그인/세션 동기화 없이 그대로 다운로드 가능.
-    resp = context.request.get(url, timeout=60000)
-    if not resp.ok:
-        # 호출자(라우터)의 try/except에서 잡혀 "(처리 실패: ...)" 메시지로 변환된다
-        raise RuntimeError(f"HTTP {resp.status} for {url}")
-    return resp.body()
+def _download(
+    url: str,
+    context,
+    referer: str | None = None,
+    detail_page=None,
+    attachment_selector: str | None = None,
+    attachment_index: int | None = None,
+) -> bytes:
+    """실제 Chromium 다운로드 경로를 사용해 첨부파일을 가져온다."""
+    created_page = detail_page is None
+    page = detail_page or context.new_page()
+
+    lower_url = url.lower()
+
+    direct_extensions = (
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".svg",
+        ".pdf",
+        ".txt",
+        ".csv",
+    )
+
+    try:
+        # 이미지/JPG/PDF 같은 직접 파일 URL은 browser download 이벤트 대신
+        # HTTP request로 바로 가져오는 편이 훨씬 안정적이다.
+        if lower_url.endswith(direct_extensions):
+            try:
+                response = context.request.get(
+                    url,
+                    timeout=int(
+                        os.getenv("ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", "120000")
+                    ),
+                    fail_on_status_code=False,
+                )
+
+                if response.ok:
+                    return response.body()
+
+            except Exception as e:
+                print(f"[direct request failed] {url} -> {e}")
+        # 일부 학교 사이트는 Referer 세션이 없으면 download.do 연결 자체를 끊는다.
+        if detail_page and attachment_selector is not None and attachment_index is not None:
+            attachments = page.locator(attachment_selector)
+
+            target = attachments.nth(attachment_index)
+
+            timeout_ms = int(
+                os.getenv("ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", "120000")
+            )
+
+            with page.expect_download(timeout=timeout_ms) as download_info:
+                target.locator('a[href*="download.do"]').first.click(
+                    timeout=5000,
+                    no_wait_after=True,
+                )
+
+        elif referer:
+            timeout_ms = int(
+                os.getenv("ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", "120000")
+            )
+            download_selectors = [
+                f'a[href="{url}"]',
+                f'a[href*="download.do"]',
+                'a[download]',
+                'button[onclick*="download"]',
+                'a[onclick*="download"]',
+            ]
+
+            clicked = False
+
+            for selector in download_selectors:
+                try:
+                    target = page.locator(selector).first
+
+                    if target.count() == 0:
+                        continue
+
+                    with page.expect_download(timeout=timeout_ms) as download_info:
+                        target.click(
+                            timeout=5000,
+                            no_wait_after=True,
+                        )
+
+                    clicked = True
+                    break
+
+                except Exception:
+                    continue
+
+            if not clicked:
+                raise RuntimeError(
+                    f"다운로드 버튼을 찾지 못했습니다: {url}"
+                )
+
+        else:
+            timeout_ms = int(
+                os.getenv("ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", "120000")
+            )
+            with page.expect_download(timeout=timeout_ms) as download_info:
+                page.goto(url, wait_until="commit", timeout=timeout_ms)
+
+        download = download_info.value
+
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            temp_path = tmp.name
+
+        download.save_as(temp_path)
+
+        data = Path(temp_path).read_bytes()
+
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+
+        return data
+
+    except Exception as e:
+        print(f"[download failed] {url} -> {e}")
+        return b""
+
+    finally:
+        if created_page:
+            try:
+                page.close()
+            except Exception:
+                pass
 
 
 def pdf_to_text(data: bytes) -> str:
@@ -266,8 +388,11 @@ def _preview_failed(text: str) -> bool:
     # 공주대 synapView는 변환 실패 시 페이지에 안내 문구를 그대로 박아둔다 → 텍스트로 잡힘
     if "변환이 실패" in text or "변환에 실패" in text:
         return True
-    # 진짜 짧은 응답도 의심 (정상 공지면 보통 수백 자 이상)
-    return len(text.strip()) < 30
+    # preview가 일부만 로드되어도 fallback 없이 우선 사용한다.
+    # 대형 HWP(수백 페이지)는 synapView 전체 렌더가 매우 느려
+    # 제목/일부 본문만 먼저 도착하는 경우가 많다.
+    # 완전 빈 문자열 수준일 때만 실패로 본다.
+    return len(text.strip()) < 5
 
 
 def _zip_member_text(
@@ -479,47 +604,169 @@ def xls_to_text(data: bytes) -> str:
 
 def _office_preview_fallback(att: dict, context) -> str:
     preview_url = att.get("preview_url")
+
     if not preview_url:
         return ""
-    text = hwpx_via_preview(preview_url, context)
-    return "" if _preview_failed(text) else text
+
+    try:
+        text = hwpx_via_preview(preview_url, context)
+
+        # viewer에서 일부 텍스트라도 확보되면 그대로 사용한다.
+        # 공주대처럼 download.do는 막혀 있지만 synapView 렌더는 허용하는
+        # 사이트가 있어 preview 텍스트를 우선 신뢰한다.
+        return text or ""
+
+    except Exception:
+        return ""
 
 
 def hwpx_via_preview(preview_url: str, context) -> str:
-    """공주대 synapView.do 미리보기 페이지를 playwright로 열어 텍스트 추출.
+    """synapView 전체 스크롤 기반 텍스트 추출.
 
-    한글 미리보기는 iframe에 페이지를 렌더링하므로 모든 frame의 텍스트를 모은다.
+    synapView는 대형 HWP/HWPX를 lazy rendering 하는 경우가 많아
+    단순 body 추출만으로는 앞부분 일부만 수집된다.
+    따라서 viewer를 끝까지 스크롤하며 iframe 텍스트 변화를 반복 수집한다.
     """
     page = context.new_page()
+
     try:
-        # 네트워크 idle까지 기다린 뒤에도 2초 추가 대기 — synapView 렌더가 완전히 끝날 시간 확보
-        page.goto(preview_url, wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(2000)
-
-        chunks = []
-
-        # 1) 메인 프레임 body 텍스트 (있을 때만)
         try:
-            chunks.append(page.inner_text("body"))
-        except Exception:
-            pass  # 어떤 페이지는 main body가 비어있을 수 있음 — 그래도 iframe에서 건진다
+            page.goto(
+                preview_url,
+                wait_until="domcontentloaded",
+                timeout=int(os.getenv("HWP_PREVIEW_TIMEOUT_MS", "45000")),
+            )
+        except Exception as e:
+            # synapView는 timeout 이후에도 iframe 렌더가 계속 진행되는 경우가 많다.
+            # 따라서 timeout을 치명적 실패로 보지 않고 계속 스크롤 수집을 시도한다.
+            print(f"[synap goto timeout ignored] {e}")
 
-        # 2) 모든 iframe 순회 — synapView는 본문을 iframe에 렌더하는 게 일반적
-        for frame in page.frames:
-            if frame == page.main_frame:
-                continue  # 위에서 이미 처리
-            try:
-                t = frame.inner_text("body")
-                if t.strip():
-                    chunks.append(t)
-            except Exception:
-                # 일부 frame은 cross-origin이거나 body가 없을 수 있음 → 무시하고 다음 frame
+        page.wait_for_timeout(
+            int(os.getenv("HWP_PREVIEW_EXTRA_WAIT_MS", "10000"))
+        )
+
+        max_scrolls = int(os.getenv("HWP_PREVIEW_MAX_SCROLLS", "1200"))
+        scroll_px = int(os.getenv("HWP_PREVIEW_SCROLL_PX", "4000"))
+        settle_ms = int(os.getenv("HWP_PREVIEW_SCROLL_WAIT_MS", "3500"))
+        stable_limit = int(os.getenv("HWP_PREVIEW_STABLE_LIMIT", "30"))
+
+        collected_chunks: list[str] = []
+        seen_texts: set[str] = set()
+
+        stable_count = 0
+        viewer_selectors = [
+            ".viewer",
+            "#viewer",
+            ".doc-view",
+            ".synap-viewer",
+            ".document-view",
+            ".viewer-container",
+        ]
+        last_total_len = 0
+
+        def collect_frame_texts() -> int:
+            total = 0
+
+            for frame in page.frames:
+                try:
+                    text = frame.inner_text("body").strip()
+                except Exception:
+                    continue
+
+                if not text:
+                    continue
+
+                normalized = "\n".join(
+                    line.strip()
+                    for line in text.splitlines()
+                    if line.strip()
+                )
+
+                if not normalized:
+                    continue
+
+                total += len(normalized)
+
+                if normalized not in seen_texts:
+                    seen_texts.add(normalized)
+                    collected_chunks.append(normalized)
+
+            return total
+
+        # 초기 수집
+        last_total_len = collect_frame_texts()
+
+        for _ in range(max_scrolls):
+            scrolled = False
+
+            for selector in viewer_selectors:
+                try:
+                    locator = page.locator(selector).first
+
+                    if locator.count() == 0:
+                        continue
+
+                    locator.evaluate(
+                        "(el, y) => el.scrollBy(0, y)",
+                        scroll_px,
+                    )
+
+                    scrolled = True
+                    break
+
+                except Exception:
+                    continue
+
+            # viewer container를 못 찾으면 body wheel fallback
+            if not scrolled:
+                try:
+                    page.mouse.wheel(0, scroll_px)
+                except Exception:
+                    pass
+
+            page.wait_for_timeout(settle_ms)
+
+            current_total_len = collect_frame_texts()
+
+            # 더 이상 텍스트 증가가 없으면 안정화 카운트 증가
+            if current_total_len <= last_total_len:
+                stable_count += 1
+            else:
+                stable_count = 0
+                last_total_len = current_total_len
+
+            # 여러 번 연속 변화 없으면 종료
+            if stable_count >= stable_limit:
+                break
+
+        print(
+            f"[synap collected] chunks={len(collected_chunks)} chars={sum(len(c) for c in collected_chunks)}"
+        )
+        merged = "\n\n".join(collected_chunks).strip()
+
+        # 너무 긴 중복 제거
+        lines = []
+        seen_lines = set()
+
+        for line in merged.splitlines():
+            normalized = line.strip()
+
+            if not normalized:
                 continue
 
-        return "\n".join(chunks).strip()
+            if normalized in seen_lines:
+                continue
+
+            seen_lines.add(normalized)
+            lines.append(normalized)
+
+        return "\n".join(lines).strip()
+
     finally:
-        # 예외가 나도 페이지는 반드시 닫는다 (브라우저 리소스 누수 방지)
-        page.close()
+        try:
+            page.close()
+        except Exception:
+            pass
 
 
 def inline_image_to_text(image_url: str, context):
@@ -626,19 +873,40 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             body = ""
 
             # 1차 시도: synapView 미리보기 페이지에서 텍스트 긁기
-            if att.get("preview_url"):
-                body = hwpx_via_preview(att["preview_url"], context)
+            body = _office_preview_fallback(att, context)
 
-            # 1차가 실패면 폴백 분기
-            if _preview_failed(body):
+            # preview가 완전히 비어있을 때만 원본 다운로드 fallback 수행
+            if not body or not body.strip():
                 if ext == ".hwpx":
                     # .hwpx는 ZIP 구조라 직접 까서 XML 텍스트 노드를 뽑을 수 있다
-                    file_data = _download(source_url, context)
-                    body = hwpx_bytes_to_text(file_data)
+                    file_data = _download(
+                        source_url,
+                        context,
+                        referer=att.get("preview_url") or source_url,
+                        detail_page=att.get("detail_page"),
+                        attachment_selector=att.get("attachment_selector"),
+                        attachment_index=att.get("attachment_index"),
+                    )
+
+                    if not file_data:
+                        body = body or "(원본 HWPX 다운로드 실패)"
+                    else:
+                        body = hwpx_bytes_to_text(file_data)
                 else:
                     # .hwp는 LibreOffice headless로 PDF 변환 후 기존 PDF 텍스트/OCR 파이프라인에 태운다.
-                    file_data = _download(source_url, context)
-                    body = hwp_bytes_to_text(file_data, name)
+                    file_data = _download(
+                        source_url,
+                        context,
+                        referer=att.get("preview_url") or source_url,
+                        detail_page=att.get("detail_page"),
+                        attachment_selector=att.get("attachment_selector"),
+                        attachment_index=att.get("attachment_index"),
+                    )
+
+                    if not file_data:
+                        body = body or "(원본 HWP 다운로드 실패)"
+                    else:
+                        body = hwp_bytes_to_text(file_data, name)
 
         # ───────── 분기 4: 이미지 첨부 ─────────
         elif ext in (".jpg", ".jpeg", ".png", ".gif"):

@@ -13,8 +13,9 @@
 - LLM 기반 `summary`, `category`, `target`, `start_date`, `end_date`, `keywords` 생성
 - 원문 `content` 보존 및 청크 임베딩 저장
 - 카테고리별 물리 테이블과 pgvector HNSW 검색
-- BGE reranker 기반 top-3 문서 재정렬
-- 답변 생성 및 verifier를 포함한 LangGraph RAG 파이프라인
+- chunk-first retrieval + BGE reranker 기반 evidence-centric RAG
+- router → retriever → reranker → answerer 기반 LangGraph RAG 파이프라인
+- optional verifier 기반 답변 충실도 검증
 - 사용자 학과/관심사 기반 홈 추천과 공지 목록
 
 ## 구조
@@ -49,7 +50,8 @@
 → document_* 테이블에 원문 content와 summary 저장
 → embed.py에서 title + content 청킹 및 임베딩
 → document_*_chunk 테이블에 model.py의 EMBEDDING_DIM 차원 vector 저장
-→ graph.py에서 router → retriever → reranker → answerer → verifier 실행
+→ graph.py에서 chunk-level retrieval → reranker → evidence chunk 추출 → answerer 실행
+→ ENABLE_VERIFIER=true일 때 verifier 추가 실행
 ```
 
 `summary`는 UI/컨텍스트 압축용 보조 데이터입니다. 검색 임베딩과 최종 근거는 계속 원문 `content`를 기준으로 합니다.
@@ -94,7 +96,7 @@ document_event_chunk
 document_etc_chunk
 ```
 
-chunk 테이블은 `model.py`의 `EMBEDDING_DIM`과 같은 차원의 `embedding vector(...)` 및 HNSW cosine index를 사용합니다.
+chunk 테이블은 `model.py`의 `EMBEDDING_DIM`과 같은 차원의 `embedding vector(...)` 및 HNSW cosine index를 사용합니다. retrieval은 문서 대표 chunk를 고정 선택하지 않고, 전체 chunk를 대상으로 similarity search를 수행합니다.
 
 첨부/본문 이미지는 통합 `document_asset` 테이블에 저장합니다. 현재 검색은 `document_asset`을 직접 보지 않고, 추출 텍스트가 `document.content`에 붙은 뒤 청킹되어 검색됩니다.
 
@@ -132,22 +134,68 @@ XLSX는 행마다 헤더를 반복하지 않고 `[표 헤더]`, `[행]` 형식�
 ## RAG 검색/답변
 
 1. router가 질문 카테고리와 검색용 확장 질의를 생성합니다.
-2. `search_chunks()`가 카테고리별 chunk 테이블에서 문서당 대표 청크를 찾습니다.
-3. BGE reranker가 후보 15개를 재정렬해 top 3 문서를 선택합니다.
-4. 1순위 문서는 가능한 한 원문 전체를 넣습니다.
-5. 컨텍스트가 부족하면 1순위 문서를 우선 보존하고, 2~3순위는 `summary + matched_chunk + 첨부파일명` 중심으로 넣습니다.
-6. answerer가 컨텍스트 기반 답변을 생성합니다.
-7. verifier가 답변 충실도를 검증합니다.
+2. `search_chunks()`가 카테고리별 chunk 테이블 전체에서 vector similarity top-50 chunk를 검색합니다.
+3. BGE reranker가 검색된 chunk들을 재정렬합니다.
+4. rerank 상위 chunk 5개를 evidence chunk로 answerer prompt 앞부분에 직접 포함합니다.
+5. rerank 결과를 문서 단위로 병합해 support document top-3를 구성합니다.
+   - 같은 문서의 여러 chunk가 존재하면 가장 높은 rerank score를 받은 chunk를 문서 대표 score로 사용합니다.
+6. evidence chunk와 중복되는 본문은 제거(dedup)한 뒤 context packing을 수행합니다.
+   - evidence chunk는 제목(title), URL, reranked chunk 본문과 함께 prompt에 포함됩니다.
+   - support document는 제목(title), URL, 접수기간(start_date/end_date)을 공통 포함합니다.
+7. budget이 충분하면 1~3등 support document 모두 가능한 한 원문 전체(full document)를 유지합니다.
+8. answerer가 evidence chunk + support document 기반으로 답변을 생성합니다.
+9. `ENABLE_VERIFIER=true`일 때만 verifier가 답변 충실도를 검증합니다.
 
-답변/정제 단계의 LLM 입력 예산은 `model.py`에서 모델 컨텍스트 윈도우를 기준으로 계산합니다.
+
+현재 기본 retrieval 설정:
 
 ```text
-기본 답변 컨텍스트 문자 예산
-= LLM_CONTEXT_WINDOW_TOKENS * LLM_CONTEXT_USAGE_RATIO * LLM_CHARS_PER_TOKEN
-= 8192 * 0.8 * 1.4 ≈ 9175자
+전체 chunk similarity search
+→ vector top50 chunks
+→ CrossEncoder rerank
+→ evidence top5 chunks 추출
+→ support document top3 선정
+→ context packing
 ```
 
-`refine.py`의 긴 문서 축소 기준은 위 예산에 `REFINE_CONTEXT_RATIO_MULTIPLIER`를 곱해 정합니다. 기본값 `0.35`는 약 3200자입니다. 긴 첨부파일은 LLM 메타데이터 추출 입력에서 축소되지만, DB 저장과 임베딩에는 원문 전체가 사용됩니다.
+support document 선정 기준은 제목/summary가 아니라, 해당 문서 안에서 가장 높은 rerank score를 받은 chunk입니다.
+
+현재 retrieval은 document-first 방식이 아니라 evidence-centric chunk retrieval 기반입니다. retrieval 단계에서는 모든 chunk가 서로 경쟁하며, reranker가 실제 질문과 가장 관련 높은 evidence chunk를 선별합니다.
+
+context packing 단계에서는 evidence chunk를 최우선으로 보존합니다. 이후 남은 budget 내에서 support document를 가능한 한 많이 유지하며, budget이 부족할 경우 1등 문서는 matched chunk + 본문 중심, 2~3등 문서는 summary + matched chunk 중심으로 압축됩니다.
+
+현재 verifier는 optional 기능이며, 기본값은 비활성화입니다. verifier를 활성화하면 answerer 이후 추가 LLM 검증 단계를 수행하므로 긴 context 환경에서는 latency가 증가할 수 있습니다.
+
+answerer prompt는 크게 두 부분으로 구성됩니다.
+
+```text
+[핵심 검색 청크]
+(top reranked evidence chunks)
+
+[관련 문서]
+(top support documents)
+```
+
+핵심 검색 청크는 answerer가 직접 참고하는 주요 근거 역할을 하며, support document는 추가 문맥 제공 역할을 합니다.
+
+답변/정제 단계의 RAG 입력 예산은 `.env`에서 직접 문자 수 기준으로 관리합니다.
+
+```env
+ANSWER_CONTEXT_CHAR_BUDGET=6000
+REFINE_FULL_CONTENT_LIMIT=12000
+```
+
+- `ANSWER_CONTEXT_CHAR_BUDGET`: answerer가 실제 prompt에 stuffing할 최대 문자 수
+- retrieval은 chunk 단위로 수행되지만, answerer에는 evidence chunk + 문서 단위 support context가 함께 전달됩니다.
+- `REFINE_FULL_CONTENT_LIMIT`: refine/support context 최대 문자 수
+
+LM Studio/llama.cpp의 실제 모델 최대 context window는 앱 내부 RAG budget과 분리해 관리합니다.
+
+```env
+LLM_MAX_CONTEXT_WINDOW_TOKENS=60000
+```
+
+긴 첨부파일은 LLM 메타데이터 추출 입력에서는 축소될 수 있지만, DB 저장과 임베딩에는 계속 원문 전체가 사용됩니다.
 
 ## 환경변수
 
@@ -165,10 +213,10 @@ EMBEDDING_PROVIDER=lmstudio
 LLM_MODEL=gemma-4-e4b
 EMBEDDING_MODEL=text-embedding-nomic-embed-text-v1.5
 LMSTUDIO_BASE_URL=http://localhost:1234/v1
-LLM_CONTEXT_WINDOW_TOKENS=8192
-LLM_CONTEXT_USAGE_RATIO=0.8
-LLM_CHARS_PER_TOKEN=1.4
-REFINE_CONTEXT_RATIO_MULTIPLIER=0.35
+LLM_MAX_CONTEXT_WINDOW_TOKENS=60000
+ANSWER_CONTEXT_CHAR_BUDGET=6000
+REFINE_FULL_CONTENT_LIMIT=12000
+ENABLE_VERIFIER=false
 
 GOOGLE_API_KEY=
 GEMINI_API_KEY=

@@ -6,7 +6,12 @@ from urllib.parse import urljoin
 
 from playwright.sync_api import sync_playwright
 
-from attachments import attachment_to_text, inline_image_to_text, xlsx_relevant
+from attachments import (
+    attachment_to_text,
+    hwpx_via_preview,
+    inline_image_to_text,
+    xlsx_relevant,
+)
 
 ASSETS_DIR = Path("crawl_result/assets")
 
@@ -67,6 +72,7 @@ class BoardNoticeCrawler:
         items = []
         lis = detail_page.locator(self.config.attachment_selector).all()
         for li in lis:
+            li_index = len(items)
             dl = li.locator('a[href*="download.do"]').first
             try:
                 filename = dl.inner_text().strip()
@@ -81,6 +87,8 @@ class BoardNoticeCrawler:
                 "filename": filename,
                 "download_url": download_url,
                 "preview_url": preview_url,
+                "attachment_index": li_index,
+                "attachment_selector": self.config.attachment_selector,
             })
         return items
 
@@ -250,12 +258,56 @@ class BoardNoticeCrawler:
        
         for att in self._collect_attachments(detail_page):
             print(f"  - 첨부 처리: {att['filename']}")
-            txt, meta = attachment_to_text(att, context, include_xlsx=include_xlsx)
+
+            filename_lower = att["filename"].lower()
+            preview_url = att.get("preview_url")
+
+            # 공주대 요람 같은 대형 HWP/HWPX는
+            # download.do 대신 synap viewer 자체를 직접 스크롤 수집한다.
+            if preview_url and filename_lower.endswith((".hwp", ".hwpx")):
+                try:
+                    viewer_text = hwpx_via_preview(preview_url, context)
+
+                    if viewer_text and viewer_text.strip():
+                        content_parts.append(
+                            f"[첨부: {att['filename']}]\n{viewer_text}"
+                        )
+
+                        assets.append({
+                            "kind": "attachment_hwpx_preview",
+                            "filename": att["filename"],
+                            "source_url": preview_url,
+                            "storage_path": None,
+                            "mime_type": "text/plain",
+                            "extracted_text": viewer_text,
+                            "order_idx": order,
+                        })
+
+                        order += 1
+                        continue
+
+                except Exception as e:
+                    print(f"  - synap viewer 수집 실패: {e}")
+
+            att["detail_page"] = detail_page
+
+            txt, meta = attachment_to_text(
+                att,
+                context,
+                include_xlsx=include_xlsx,
+            )
+
             if txt:
                 content_parts.append(txt)
+
             storage_path = None
+
             if meta.get("raw_bytes") is not None:
-                storage_path = self._save_image_asset(meta["raw_bytes"], meta.get("mime_type"))
+                storage_path = self._save_image_asset(
+                    meta["raw_bytes"],
+                    meta.get("mime_type"),
+                )
+
             assets.append({
                 "kind": meta["kind"],
                 "filename": meta["filename"],
@@ -265,6 +317,7 @@ class BoardNoticeCrawler:
                 "extracted_text": meta.get("extracted_text", ""),
                 "order_idx": order,
             })
+
             order += 1
 
         content = "\n\n".join(content_parts) if content_parts else "내용을 찾을 수 없음"

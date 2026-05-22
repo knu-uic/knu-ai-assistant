@@ -1,5 +1,7 @@
 """AI 챗봇 페이지. LangGraph RAG 파이프라인 호출."""
 
+import traceback
+
 import streamlit as st
 
 from graph import GRAPH
@@ -76,16 +78,49 @@ if user_input:
                 st.caption(f"카테고리: **{', '.join(cats) if cats else '(없음)'}**")
                 st.caption(f"확장 쿼리: `{result.get('expanded_query', '')}`")
                 st.caption(f"라우터 사유: {result.get('route_rationale', '')}")
+                evidence_chunks = result.get("evidence_chunks") or []
                 contexts = result.get("contexts") or []
+
+                if evidence_chunks:
+                    st.markdown("### 🧩 핵심 검색 청크")
+
+                    for i, ev in enumerate(evidence_chunks, 1):
+                        with st.container(border=True):
+                            st.markdown(
+                                f"**[{i}] [{ev['title']}]({ev['url']})** · rerank {ev['score']:.3f}"
+                            )
+                            st.code(ev.get("chunk", "")[:1200])
+
+                st.markdown("### 📚 최종 참고 문서")
+
                 if not contexts:
                     st.caption("(검색 결과 없음)")
-                for c in contexts:
-                    st.markdown(
-                        f"- [{c['title']}]({c['url']}) · 유사도 {c['score']:.3f}"
-                    )
+
+                for i, c in enumerate(contexts, 1):
+                    with st.container(border=True):
+                        st.markdown(
+                            f"**[{i}] [{c['title']}]({c['url']})** · rerank {c['score']:.3f}"
+                        )
+
+                        matched = c.get("matched_chunk") or ""
+                        if matched:
+                            st.caption("검색 매칭 청크")
+                            st.code(matched[:1000])
+
+                        summary = c.get("summary") or ""
+                        if summary:
+                            st.caption("문서 요약")
+                            st.write(summary[:500])
+
+                        snippet = c.get("snippet") or ""
+                        if snippet:
+                            with st.expander("문서 본문 미리보기"):
+                                st.code(snippet[:3000])
 
             st.session_state.chat_history.append({"role": "assistant", "content": answer})
         except Exception as e:
-            err = f"답변 생성 실패: {e}"
-            st.error(err)
-            st.session_state.chat_history.append({"role": "assistant", "content": err})
+            traceback.print_exc()
+            st.exception(e)
+            st.session_state.chat_history.append(
+                {"role": "assistant", "content": f"답변 생성 실패: {e}"}
+            )

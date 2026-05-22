@@ -32,50 +32,41 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def get_llm_context_window_tokens() -> int:
-    """현재 LLM의 컨텍스트 윈도우 토큰 수.
-
-    LM Studio에서 모델을 바꾸면 .env의 LLM_CONTEXT_WINDOW_TOKENS만 같이 바꾸면
-    refine/answer 입력 예산이 같은 비율로 따라간다.
-    """
-    return _env_int("LLM_CONTEXT_WINDOW_TOKENS", 8192)
 
 
 def get_llm_context_char_budget(
     env_name: str,
     *,
-    ratio_multiplier: float = 1.0,
+    default: int,
     min_chars: int = 1000,
 ) -> int:
-    """LLM 컨텍스트 윈도우를 문자 예산으로 근사한다.
+    """RAG 입력용 문자 예산을 환경변수 기반으로 반환한다.
 
-    기본값: context_window_tokens * LLM_CONTEXT_USAGE_RATIO * LLM_CHARS_PER_TOKEN.
-    한국어/혼합 텍스트는 토크나이저마다 편차가 있어 보수적 근사값을 쓴다.
-    개별 예산은 env_name으로 직접 override 가능하다.
+    실제 모델 context window(LM Studio 설정)와
+    앱의 stuffing budget을 분리하기 위해 직접 문자 수를 관리한다.
     """
-    override = os.getenv(env_name)
-    if override and override.strip():
-        try:
-            return max(min_chars, int(override))
-        except ValueError:
-            pass
+    raw = os.getenv(env_name)
 
-    tokens = get_llm_context_window_tokens()
-    usage_ratio = _env_float("LLM_CONTEXT_USAGE_RATIO", 0.8)
-    chars_per_token = _env_float("LLM_CHARS_PER_TOKEN", 1.4)
-    budget = int(tokens * usage_ratio * chars_per_token * ratio_multiplier)
-    return max(min_chars, budget)
+    if raw is None or raw.strip() == "":
+        return max(min_chars, default)
+
+    try:
+        return max(min_chars, int(raw))
+    except ValueError:
+        return max(min_chars, default)
 
 
 def get_answer_context_char_budget() -> int:
-    return get_llm_context_char_budget("ANSWER_CONTEXT_CHAR_BUDGET")
+    return get_llm_context_char_budget(
+        "ANSWER_CONTEXT_CHAR_BUDGET",
+        default=6000,
+    )
 
 
 def get_refine_full_content_limit() -> int:
-    ratio = _env_float("REFINE_CONTEXT_RATIO_MULTIPLIER", 0.35)
     return get_llm_context_char_budget(
         "REFINE_FULL_CONTENT_LIMIT",
-        ratio_multiplier=ratio,
+        default=12000,
     )
 
 
@@ -159,5 +150,5 @@ def _get_reranker():
     from sentence_transformers import CrossEncoder
     return CrossEncoder(
         os.getenv("RERANKER_MODEL"),
-        max_length=os.getenv("RERANKER_MAX_LENGTH"),
+        max_length=int(os.getenv("RERANKER_MAX_LENGTH"))
     )

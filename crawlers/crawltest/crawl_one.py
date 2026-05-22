@@ -10,6 +10,7 @@ LLM 메타데이터 정제, 임베딩 청크 생성 과정을 그대로 실행�
 추가 설정:
     --crawler 옵션으로 크롤러 선택 가능 (default: main_notice)
     --output 옵션으로 보고서 txt 경로 지정 가능 (default: crawl_result/reports/crawl_one_<time>_<hash>.txt)
+    --db-write 옵션으로 DB 저장 가능 (python3 crawlers/crawltest/crawl_one.py "URL" --db-write)
 """
 
 from __future__ import annotations
@@ -31,6 +32,14 @@ from playwright.sync_api import sync_playwright
 
 from crawlers import CRAWLERS
 import crawlers.methods.board_notice as board_notice
+from db import (
+    document_exists,
+    init_db,
+    insert_assets,
+    insert_chunks,
+    insert_document,
+    upsert_source,
+)
 from embed import embed_chunks
 from main import _parse_posted_date
 from refine import refine
@@ -102,7 +111,7 @@ def build_report(
     lines.append(f"created_at: {datetime.now().isoformat(timespec='seconds')}")
     lines.append(f"crawler: {crawler.SOURCE_CODE} / {crawler.SOURCE_NAME}")
     lines.append(f"url: {url}")
-    lines.append("db_write: skipped")
+    lines.append("db_write: report-only mode")
     lines.append("xlsx_filter: forced include for single-url attachment testing")
 
     _write_section(lines, "Crawl Result")
@@ -181,6 +190,11 @@ def main() -> None:
         type=Path,
         help="Report txt path. Default: crawl_result/reports/crawl_one_<time>_<hash>.txt",
     )
+    parser.add_argument(
+        "--db-write",
+        action="store_true",
+        help="Also write crawled/refined/chunked result into DB",
+    )
     args = parser.parse_args()
 
     crawlers = _crawler_map()
@@ -197,7 +211,7 @@ def main() -> None:
 
     print(f"crawler: {crawler.SOURCE_CODE} / {crawler.SOURCE_NAME}")
     print(f"url: {args.url}")
-    print("db_write: skipped")
+    print(f"db_write: {'enabled' if args.db_write else 'skipped'}")
 
     item = crawl_detail(crawler, args.url)
 
@@ -226,6 +240,56 @@ def main() -> None:
         chunks=chunks,
         embedding_error=embedding_error,
     )
+
+    if args.db_write:
+        if refine_error:
+            print(f"[db] skipped: refine failed ({type(refine_error).__name__})")
+        elif not refined:
+            print("[db] skipped: empty refine result")
+        elif embedding_error:
+            print(f"[db] skipped: embedding failed ({type(embedding_error).__name__})")
+        else:
+            try:
+                init_db()
+
+                doc, assets, extra = refined[0]
+
+                source_id = upsert_source(
+                    code=crawler.SOURCE_CODE,
+                    name=crawler.SOURCE_NAME,
+                    kind=crawler.KIND,
+                    department=crawler.DEPARTMENT,
+                    base_url=crawler.BASE_URL,
+                )
+
+                if document_exists(doc.url):
+                    print(f"[db] already exists: {doc.url}")
+                else:
+                    posted_at = _parse_posted_date(item.get("date"))
+
+                    document_id = insert_document(
+                        source_id=source_id,
+                        url=doc.url,
+                        title=doc.title,
+                        content=doc.content,
+                        start_date=doc.start_date,
+                        end_date=doc.end_date,
+                        category=doc.category,
+                        target=doc.target,
+                        keywords=doc.keywords,
+                        summary=doc.summary,
+                        extra=extra,
+                        posted_at=posted_at,
+                        is_pinned=bool(item.get("is_pinned")),
+                    )
+
+                    insert_assets(doc.category, document_id, assets)
+                    insert_chunks(doc.category, document_id, chunks)
+
+                    print(f"[db] saved: document_id={document_id}")
+
+            except Exception as e:
+                print(f"[db] failed: {type(e).__name__}: {e}")
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(report, encoding="utf-8")

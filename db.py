@@ -435,9 +435,12 @@ def insert_chunks(category: str, document_id: int, chunks: list[tuple[int, str, 
 
 
 def _search_subquery(slug: str, major_filter: bool) -> tuple[sql.Composable, list]:
-    """카테고리 하나에 대한 DISTINCT ON 서브쿼리 Composable + placeholder 순서대로의 params.
+    """카테고리 하나에 대한 chunk-level similarity search 서브쿼리.
 
-    placeholder 순서: [vec, major?, vec]
+    문서별 대표 chunk collapse를 하지 않고,
+    모든 chunk를 유사도 기준으로 경쟁시킨다.
+
+    placeholder 순서: [vec, major?]
     """
     category_literal = SLUG_TO_CATEGORY[slug]
 
@@ -447,26 +450,35 @@ def _search_subquery(slug: str, major_filter: bool) -> tuple[sql.Composable, lis
     )
 
     sub = sql.SQL("""
-        SELECT DISTINCT ON (d.id)
-               d.url, d.title, c.content,
+        SELECT
+               d.url,
+               d.title,
+               c.content,
                1 - (c.embedding <=> %s::vector) AS score,
-               d.posted_at, d.start_date, d.end_date,
+               d.posted_at,
+               d.start_date,
+               d.end_date,
                {cat_lit}::text AS category,
-               d.target, d.keywords,
-               s.code, s.name, s.kind, s.department,
+               d.target,
+               d.keywords,
+               s.code,
+               s.name,
+               s.kind,
+               s.department,
                d.summary
         FROM {chunk} c
         JOIN {doc} d ON d.id = c.document_id
         JOIN source s ON s.id = d.source_id
         {where}
-        ORDER BY d.id, c.embedding <=> %s::vector
+        ORDER BY c.embedding <=> %s::vector
     """).format(
         cat_lit=sql.Literal(category_literal),
         chunk=_chunk_ident(slug),
         doc=_doc_ident(slug),
         where=where_clause,
     )
-    return sub, [category_literal]  # placeholder 자리 표시용; 실제로는 아래에서 다시 채움
+
+    return sub, [category_literal]
 
 
 def search_chunks(
@@ -475,7 +487,7 @@ def search_chunks(
     categories: list[str] | None = None,
     limit: int = 10,
 ):
-    """HNSW 코사인 유사도 검색. 각 document당 가장 좋은 청크 1개만 추려서 반환.
+    """HNSW 코사인 유사도 기반 chunk-level 검색.
 
     categories: 검색 대상 카테고리 리스트(한글). None 또는 빈 리스트면 5개 전부 검색.
 
@@ -490,7 +502,7 @@ def search_chunks(
     for slug in target_slugs:
         sub, _ = _search_subquery(slug, major_filter=bool(major))
         subs.append(sql.SQL("(") + sub + sql.SQL(")"))
-        # subquery placeholder 순서: 1st vec, major?, 2nd vec(ORDER BY)
+        # subquery placeholder 순서: 1st vec(score 계산), major?, 2nd vec(order by)
         params.append(query_embedding)
         if major:
             params.append(major)
