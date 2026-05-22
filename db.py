@@ -102,6 +102,9 @@ def init_db():
                     url VARCHAR(500) UNIQUE NOT NULL,
                     title VARCHAR(255) NOT NULL,
                     content TEXT NOT NULL,
+                    body_content TEXT,
+                    attachment_names JSONB,
+                    attachment_contents JSONB,
                     summary TEXT,
                     posted_at DATE,
                     start_date DATE,
@@ -132,6 +135,17 @@ def init_db():
             conn.execute(sql.SQL("ALTER TABLE {doc} ADD COLUMN IF NOT EXISTS summary TEXT;").format(
                 doc=_doc_ident(slug),
             ))
+            conn.execute(sql.SQL("ALTER TABLE {doc} ADD COLUMN IF NOT EXISTS body_content TEXT;").format(
+                doc=_doc_ident(slug),
+            ))
+
+            conn.execute(sql.SQL("ALTER TABLE {doc} ADD COLUMN IF NOT EXISTS attachment_names JSONB;").format(
+                doc=_doc_ident(slug),
+            ))
+
+            conn.execute(sql.SQL("ALTER TABLE {doc} ADD COLUMN IF NOT EXISTS attachment_contents JSONB;").format(
+                doc=_doc_ident(slug),
+            ))
             conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {doc}(is_pinned);").format(
                 idx=sql.Identifier(f"idx_document_{slug}_is_pinned"),
                 doc=_doc_ident(slug),
@@ -143,6 +157,8 @@ def init_db():
                     document_id BIGINT NOT NULL REFERENCES {doc}(id) ON DELETE CASCADE,
                     chunk_idx INT NOT NULL,
                     content TEXT NOT NULL,
+                    chunk_type VARCHAR(20) NOT NULL DEFAULT 'body',
+                    attachment_name VARCHAR(300),
                     embedding vector({embedding_dim}) NOT NULL,
                     created_at TIMESTAMPTZ DEFAULT now(),
                     UNIQUE(document_id, chunk_idx)
@@ -153,6 +169,13 @@ def init_db():
                 embedding_dim=sql.SQL(str(EMBEDDING_DIM)),
             ))
             conn.execute(sql.SQL("ALTER TABLE {chunk} DROP COLUMN IF EXISTS source_asset_id;").format(
+                chunk=_chunk_ident(slug),
+            ))
+            conn.execute(sql.SQL("ALTER TABLE {chunk} ADD COLUMN IF NOT EXISTS chunk_type VARCHAR(20) NOT NULL DEFAULT 'body';").format(
+                chunk=_chunk_ident(slug),
+            ))
+
+            conn.execute(sql.SQL("ALTER TABLE {chunk} ADD COLUMN IF NOT EXISTS attachment_name VARCHAR(300);").format(
                 chunk=_chunk_ident(slug),
             ))
             conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {chunk}(document_id);").format(
@@ -333,6 +356,9 @@ def insert_document(
     extra: dict | None = None,
     posted_at=None,
     is_pinned: bool = False,
+    body_content: str | None = None,
+    attachment_names: list[str] | None = None,
+    attachment_contents: list[dict] | None = None,
 ) -> int:
     """category에 해당하는 document_{slug} 테이블에 UPSERT 후 id 반환."""
     slug = _slug(category)
@@ -346,15 +372,50 @@ def insert_document(
 
     extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
 
+    attachment_names_json = json.dumps(
+        attachment_names or [],
+        ensure_ascii=False,
+    )
+
+    attachment_contents_json = json.dumps(
+        attachment_contents or [],
+        ensure_ascii=False,
+    )
+
     query = sql.SQL("""
         INSERT INTO {doc}
-            (source_id, url, title, content, summary, posted_at, start_date, end_date,
-             is_pinned, target, keywords, extra, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+            (
+                source_id,
+                url,
+                title,
+                content,
+                body_content,
+                attachment_names,
+                attachment_contents,
+                summary,
+                posted_at,
+                start_date,
+                end_date,
+                is_pinned,
+                target,
+                keywords,
+                extra,
+                updated_at
+            )
+        VALUES (
+            %s, %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s, %s,
+            now()
+        )
         ON CONFLICT (url) DO UPDATE SET
             source_id = EXCLUDED.source_id,
             title = EXCLUDED.title,
             content = EXCLUDED.content,
+            body_content = EXCLUDED.body_content,
+            attachment_names = EXCLUDED.attachment_names,
+            attachment_contents = EXCLUDED.attachment_contents,
             summary = EXCLUDED.summary,
             posted_at = EXCLUDED.posted_at,
             start_date = EXCLUDED.start_date,
@@ -368,15 +429,36 @@ def insert_document(
     """).format(doc=_doc_ident(slug))
 
     with psycopg.connect(DB_URL) as conn:
-        cur = conn.execute(query, (source_id, url, title, content, summary, posted_at,
-                                   start_date, end_date,
-                                   is_pinned,
-                                   target, keywords, extra_json))
+        cur = conn.execute(
+            query,
+            (
+                source_id,
+                url,
+                title,
+                content,
+                body_content or content,
+                attachment_names_json,
+                attachment_contents_json,
+                summary,
+                posted_at,
+                start_date,
+                end_date,
+                is_pinned,
+                target,
+                keywords,
+                extra_json,
+            ),
+        )
+
         row = cur.fetchone()
         assert row is not None
+
         document_id = row[0]
+
         conn.commit()
+
         print(f"✅ [{title}] document_{slug} 저장 완료 (id={document_id})")
+
         return document_id
 
 
@@ -412,25 +494,67 @@ def insert_assets(category: str, document_id: int, assets: list[dict]):
         print(f"  ↳ asset {len(assets)}건 저장 완료")
 
 
-def insert_chunks(category: str, document_id: int, chunks: list[tuple[int, str, list[float]]]):
+def insert_chunks(
+    category: str,
+    document_id: int,
+    chunks: list[tuple],
+):
     """category에 해당하는 document_{slug}_chunk에 일괄 저장.
 
-    chunks: [(chunk_idx, content, embedding_vector), ...]
+    chunks:
+    - legacy: (chunk_idx, content, embedding)
+    - new:    (chunk_idx, content, embedding, chunk_type, attachment_name)
     """
+
     if not chunks:
         return
+
     slug = _slug(category)
 
-    del_q = sql.SQL("DELETE FROM {} WHERE document_id = %s;").format(_chunk_ident(slug))
+    del_q = sql.SQL(
+        "DELETE FROM {} WHERE document_id = %s;"
+    ).format(_chunk_ident(slug))
+
     ins_q = sql.SQL(
-        "INSERT INTO {} (document_id, chunk_idx, content, embedding) VALUES (%s, %s, %s, %s)"
+        """
+        INSERT INTO {}
+        (
+            document_id,
+            chunk_idx,
+            content,
+            chunk_type,
+            attachment_name,
+            embedding
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """
     ).format(_chunk_ident(slug))
 
     with _connect_with_vector() as conn:
         conn.execute(del_q, (document_id,))
-        for idx, content, vector in chunks:
-            conn.execute(ins_q, (document_id, idx, content, vector))
+
+        for chunk in chunks:
+            if len(chunk) == 3:
+                idx, content, vector = chunk
+                chunk_type = "body"
+                attachment_name = None
+            else:
+                idx, content, vector, chunk_type, attachment_name = chunk
+
+            conn.execute(
+                ins_q,
+                (
+                    document_id,
+                    idx,
+                    content,
+                    chunk_type,
+                    attachment_name,
+                    vector,
+                ),
+            )
+
         conn.commit()
+
         print(f"  ↳ chunk {len(chunks)}건 저장 완료 (→ document_{slug}_chunk)")
 
 
@@ -465,7 +589,9 @@ def _search_subquery(slug: str, major_filter: bool) -> tuple[sql.Composable, lis
                s.name,
                s.kind,
                s.department,
-               d.summary
+               d.summary,
+               d.body_content,
+               d.attachment_names
         FROM {chunk} c
         JOIN {doc} d ON d.id = c.document_id
         JOIN source s ON s.id = d.source_id
@@ -492,8 +618,9 @@ def search_chunks(
     categories: 검색 대상 카테고리 리스트(한글). None 또는 빈 리스트면 5개 전부 검색.
 
     반환 튜플:
-    (url, title, snippet, score, posted_at, start_date, end_date, category, target, keywords,
-     source_code, source_name, source_kind, source_department, summary)
+     (url, title, snippet, score, posted_at, start_date, end_date, category, target, keywords,
+      source_code, source_name, source_kind, source_department,
+      summary, body_content, attachment_names)
     """
     target_slugs = [_slug(c) for c in categories] if categories else list(SLUGS)
 
@@ -512,7 +639,10 @@ def search_chunks(
     final_q = sql.SQL("""
         SELECT url, title, content, score, posted_at, start_date, end_date,
                category, target, keywords,
-               code, name, kind, department, summary
+               code, name, kind, department,
+               summary,
+               body_content,
+               attachment_names
         FROM ({union}) merged
         ORDER BY score DESC
         LIMIT %s

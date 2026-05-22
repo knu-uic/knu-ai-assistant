@@ -1,9 +1,11 @@
-from typing import List, Tuple
+from typing import Any
 from model import get_embeddings
 
 
-CHUNK_SIZE = 400 
-CHUNK_OVERLAP = 100 
+# context window 기반 동적 chunk 크기.
+# 너무 작은 chunk는 retrieval precision은 좋아도 context fragmentation이 심해진다.
+CHUNK_SIZE = 280
+CHUNK_OVERLAP = 80
 
 
 def _line_at(content: str, pos: int) -> str:
@@ -76,11 +78,16 @@ def _choose_chunk_start(content: str, proposed_start: int, n: int, overlap: int)
     return proposed_start
 
 
-def chunk_text(content: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
+def chunk_text(content: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
     """줄 경계와 표 문맥을 고려해 텍스트를 청킹."""
     if not content:
         return []
-    chunks: List[str] = []
+
+    content = content.strip()
+
+    if not content:
+        return []
+    chunks: list[str] = []
     start = 0
     n = len(content)
     while start < n:
@@ -94,7 +101,7 @@ def chunk_text(content: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_
     return chunks
 
 
-def embed_chunks(content: str) -> List[Tuple[int, str, List[float]]]:
+def embed_chunks(content: str) -> list[tuple[int, str, list[float]]]:
     """content를 청크로 쪼개고 각 청크 임베딩까지 계산해서 반환.
 
     반환: [(chunk_idx, chunk_content, embedding_vector), ...]
@@ -104,9 +111,104 @@ def embed_chunks(content: str) -> List[Tuple[int, str, List[float]]]:
         return []
     embedder = get_embeddings()
     vectors = embedder.embed_documents(chunks)
-    return [(i, c, v) for i, (c, v) in enumerate(zip(chunks, vectors))]
+
+    return [
+        (i, c, v)
+        for i, (c, v) in enumerate(zip(chunks, vectors))
+    ]
 
 
-def embed_query(query: str) -> List[float]:
+def embed_document_chunks(
+    title: str,
+    body_content: str,
+    attachment_contents: list[dict] | None = None,
+) -> list[tuple[int, str, list[float], str, str | None]]:
+    """문서 전체를 body/attachment 단위로 분리 청킹 후 임베딩.
+
+    반환:
+    [
+        (
+            chunk_idx,
+            chunk_text,
+            embedding,
+            chunk_type,
+            attachment_name,
+        )
+    ]
+    """
+
+    attachment_contents = attachment_contents or []
+
+    title = (title or "").strip()
+    body_content = (body_content or "").strip()
+
+    chunk_inputs: list[dict[str, Any]] = []
+
+    # body chunk
+    if body_content.strip():
+        chunk_inputs.append({
+            "chunk_type": "body",
+            "attachment_name": None,
+            "text": body_content,
+        })
+
+    # attachment chunk
+    for att in attachment_contents:
+        text = (att.get("text") or "").strip()
+
+        if not text:
+            continue
+
+        chunk_inputs.append({
+            "chunk_type": "attachment",
+            "attachment_name": att.get("name"),
+            "text": text,
+        })
+
+    if not chunk_inputs:
+        return []
+
+    embedder = get_embeddings()
+
+    results: list[tuple[int, str, list[float], str, str | None]] = []
+
+    chunk_idx = 0
+
+    for item in chunk_inputs:
+        chunk_type = item["chunk_type"]
+        attachment_name = item["attachment_name"]
+        text = item["text"]
+
+        if title:
+            chunk_source = f"{title}\n\n{text}"
+        else:
+            chunk_source = text
+
+        chunks = chunk_text(chunk_source)
+
+        if not chunks:
+            continue
+
+        vectors = embedder.embed_documents(chunks)
+
+        for chunk_text_value, vector in zip(chunks, vectors):
+            results.append(
+                (
+                    chunk_idx,
+                    chunk_text_value,
+                    vector,
+                    chunk_type,
+                    attachment_name,
+                )
+            )
+
+            chunk_idx += 1
+
+    return results
+
+
+def embed_query(query: str) -> list[float]:
     """검색 쿼리 임베딩."""
-    return get_embeddings().embed_query(query)
+    return get_embeddings().embed_query(
+        (query or "").strip()
+    )

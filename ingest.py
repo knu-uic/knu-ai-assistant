@@ -14,7 +14,7 @@ from db import (
     insert_chunks,
     document_exists,
 )
-from embed import embed_chunks
+from embedding.embed import embed_document_chunks
 
 
 def _parse_posted_date(raw: str | None) -> date | None:
@@ -104,6 +104,12 @@ if __name__ == "__main__":
                 url=doc.url,
                 title=doc.title,
                 content=doc.content,
+
+                # 신규 구조
+                body_content=item.get("body_content"),
+                attachment_names=item.get("attachment_names"),
+                attachment_contents=item.get("attachment_contents"),
+
                 start_date=doc.start_date,
                 end_date=doc.end_date,
                 category=doc.category,
@@ -116,8 +122,24 @@ if __name__ == "__main__":
             )
             insert_assets(doc.category, document_id, assets)
 
-            chunks = embed_chunks(f"{doc.title}\n\n{doc.content}")
-            insert_chunks(doc.category, document_id, chunks)
+            chunks = embed_document_chunks(
+                title=doc.title,
+                body_content=(
+                    item.get("body_content")
+                    or doc.content
+                    or ""
+                ),
+                attachment_contents=(
+                    item.get("attachment_contents")
+                    or []
+                ),
+            )
+
+            insert_chunks(
+                doc.category,
+                document_id,
+                chunks,
+            )
             inserted_count += 1
 
         print(

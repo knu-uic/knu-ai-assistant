@@ -1,19 +1,19 @@
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator, List, Optional
+from typing import Callable, Iterator
 from urllib.parse import urljoin
 
 from playwright.sync_api import sync_playwright
 
-from attachments import (
+from extractors.attachments import (
     attachment_to_text,
     hwpx_via_preview,
     inline_image_to_text,
     xlsx_relevant,
 )
 
-ASSETS_DIR = Path("crawl_result/assets")
+ASSETS_DIR = Path("data/assets")
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,11 @@ class BoardNoticeCrawler:
             return url
         return urljoin(self.BASE_URL, url)
 
-    def _save_image_asset(self, raw_bytes: bytes, mime) -> str:
+    def _save_image_asset(
+        self,
+        raw_bytes: bytes,
+        mime: str | None,
+    ) -> str:
         ASSETS_DIR.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha1(raw_bytes).hexdigest()
         if mime == "image/png":
@@ -68,8 +72,8 @@ class BoardNoticeCrawler:
             path.write_bytes(raw_bytes)
         return str(path)
 
-    def _collect_attachments(self, detail_page) -> List[dict]:
-        items = []
+    def _collect_attachments(self, detail_page) -> list[dict]:
+        items: list[dict] = []
         lis = detail_page.locator(self.config.attachment_selector).all()
         for li in lis:
             li_index = len(items)
@@ -92,7 +96,7 @@ class BoardNoticeCrawler:
             })
         return items
 
-    def _collect_inline_images(self, detail_page) -> List[str]:
+    def _collect_inline_images(self, detail_page) -> list[str]:
         urls = []
         imgs = detail_page.locator(f"{self.config.body_selector} img").all()
         for img in imgs:
@@ -133,12 +137,12 @@ class BoardNoticeCrawler:
         except Exception:
             return False
 
-    def _collect_post_records(self, list_page, page_num: int) -> List[dict]:
+    def _collect_post_records(self, list_page, page_num: int) -> list[dict]:
         row_selector = self.config.row_selector
         if page_num != 1 and self.config.row_selector_after_first:
             row_selector = self.config.row_selector_after_first
 
-        records: List[dict] = []
+        records: list[dict] = []
         for row in list_page.locator(row_selector).all():
             try:
                 href = row.locator(".td-subject a").first.get_attribute("href")
@@ -151,7 +155,7 @@ class BoardNoticeCrawler:
                 })
         return records
 
-    def _collect_post_urls(self, list_page, page_num: int) -> List[str]:
+    def _collect_post_urls(self, list_page, page_num: int) -> list[str]:
         return [record["url"] for record in self._collect_post_records(list_page, page_num)]
 
     def collect_pinned_urls(self) -> set[str]:
@@ -172,7 +176,10 @@ class BoardNoticeCrawler:
             finally:
                 browser.close()
 
-    def crawling(self, should_skip: Optional[Callable[[str], bool]] = None) -> Iterator[dict]:
+    def crawling(
+        self,
+        should_skip: Callable[[str], bool] | None = None,
+    ) -> Iterator[dict]:
         seen_urls: set[str] = set()
 
         with sync_playwright() as p:
@@ -217,6 +224,8 @@ class BoardNoticeCrawler:
         print(f"[{idx}/{total}] {post_url} 접속 중...")
         detail_page.goto(post_url, wait_until=self.config.wait_until)
 
+        detail_page.wait_for_load_state("domcontentloaded")
+
         try:
             title = detail_page.locator(self.config.title_selector).first.inner_text().strip()
         except Exception:
@@ -232,15 +241,26 @@ class BoardNoticeCrawler:
         except Exception:
             body_text = ""
 
-        content_parts = [body_text] if body_text else []
-        assets: List[dict] = []
+        # body는 별도 저장
+        body_content = body_text.strip() if body_text else ""
+
+        # attachment text는 별도 저장
+        attachment_contents: list[dict] = []
+        attachment_names: list[str] = []
+
+        # legacy full content 유지
+        content_parts = [body_content] if body_content else []
+
+        assets: list[dict] = []
         order = 0
 
         for img_url in self._collect_inline_images(detail_page):
             print(f"  - 본문 이미지 처리: {img_url}")
             txt, raw_bytes, mime = inline_image_to_text(img_url, context)
+
             if txt:
                 content_parts.append(f"[본문 이미지]\n{txt}")
+
             if raw_bytes is not None:
                 assets.append({
                     "kind": "inline_image",
@@ -269,6 +289,14 @@ class BoardNoticeCrawler:
                     viewer_text = hwpx_via_preview(preview_url, context)
 
                     if viewer_text and viewer_text.strip():
+                        attachment_names.append(att["filename"])
+
+                        attachment_contents.append({
+                            "name": att["filename"],
+                            "text": viewer_text,
+                            "type": "attachment_hwpx_preview",
+                        })
+
                         content_parts.append(
                             f"[첨부: {att['filename']}]\n{viewer_text}"
                         )
@@ -298,7 +326,14 @@ class BoardNoticeCrawler:
             )
 
             if txt:
-                content_parts.append(txt)
+                attachment_names.append(att["filename"])
+
+                attachment_contents.append({
+                    "name": att["filename"],
+                    "text": txt,
+                    "type": meta.get("kind", "attachment"),
+                })
+                # Do not append attachment OCR to legacy content_parts to avoid duplicate retrieval contamination.
 
             storage_path = None
 
@@ -320,7 +355,15 @@ class BoardNoticeCrawler:
 
             order += 1
 
-        content = "\n\n".join(content_parts) if content_parts else "내용을 찾을 수 없음"
+        content = (
+            "\n\n".join(
+                part.strip()
+                for part in content_parts
+                if part and part.strip()
+            )
+            if content_parts
+            else "내용을 찾을 수 없음"
+        )
         print(title)
         print(date)
         print(content[:300] + ("..." if len(content) > 300 else ""))
@@ -329,6 +372,12 @@ class BoardNoticeCrawler:
             "title": title,
             "date": date,
             "content": content,
+
+            # 신규 구조
+            "body_content": body_content,
+            "attachment_names": attachment_names,
+            "attachment_contents": attachment_contents,
+
             "url": post_url,
             "assets": assets,
             "is_pinned": is_pinned,

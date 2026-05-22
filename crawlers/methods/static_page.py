@@ -50,6 +50,11 @@ class StaticPageCrawler:
             except Exception:
                 content = ""
 
+            # static page는 대부분 body 중심 문서
+            body_content = content
+            attachment_names: list[str] = []
+            attachment_contents: list[dict] = []
+
             browser.close()
 
         if not content:
@@ -63,6 +68,12 @@ class StaticPageCrawler:
             "title": title,
             "date": "",
             "content": content,
+
+            # 신규 구조
+            "body_content": body_content,
+            "attachment_names": attachment_names,
+            "attachment_contents": attachment_contents,
+
             "url": self.config.page_url,
             "assets": [],
         }]

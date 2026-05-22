@@ -5,7 +5,7 @@ from datetime import date
 import streamlit as st
 
 from db import get_documents, search_chunks
-from embed import embed_query
+from embedding.embed import embed_query
 from ui import (
     CATEGORIES,
     CATEGORY_ICON,
@@ -58,6 +58,26 @@ try:
             q_vec, major=major_filter, categories=cats, limit=30,
         )
         notices = [row_to_notice_search(r) for r in (raw or [])]
+
+        # 동일 문서가 여러 attachment/body chunk로 중복 검색될 수 있으므로 dedup
+        deduped: dict[str, dict] = {}
+
+        for n in notices:
+            url = n.get("url") or ""
+
+            prev = deduped.get(url)
+
+            if not prev:
+                deduped[url] = n
+                continue
+
+            prev_score = prev.get("score") or 0
+            cur_score = n.get("score") or 0
+
+            if cur_score > prev_score:
+                deduped[url] = n
+
+        notices = list(deduped.values())
     else:
         raw = get_documents(
             category=None if selected_category == "전체" else selected_category,
@@ -124,5 +144,26 @@ for n in notices:
             st.caption(f"🔍 유사도: {score:.3f}")
 
         summary = (n.get("summary") or "").strip()
+        attachment_names = n.get("attachment_names") or []
         if summary:
             st.caption(summary)
+        else:
+            body_preview = (
+                n.get("body_content")
+                or n.get("content")
+                or ""
+            ).strip()
+
+            if body_preview:
+                st.caption(body_preview[:220])
+
+        if attachment_names:
+            st.caption(
+                "📎 "
+                + ", ".join(attachment_names[:3])
+                + (
+                    f" 외 {len(attachment_names) - 3}개"
+                    if len(attachment_names) > 3
+                    else ""
+                )
+            )

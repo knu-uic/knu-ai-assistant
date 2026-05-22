@@ -1,7 +1,6 @@
 """LangGraph: 라우터(분류+쿼리확장) → retriever → answerer → verifier 4노드 RAG 파이프라인."""
 
 from datetime import date
-import re
 from typing import TypedDict, Literal, List, Dict, Any
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -11,15 +10,16 @@ from langsmith import traceable
 from db import search_chunks
 # === [seungwon/bge-reranker] 시작 ===
 from db import get_document_content
-from rerank import rerank_scores
+from retrieval.rerank import rerank_scores
 # === [seungwon/bge-reranker] 끝 ===
-from embed import embed_query
-from model import (
-    get_attachment_name_reserve,
-    get_answer_context_char_budget,
-    get_llm,
+from embedding.embed import embed_query
+from model import get_llm
+from config import (
+    RERANK_CANDIDATES,
+    RERANK_TOP_N,
+    SUPPORT_DOC_TOP_N,
+    ENABLE_VERIFIER,
 )
-import os
 
 
 Category = Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"]
@@ -59,15 +59,13 @@ class ChatState(TypedDict, total=False):
 ROUTER_SYSTEM = """너는 공주대 학생 질문을 분석해 RAG 파이프라인의 진입점을 결정하는 라우터다.
 
 ## 카테고리 분류 (categories)
-다음 5개 중 질문과 관련 있는 카테고리를 모두 고른다.
+다음 5개 중 질문과 관련 있는 카테고리를 모두 고른다. 
+조금이라도 모호하면 여러 개 선택해도 좋다.
 1. 장학 — 국가장학금, 교내장학금, 등록금 납부, 학자금 대출 등
-2. 수강 — 수강신청, 휴학·복학, 졸업요건, 성적, 교과과정표, 학점
-3. 취업(진로) — 채용, 인턴, 자격증, 취업특강, 진로상담
-4. 행사(공모전) — 대회, 해커톤, 동아리, 축제, 세미나
+2. 수강 — 수강신청, 휴학·복학, 졸업요건, 성적, 교과과정표, 학점 등
+3. 취업(진로) — 채용, 인턴, 자격증, 취업특강, 진로상담 등
+4. 행사(공모전) — 대회, 해커톤, 동아리, 축제, 세미나 등
 5. 일반(기타) — 분실물, 시설, 예비군, 위 4개에 속하지 않는 그 외
-
-- 질문이 한 카테고리에 명확하면 1개만.
-- 두 영역에 걸치거나 모호하면 여러 개. 진짜 광범위하면 5개 전부.
 
 ## 쿼리 확장 (expanded_query)
 공지 제목은 격식체("○○ 모집 안내", "○○ 신청 기간")이고 학생 질문은 구어체라 임베딩 공간에서 거리가 멀다. 다음을 적용해 검색용 쿼리로 다듬는다.
@@ -160,14 +158,7 @@ def _retrieve(
 
 
 # === [seungwon/bge-reranker] 시작 ===
-# 원래 seungwon/bge-reranker 브랜치는 config.py에서 import하던 상수.
-# 한정우 환경(설정 파일 보호)을 위해 모듈 상수로 인라인.
-RERANK_CANDIDATES = 50   # vector similarity 기준 rerank 입력 chunk 수
-EVIDENCE_TOP_K = 5       # answerer에 직접 주입할 핵심 evidence chunk 수
-SUPPORT_DOC_TOP_K = 3    # support document 개수
-ANSWER_CONTEXT_CHAR_BUDGET = get_answer_context_char_budget()
-ATTACHMENT_NAME_RESERVE = get_attachment_name_reserve()
-ENABLE_VERIFIER = os.getenv("ENABLE_VERIFIER", "false").lower() == "true"
+EVIDENCE_TOP_K = RERANK_TOP_N
 
 
 @traceable(run_type="retriever", name="vector_search")
@@ -237,7 +228,7 @@ def _retrieve_with_rerank(
         doc_best.values(),
         key=lambda pair: pair[1],
         reverse=True,
-    )[:SUPPORT_DOC_TOP_K]
+    )[:SUPPORT_DOC_TOP_N]
 
     evidence_by_url: dict[str, list[str]] = {}
     for ev in evidence_chunks:
@@ -254,17 +245,18 @@ def _retrieve_with_rerank(
         )
 
         contexts.append({
-            "url": r[0],
-            "title": r[1],
-            "snippet": deduped_full,
-            "score": s,
-            "matched_chunk": r[2],
-            "summary": r[14] if len(r) > 14 else None,
-            "posted_at": r[4],
-            "start_date": r[5],
-            "end_date": r[6],
+                "url": r[0],
+                "title": r[1],
+                "body_content": r[15] if len(r) > 15 else deduped_full,
+                "attachment_names": r[16] if len(r) > 16 else [],
+                "snippet": deduped_full,
+                "score": s,
+                "matched_chunk": r[2],
+                "summary": r[14] if len(r) > 14 else None,
+                "posted_at": r[4],
+                "start_date": r[5],
+                "end_date": r[6],
         })
-
     return contexts, evidence_chunks
 # === [seungwon/bge-reranker] 끝 ===
 
@@ -288,23 +280,6 @@ def retriever_node(state: ChatState) -> dict:
         "contexts": contexts,
         "evidence_chunks": evidence_chunks,
     }
-
-
-_ATTACHMENT_RE = re.compile(r"^\[첨부: (?P<name>.+?)\]\s*$", re.MULTILINE)
-
-
-def _split_content(content: str) -> tuple[str, list[tuple[str, str]]]:
-    matches = list(_ATTACHMENT_RE.finditer(content or ""))
-    if not matches:
-        return content or "", []
-
-    body = content[:matches[0].start()].strip()
-    attachments: list[tuple[str, str]] = []
-    for idx, match in enumerate(matches):
-        start = match.end()
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
-        attachments.append((match.group("name").strip(), content[start:end].strip()))
-    return body, attachments
 
 
 def _append_budget(parts: list[str], text: str, remaining: int) -> int:
@@ -332,99 +307,202 @@ def _context_header(c: Dict[str, Any]) -> str:
 
 
 def _format_context_with_budget(c: Dict[str, Any], budget: int) -> str:
-    """답변 생성용 컨텍스트.
+    """1등 support document는 body full 우선 전략 사용.
 
-    길면 검색/리랭크가 실제로 고른 청크를 먼저 보존한 뒤,
-    본문 > 첨부파일명 > 첨부내용 순으로 남은 공간을 채운다.
+    철학:
+    - body_content는 가능한 한 full 유지
+    - attachment giant stuffing 금지
+    - attachment 내용은 retrieval/rerank evidence chunk로만 사용
     """
     header = _context_header(c)
-    content = c.get("snippet") or ""
-    matched_chunk = (c.get("matched_chunk") or "").strip()
-    full = f"{header}\n{content}"
+
+    body = (
+        c.get("body_content")
+        or c.get("snippet")
+        or ""
+    ).strip()
+
+    matched_chunk = (
+        c.get("matched_chunk")
+        or ""
+    ).strip()
+
+    attachment_names = c.get("attachment_names") or []
+
+    full = f"{header}\n{body}"
+
+    # 대부분 공지 body는 짧으므로 full 유지
     if len(full) <= budget:
-        return full
+        parts = [full]
 
-    body, attachments = _split_content(content)
-    attachment_names = "\n".join(f"- {name}" for name, _ in attachments)
-    attachment_contents = "\n\n".join(
-        f"[첨부: {name}]\n{text}" for name, text in attachments if text
-    )
-    name_heading = "\n[첨부파일명]"
+        if attachment_names:
+            parts.append("\n[첨부파일명]")
+            parts.extend(
+                f"- {name}"
+                for name in attachment_names
+            )
 
-    parts = [header]
-    remaining = budget - len(header)
-
-    if matched_chunk:
-        matched_heading = "\n[검색 매칭 청크]"
-        parts.append(matched_heading)
-        remaining -= len(matched_heading)
-        remaining = _append_budget(parts, matched_chunk, remaining)
-
-    body_heading = "\n[본문]"
-    parts.append(body_heading)
-    remaining -= len(body_heading)
-    name_reserve = (
-        min(len(name_heading) + len(attachment_names), ATTACHMENT_NAME_RESERVE)
-        if attachment_names else 0
-    )
-    body_budget = max(0, remaining - name_reserve)
-
-    body_parts: list[str] = []
-    _append_budget(body_parts, body, body_budget)
-    body_text = "\n".join(body_parts)
-    parts.append(body_text)
-    remaining -= len(body_text)
-
-    if attachment_names and remaining > 0:
-        parts.append(name_heading)
-        remaining -= len(name_heading)
-        remaining = _append_budget(parts, attachment_names, remaining)
-
-    if attachment_contents and remaining > 0:
-        heading = "\n[첨부파일 내용]"
-        parts.append(heading)
-        remaining -= len(heading)
-        _append_budget(parts, attachment_contents, remaining)
-
-    return "\n".join(part for part in parts if part)
-
-
-def _format_context(c: Dict[str, Any]) -> str:
-    """answerer/verifier 공용 fallback 포맷."""
-    return f"{_context_header(c)}\n{c.get('snippet') or ''}"
-
-
-def _format_support_context(c: Dict[str, Any], budget: int) -> str:
-    """2등 이하 보조 문서는 요약 + 매칭 청크 중심으로 짧게 넣는다."""
-    header = _context_header(c)
-    content = c.get("snippet") or ""
-    matched_chunk = (c.get("matched_chunk") or "").strip()
-    summary = (c.get("summary") or "").strip()
-    _, attachments = _split_content(content)
-    attachment_names = "\n".join(f"- {name}" for name, _ in attachments)
+        return "\n".join(parts)
 
     parts = [header]
     remaining = budget - len(header)
 
-    if summary and remaining > 0:
-        heading = "\n[요약]"
+    # body 우선 보존
+    if body and remaining > 0:
+        heading = "\n[본문]"
         parts.append(heading)
         remaining -= len(heading)
-        remaining = _append_budget(parts, summary, remaining)
 
+        body_budget = max(
+            0,
+            int(remaining * 0.8),
+        )
+
+        body_parts: list[str] = []
+
+        _append_budget(
+            body_parts,
+            body,
+            body_budget,
+        )
+
+        body_text = "\n".join(body_parts)
+
+        parts.append(body_text)
+        remaining -= len(body_text)
+
+    # retrieval evidence chunk
     if matched_chunk and remaining > 0:
         heading = "\n[검색 매칭 청크]"
         parts.append(heading)
         remaining -= len(heading)
-        remaining = _append_budget(parts, matched_chunk, remaining)
 
+        remaining = _append_budget(
+            parts,
+            matched_chunk,
+            remaining,
+        )
+
+    # attachment metadata only
     if attachment_names and remaining > 0:
         heading = "\n[첨부파일명]"
         parts.append(heading)
         remaining -= len(heading)
-        _append_budget(parts, attachment_names, remaining)
 
-    return "\n".join(part for part in parts if part)
+        attachment_text = "\n".join(
+            f"- {name}"
+            for name in attachment_names
+        )
+
+        remaining = _append_budget(
+            parts,
+            attachment_text,
+            remaining,
+        )
+
+    return "\n".join(
+        part
+        for part in parts
+        if part
+    )
+
+
+def _format_support_context(c: Dict[str, Any], budget: int) -> str:
+    """2등 이하 보조 문서는 summary + evidence 중심 packing."""
+
+    header = _context_header(c)
+
+    body = (
+        c.get("body_content")
+        or c.get("snippet")
+        or ""
+    ).strip()
+
+    matched_chunk = (
+        c.get("matched_chunk")
+        or ""
+    ).strip()
+
+    summary = (
+        c.get("summary")
+        or ""
+    ).strip()
+
+    attachment_names = c.get("attachment_names") or []
+
+    parts = [header]
+    remaining = budget - len(header)
+
+    # summary 우선
+    if summary and remaining > 0:
+        heading = "\n[요약]"
+        parts.append(heading)
+        remaining -= len(heading)
+
+        remaining = _append_budget(
+            parts,
+            summary,
+            remaining,
+        )
+
+    # retrieval evidence
+    if matched_chunk and remaining > 0:
+        heading = "\n[검색 매칭 청크]"
+        parts.append(heading)
+        remaining -= len(heading)
+
+        remaining = _append_budget(
+            parts,
+            matched_chunk,
+            remaining,
+        )
+
+    # body 일부
+    if body and remaining > 0:
+        heading = "\n[본문 일부]"
+        parts.append(heading)
+        remaining -= len(heading)
+
+        body_budget = max(
+            0,
+            int(remaining * 0.5),
+        )
+
+        body_parts: list[str] = []
+
+        _append_budget(
+            body_parts,
+            body,
+            body_budget,
+        )
+
+        body_text = "\n".join(body_parts)
+
+        parts.append(body_text)
+        remaining -= len(body_text)
+
+    # attachment metadata only
+    if attachment_names and remaining > 0:
+        heading = "\n[첨부파일명]"
+        parts.append(heading)
+        remaining -= len(heading)
+
+        attachment_text = "\n".join(
+            f"- {name}"
+            for name in attachment_names
+        )
+
+        remaining = _append_budget(
+            parts,
+            attachment_text,
+            remaining,
+        )
+
+    return "\n".join(
+        part
+        for part in parts
+        if part
+    )
 
 
 def _pack_evidence_chunks(
@@ -459,10 +537,12 @@ def _pack_evidence_chunks(
 def _pack_contexts(
     contexts: List[Dict[str, Any]],
     evidence_chunks: List[Dict[str, Any]] | None = None,
-    budget: int = ANSWER_CONTEXT_CHAR_BUDGET,
+    budget: int = 6000,
 ) -> str:
     if not contexts and not evidence_chunks:
         return "(컨텍스트 없음)"
+    if budget <= 0:
+        budget = 6000
 
     packed: list[str] = []
     remaining = budget
@@ -486,11 +566,7 @@ def _pack_contexts(
         if available <= 0:
             break
 
-        full = _format_context(context)
-
-        if len(full) <= available:
-            rendered = full
-        elif idx == 0:
+        if idx == 0:
             rendered = _format_context_with_budget(context, available)
         else:
             rendered = _format_support_context(context, available)

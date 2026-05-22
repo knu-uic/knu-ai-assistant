@@ -4,7 +4,7 @@ import traceback
 
 import streamlit as st
 
-from graph import GRAPH
+from retrieval.graph import GRAPH
 from ui import get_current_user
 
 user = get_current_user()
@@ -86,8 +86,18 @@ if user_input:
 
                     for i, ev in enumerate(evidence_chunks, 1):
                         with st.container(border=True):
+                            chunk_type = ev.get("chunk_type") or "unknown"
+                            attachment_name = ev.get("attachment_name")
+
+                            meta = [f"rerank {ev['score']:.3f}"]
+                            meta.append(f"type={chunk_type}")
+
+                            if attachment_name:
+                                meta.append(f"attachment={attachment_name}")
+
                             st.markdown(
-                                f"**[{i}] [{ev['title']}]({ev['url']})** · rerank {ev['score']:.3f}"
+                                f"**[{i}] [{ev['title']}]({ev['url']})** · "
+                                + " · ".join(meta)
                             )
                             st.code(ev.get("chunk", "")[:1200])
 
@@ -108,9 +118,14 @@ if user_input:
                             st.code(matched[:1000])
 
                         summary = c.get("summary") or ""
+                        attachment_names = c.get("attachment_names") or []
                         if summary:
                             st.caption("문서 요약")
                             st.write(summary[:500])
+                        if attachment_names:
+                            st.caption("첨부파일")
+                            for name in attachment_names:
+                                st.write(f"- {name}")
 
                         snippet = c.get("snippet") or ""
                         if snippet:

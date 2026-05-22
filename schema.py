@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Literal
+from typing import Literal
 
 class MetadataSchema(BaseModel):
     title: str = Field(description='게시판 글 제목')
@@ -13,7 +13,7 @@ class MetadataSchema(BaseModel):
     )
     
     # target은 crawler source의 학과 범위가 아니라, 본문에 명시된 학년/재적상태 제한만 담는다.
-    target: List[str] = Field(
+    target: list[str] = Field(
         description=(
             "본문에 명시된 학년(1학년~4학년, 신입생, 졸업예정자 등) 또는 "
             "재적상태(재학생, 휴학생 등) 제한만 추출한다. "
@@ -23,13 +23,23 @@ class MetadataSchema(BaseModel):
         )
     )
     
-    start_date: Optional[str] = Field(description="접수 시작일 (yyyy-mm-dd 형식). 본문에 없으면 null")
-    end_date: Optional[str] = Field(description="접수 마감일 (yyyy-mm-dd 형식). 본문에 없으면 null")
+    start_date: str | None = Field(
+        description="접수 시작일 (yyyy-mm-dd 형식). 본문에 없으면 null"
+    )
+    end_date: str | None = Field(
+        description="접수 마감일 (yyyy-mm-dd 형식). 본문에 없으면 null"
+    )
     
     # [수정 2] 대학교의 모든 범주를 커버하는 '고정형 대분류' (DB의 게시판 탭 역할)
     category: Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"] = Field(description="글의 대분류 카테고리")
     
     # [수정 3] 유연성을 100% 보장하는 '개방형 키워드' 추가 (유사도 검색 및 해시태그 역할)
-    keywords: List[str] = Field(description="본문의 핵심 주제나 관심사를 나타내는 단어 3개 (예: ['해커톤', '인공지능', 'AWS'])")
+    keywords: list[str] = Field(
+        description=(
+            "본문의 핵심 주제·혜택·기술·활동을 나타내는 키워드 1~3개. "
+            "예: ['해커톤', '인공지능', 'AWS']"
+        )
+    )
     
+    # 원문 게시글 URL
     url: str = Field(description="게시글의 url")

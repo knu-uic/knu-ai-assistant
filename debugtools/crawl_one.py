@@ -6,11 +6,11 @@ LLM 메타데이터 정제, 임베딩 청크 생성 과정을 그대로 실행�
 
 
 실행방법(터미널):
-    python3 knu-ai-assistant/crawlers/crawltest/crawl_one.py "공지사항(url)" 
+    python3 debugtools/crawl_one.py "공지사항(url)" 
 추가 설정:
     --crawler 옵션으로 크롤러 선택 가능 (default: main_notice)
     --output 옵션으로 보고서 txt 경로 지정 가능 (default: crawl_result/reports/crawl_one_<time>_<hash>.txt)
-    --db-write 옵션으로 DB 저장 가능 (python3 crawlers/crawltest/crawl_one.py "URL" --db-write)
+    --db-write 옵션으로 DB 저장 가능 (python3 debugtools/crawl_one.py "URL" --db-write)
 """
 
 from __future__ import annotations
@@ -21,8 +21,9 @@ import sys
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+import traceback
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -40,8 +41,8 @@ from db import (
     insert_document,
     upsert_source,
 )
-from embed import embed_chunks
-from main import _parse_posted_date
+from embedding.embed import embed_chunks
+from ingest import _parse_posted_date
 from refine import refine
 
 
@@ -163,9 +164,23 @@ def build_report(
         lines.append(f"chunks_count: {len(chunks)}")
         if chunks:
             lines.append(f"embedding_dim: {len(chunks[0][2])}")
-        for idx, chunk_text, vector in chunks:
+        for chunk in chunks:
+            if len(chunk) == 3:
+                idx, chunk_text, vector = chunk
+                chunk_type = "legacy"
+                attachment_name = None
+            else:
+                idx, chunk_text, vector, chunk_type, attachment_name = chunk
+
             lines.append("")
-            lines.append(f"--- chunk {idx} | chars={len(chunk_text)} | dim={len(vector)} ---")
+            lines.append(
+                f"--- chunk {idx} | "
+                f"type={chunk_type} | "
+                f"attachment={attachment_name} | "
+                f"chars={len(chunk_text)} | "
+                f"dim={len(vector)} ---"
+            )
+
             lines.append(chunk_text)
 
     _write_section(lines, "Full Crawled Content")
@@ -221,15 +236,69 @@ def main() -> None:
         refined = refine([item])
     except Exception as exc:
         refine_error = exc
+        print("\n[refine traceback]")
+        traceback.print_exc()
 
     chunks = []
     embedding_error: Exception | None = None
     try:
-        content_for_embedding = item.get("content") or ""
         title = item.get("title") or ""
-        chunks = embed_chunks(f"{title}\n\n{content_for_embedding}")
+
+        body_content = item.get("body_content") or item.get("content") or ""
+
+        attachment_contents = item.get("attachment_contents") or []
+
+        chunk_inputs: list[tuple[str, str, str | None]] = []
+
+        # body chunk
+        if body_content.strip():
+            chunk_inputs.append(
+                (
+                    "body",
+                    body_content,
+                    None,
+                )
+            )
+
+        # attachment chunks
+        for att in attachment_contents:
+            text = (att.get("text") or "").strip()
+
+            if not text:
+                continue
+
+            chunk_inputs.append(
+                (
+                    "attachment",
+                    text,
+                    att.get("name"),
+                )
+            )
+
+        chunks = []
+
+        chunk_idx = 0
+
+        for chunk_type, text, attachment_name in chunk_inputs:
+            embedded = embed_chunks(f"{title}\n\n{text}")
+
+            for _, chunk_text, vector in embedded:
+                chunks.append(
+                    (
+                        chunk_idx,
+                        chunk_text,
+                        vector,
+                        chunk_type,
+                        attachment_name,
+                    )
+                )
+
+                chunk_idx += 1
+
     except Exception as exc:
         embedding_error = exc
+        print("\n[embedding traceback]")
+        traceback.print_exc()
 
     report = build_report(
         crawler=crawler,
@@ -272,6 +341,12 @@ def main() -> None:
                         url=doc.url,
                         title=doc.title,
                         content=doc.content,
+
+                        # 신규 구조
+                        body_content=item.get("body_content"),
+                        attachment_names=item.get("attachment_names"),
+                        attachment_contents=item.get("attachment_contents"),
+
                         start_date=doc.start_date,
                         end_date=doc.end_date,
                         category=doc.category,

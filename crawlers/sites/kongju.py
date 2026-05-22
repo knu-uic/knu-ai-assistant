@@ -1,7 +1,6 @@
 from crawlers.methods.board_notice import BoardNoticeConfig, BoardNoticeCrawler
 from crawlers.methods.static_page import StaticPageConfig, StaticPageCrawler
 
-
 KONGJU_CRAWLERS = {
     "main_notice": BoardNoticeCrawler(BoardNoticeConfig(
         source_code="main_notice",

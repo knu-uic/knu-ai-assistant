@@ -3,7 +3,7 @@
 각 어댑터는 실패 시 빈 문자열 또는 [실패 사유]를 돌려준다.
 호출자는 결과를 본문에 그대로 이어 붙이면 된다.
 """
-from model import get_llm 
+from model import get_llm
 
 # --- 표준 라이브러리 ---
 import io           # 바이트 데이터를 "파일처럼" 다루기 위한 BytesIO 용도 (pdfplumber/openpyxl/zipfile이 파일객체를 요구함)
@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path                       # 파일 확장자(.pdf, .hwpx 등) 추출용
+from typing import Any
 from xml.etree import ElementTree as ET        # HWPX 내부 XML 파싱
 
 # --- 외부 라이브러리 ---
@@ -31,6 +32,7 @@ _HWPX_PARA_NS = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 _SUPPORTED_ZIP_EXTS = {".zip", ".pdf", ".hwpx", ".hwp", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".gif"}
 _MAX_ZIP_MEMBERS = 30
 _MAX_ZIP_DEPTH = 2
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 
 
 def hwpx_bytes_to_text(data: bytes) -> str:
@@ -63,6 +65,8 @@ def hwpx_bytes_to_text(data: bytes) -> str:
 # VLM(Gemini)에게 OCR을 시킬 때 쓰는 고정 프롬프트.
 # "설명 문장 붙이지 마라"가 핵심 — 안 그러면 "이 이미지는 ~에 대한 안내입니다" 같은 군더더기가 본문에 섞임.
 _VLM_PROMPT = """이 이미지는 대학 공지글의 일부다. 이미지에 적힌 모든 텍스트와 표를 한국어 plain text로 빠짐없이 추출하라.
+원칙:
+- 설명, 분석, 추론, 생각 과정 출력 절대 금지.
 - 행사명, 일정, 신청기한, 신청방법, 문의처 등 정보 항목은 누락 없이 그대로 옮긴다.
 - 표는 줄바꿈으로 항목을 구분한다.
 - 장식/광고 문구도 모두 포함한다.
@@ -115,7 +119,7 @@ def _download(
     try:
         # 이미지/JPG/PDF 같은 직접 파일 URL은 browser download 이벤트 대신
         # HTTP request로 바로 가져오는 편이 훨씬 안정적이다.
-        if lower_url.endswith(direct_extensions):
+        if any(lower_url.endswith(ext) for ext in direct_extensions):
             try:
                 response = context.request.get(
                     url,
@@ -429,7 +433,7 @@ def _zip_member_text(
             return f"{label}\n{xls_to_text(data)}"
         return f"{label}\n(엑셀 첨부 — 임베딩 제외. 원본 ZIP: {source_url})"
 
-    if ext in (".jpg", ".jpeg", ".png", ".gif"):
+    if ext in _IMAGE_EXTS:
         mime = "image/png" if ext == ".png" else "image/jpeg"
         return f"{label}\n{_image_to_text(data, mime).strip()}"
 
@@ -441,6 +445,8 @@ def _zip_bytes_to_text(data: bytes, source_url: str, context, include_xlsx: bool
         return "(ZIP 중첩 깊이 제한으로 내부 압축 해제 중단)"
 
     parts: list[str] = []
+    if not data:
+        return "(빈 ZIP 데이터)"
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         members = [
             info for info in z.infolist()
@@ -616,7 +622,8 @@ def _office_preview_fallback(att: dict, context) -> str:
         # 사이트가 있어 preview 텍스트를 우선 신뢰한다.
         return text or ""
 
-    except Exception:
+    except Exception as e:
+        print(f"[preview fallback failed] {preview_url} -> {e}")
         return ""
 
 
@@ -769,7 +776,10 @@ def hwpx_via_preview(preview_url: str, context) -> str:
             pass
 
 
-def inline_image_to_text(image_url: str, context):
+def inline_image_to_text(
+    image_url: str,
+    context,
+) -> tuple[str, bytes | None, str | None]:
     """본문 inline 이미지를 VLM으로 텍스트화.
 
     반환: (text, raw_bytes, mime)
@@ -815,6 +825,18 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
     ext = Path(name.lower()).suffix       # .pdf / .hwpx / .jpg ... — 소문자 통일 후 확장자 추출
     label = f"[첨부: {name}]"             # 본문 앞에 붙일 라벨 (RAG 컨텍스트에서 출처 식별용)
     source_url = att["download_url"]
+
+    if not source_url:
+        body = "(첨부 다운로드 URL 없음)"
+        meta = {
+            "kind": "attachment_other",
+            "filename": name,
+            "source_url": source_url,
+            "mime_type": None,
+            "raw_bytes": None,
+            "extracted_text": body,
+        }
+        return f"{label}\n{body}", meta
 
     # 메타 기본값을 먼저 깔아두고, 아래 분기에서 필드를 덮어쓰는 패턴
     meta = {
@@ -909,7 +931,7 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                         body = hwp_bytes_to_text(file_data, name)
 
         # ───────── 분기 4: 이미지 첨부 ─────────
-        elif ext in (".jpg", ".jpeg", ".png", ".gif"):
+        elif ext in _IMAGE_EXTS:
             meta["kind"] = "attachment_image"
             meta["mime_type"] = "image/png" if ext == ".png" else "image/jpeg"
             data = _download(source_url, context)
@@ -943,3 +965,34 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
     text = f"{label}\n{body}" if body else f"{label}\n(추출 텍스트 없음)"
     meta["extracted_text"] = body
     return text, meta
+
+
+def extract_attachment_text(path: str | Path) -> str:
+    """파일 경로 기반 generic attachment text extractor.
+
+    curriculum/document crawler 등에서 공통 사용.
+    """
+    file_path = Path(path)
+    ext = file_path.suffix.lower()
+    data = file_path.read_bytes()
+
+    if ext == ".pdf":
+        return _pdf_bytes_full(data)
+
+    if ext == ".hwpx":
+        return hwpx_bytes_to_text(data)
+
+    if ext == ".hwp":
+        return hwp_bytes_to_text(data, file_path.name)
+
+    if ext == ".xlsx":
+        return xlsx_to_text(data)
+
+    if ext == ".xls":
+        return xls_to_text(data)
+
+    if ext in _IMAGE_EXTS:
+        mime = "image/png" if ext == ".png" else "image/jpeg"
+        return _image_to_text(data, mime).strip()
+
+    raise ValueError(f"지원하지 않는 attachment 확장자: {ext}")

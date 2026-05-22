@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from crawlers.methods.board_notice import BoardNoticeConfig, BoardNoticeCrawler
-from crawlers.methods.curriculum import CurriculumConfig, CurriculumCrawler
+from crawlers.methods.curriculum_page import CurriculumConfig, CurriculumCrawler
 
 
 COMPUTER_CRAWLERS = {

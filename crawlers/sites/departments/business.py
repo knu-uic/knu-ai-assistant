@@ -1,22 +1,18 @@
 from pathlib import Path
 
 from crawlers.methods.board_notice import BoardNoticeConfig, BoardNoticeCrawler
-from crawlers.methods.direct_file import DirectFileConfig, DirectFileCrawler
+from crawlers.methods.curriculum_page import CurriculumConfig, CurriculumCrawler
 
 
 BUSINESS_CRAWLERS = {
-    "business_curriculum": DirectFileCrawler(DirectFileConfig(
+    "business_curriculum": CurriculumCrawler(CurriculumConfig(
         source_code="business_curriculum",
         source_name="경영학과 교과과정표",
         department="경영학과",
         base_url="https://business.kongju.ac.kr",
-        file_url="https://business.kongju.ac.kr/documentViewer/ZB0431/145/138/fileDown.do",
+        pdf_url="https://business.kongju.ac.kr/documentViewer/ZB0431/145/138/fileDown.do",
         page_url="https://business.kongju.ac.kr/ZB0431/145/subview.do",
         cache_path=Path("crawl_result/business_curriculum/curriculum.hwp"),
-        category="수강",
-        keywords=["교과과정", "전공", "학점"],
-        filename="경영학과 교과과정표.hwp",
-        mime_type="application/x-hwp",
         verify_ssl=False,
     )),
     "business_notice": BoardNoticeCrawler(BoardNoticeConfig(

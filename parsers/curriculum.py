@@ -11,14 +11,15 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 from pathlib import Path
+from typing import Any
 
 SEMESTER_LABELS = ["1-Ⅰ", "1-Ⅱ", "2-Ⅰ", "2-Ⅱ", "3-Ⅰ", "3-Ⅱ", "4-Ⅰ", "4-Ⅱ"]
 
 
-def _clean(s):
+def _clean(s: Any) -> str | None:
     if s is None:
         return None
-    s = s.replace("\n", " ").strip()
+    s = str(s).replace("\n", " ").strip()
     s = re.sub(r" +", " ", s)
     return s or None
 
@@ -31,15 +32,20 @@ def _parse_year_label(page_text: str) -> str | None:
     return None
 
 
-def _find_columns(table: list[list]) -> dict:
+def _find_columns(table: list[list]) -> dict[str, Any]:
     """헤더 두 행 기반 컬럼 식별."""
+    if len(table) < 2:
+        raise ValueError("table header rows missing")
     header = table[0]
     subheader = table[1]
 
-    course_name_col = next(
-        i for i, c in enumerate(header)
-        if c and "강" in c and "좌" in c and "명" in c
-    )
+    try:
+        course_name_col = next(
+            i for i, c in enumerate(header)
+            if c and "강" in c and "좌" in c and "명" in c
+        )
+    except StopIteration as e:
+        raise ValueError("course_name column not found") from e
     total_col = max(i for i, c in enumerate(header) if c and "계" in c)
     semester_cols = [i for i, c in enumerate(subheader) if c in ("Ⅰ", "Ⅱ")]
     if len(semester_cols) != 8:
@@ -128,7 +134,10 @@ def parse(pdf_path: str | Path) -> dict:
             if not tables:
                 continue
             txt = page.extract_text() or ""
-            years.append(_parse_page(tables[0], txt, i))
+            try:
+                years.append(_parse_page(tables[0], txt, i))
+            except Exception as e:
+                print(f"⚠️ curriculum parse 실패 page={i}: {e}")
     return {"years": years}
 
 

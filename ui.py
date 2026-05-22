@@ -88,33 +88,92 @@ def get_current_user() -> dict:
 
 def row_to_notice_search(row):
     """search_chunks 결과 row → notice dict."""
-    (url, title, snippet, score, posted_at, start_date, end_date,
-     category, target, keywords,
-     _source_code, source_name, _source_kind, source_department, *rest) = row
-    summary = rest[0] if rest else None
+
+    (
+        url,
+        title,
+        snippet,
+        score,
+        posted_at,
+        start_date,
+        end_date,
+        category,
+        target,
+        keywords,
+        _source_code,
+        source_name,
+        _source_kind,
+        source_department,
+        *rest,
+    ) = row
+
+    summary = rest[0] if len(rest) > 0 else None
+    body_content = rest[1] if len(rest) > 1 else None
+    attachment_names = rest[2] if len(rest) > 2 else []
+    chunk_type = rest[3] if len(rest) > 3 else None
+    attachment_name = rest[4] if len(rest) > 4 else None
+
     return {
-        "url": url, "title": title, "content": snippet, "score": score,
+        "url": url,
+        "title": title,
+        "content": snippet,
+        "body_content": body_content,
+        "score": score,
         "summary": summary,
         "posted_at": posted_at,
-        "start_date": start_date, "end_date": end_date, "category": category,
-        "target": target, "keywords": keywords,
-        "source_name": source_name, "source_department": source_department,
+        "start_date": start_date,
+        "end_date": end_date,
+        "category": category,
+        "target": target,
+        "keywords": keywords,
+        "source_name": source_name,
+        "source_department": source_department,
+        "attachment_names": attachment_names,
+        "chunk_type": chunk_type,
+        "attachment_name": attachment_name,
     }
 
 
 def row_to_notice_list(row):
     """get_documents 결과 row → notice dict."""
-    (url, title, content, posted_at, start_date, end_date,
-     category, target, keywords,
-     _source_code, source_name, _source_kind, source_department, *rest) = row
-    summary = rest[0] if rest else None
+
+    (
+        url,
+        title,
+        content,
+        posted_at,
+        start_date,
+        end_date,
+        category,
+        target,
+        keywords,
+        _source_code,
+        source_name,
+        _source_kind,
+        source_department,
+        *rest,
+    ) = row
+
+    summary = rest[0] if len(rest) > 0 else None
+    body_content = rest[1] if len(rest) > 1 else content
+    attachment_names = rest[2] if len(rest) > 2 else []
+
     return {
-        "url": url, "title": title, "content": content, "score": None,
+        "url": url,
+        "title": title,
+        "content": content,
+        "body_content": body_content,
+        "score": None,
         "summary": summary,
         "posted_at": posted_at,
-        "start_date": start_date, "end_date": end_date, "category": category,
-        "target": target, "keywords": keywords,
-        "source_name": source_name, "source_department": source_department,
+        "start_date": start_date,
+        "end_date": end_date,
+        "category": category,
+        "target": target,
+        "keywords": keywords,
+        "source_name": source_name,
+        "source_department": source_department,
+        "attachment_names": attachment_names,
     }
 
 

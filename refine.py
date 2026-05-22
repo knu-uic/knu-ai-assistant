@@ -3,10 +3,19 @@ from datetime import date, datetime
 from typing import Any, List, Tuple, cast
 import httpx
 from langchain_core.messages import SystemMessage, HumanMessage
-from model import get_llm, get_refine_full_content_limit
+from model import get_llm
 from schema import MetadataSchema
 from dotenv import load_dotenv
+from config import (
+    REFINE_FULL_CONTENT_LIMIT,
+    BODY_MIN_FOR_ATTACHMENT_SKIP,
+    ATTACHMENT_REFINE_FALLBACK_CHARS,
+)
 
+
+# 메타데이터 추출에는 첨부 원문 전체가 필요 없다.
+# 긴 XLSX/PDF 공지는 refine 입력만 줄이고 저장/임베딩에는 원문 전체 사용.
+_REFINE_ASSET_NAME_LIMIT = 12
 
 # Gemini API가 가끔 응답 전 connection을 drop. 재시도로 흡수.
 _RETRYABLE_EXC = (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError)
@@ -14,16 +23,13 @@ _MAX_ATTEMPTS = 4
 _BACKOFF_BASE = 2.0  # 2s, 4s, 8s
 # Gemini Tier 1 RPM 1000 — 동시성 10이면 RPM 600 정도라 안전 마진.
 _BATCH_CONCURRENCY = 10
-# 메타데이터 추출에는 첨부 원문 전체가 필요 없다. 긴 XLSX/PDF가 붙은
-# 공지는 LLM 입력만 줄이고, 저장/임베딩에는 원문을 보존한다.
-_REFINE_FULL_CONTENT_LIMIT = get_refine_full_content_limit()
-_REFINE_ASSET_NAME_LIMIT = 12
 
 
 SYSTEM_PROMPT = """
 너는 공주대학교 공지사항을 구조화된 메타데이터로 변환하는 분석가다.
 
 원칙:
+- 추론, 생각 과정 출력 금지.
 - 본문에 명시된 사실만 사용한다. 추측·창작·일반 상식 추가 금지.
 - 입력에 없는 정보는 null 또는 기본값으로 처리한다.
 - 모든 출력은 한국어로 작성한다.
@@ -99,23 +105,73 @@ def _clip(text: str, limit: int) -> str:
     return text[:limit].rstrip() + f"\n... [LLM 입력 축소: {len(text)}자 중 {limit}자만 포함]"
 
 
-def _content_before_first_attachment(content: str) -> str:
-    markers = ["\n[첨부:"]
-    positions = [content.find(marker) for marker in markers if content.find(marker) != -1]
-    if not positions:
-        return content
-    return content[:min(positions)]
 
 
-def _asset_name_lines(assets: list[dict]) -> list[str]:
+def _asset_name_lines(item: dict) -> List[str]:
+    """LLM refine 단계에는 첨부 원문 전체 대신 metadata만 전달."""
+
     lines = []
-    for asset in assets[:_REFINE_ASSET_NAME_LIMIT]:
-        extracted = asset.get("extracted_text") or ""
-        filename = asset.get("filename") or "(본문 이미지)"
-        lines.append(
-            f"- {asset.get('kind')}: {filename} (추출 {len(extracted)}자)"
-        )
+
+    attachment_names = item.get("attachment_names") or []
+
+    for name in attachment_names[:_REFINE_ASSET_NAME_LIMIT]:
+        lines.append(f"- attachment: {name}")
+
+    # legacy fallback
+    if not lines:
+        assets = item.get("assets") or []
+
+        for asset in assets[:_REFINE_ASSET_NAME_LIMIT]:
+            extracted = asset.get("extracted_text") or ""
+            filename = asset.get("filename") or "(본문 이미지)"
+
+            lines.append(
+                f"- {asset.get('kind')}: {filename} (추출 {len(extracted)}자)"
+            )
+
     return lines
+
+
+# 첨부파일 일부 excerpt 생성 함수 추가
+def _attachment_excerpt(item: dict, limit: int) -> str:
+    """첨부파일 일부 excerpt 생성.
+
+    giant attachment 전체를 넣지 않고,
+    refine 품질에 필요한 앞부분만 사용.
+    """
+
+    attachment_contents = item.get("attachment_contents") or []
+
+    if not attachment_contents:
+        return ""
+
+    parts: List[str] = []
+    remaining = limit
+
+    for att in attachment_contents:
+        if remaining <= 0:
+            break
+
+        name = att.get("name") or "attachment"
+        text = str(att.get("text") or "").strip()
+
+        if not text:
+            continue
+
+        excerpt_limit = min(remaining, 1200)
+
+        excerpt = _clip(text, excerpt_limit)
+
+        block = (
+            f"[첨부파일 일부: {name}]\n"
+            f"{excerpt}"
+        )
+
+        parts.append(block)
+
+        remaining -= len(block)
+
+    return "\n\n".join(parts)
 
 
 def _parse_posted_year(raw: str | None) -> int | None:
@@ -161,38 +217,100 @@ def _adjust_result_dates(result: MetadataSchema, item: dict) -> None:
     posted_year = _parse_posted_year(item.get("date"))
     evidence = "\n".join([
         item.get("title") or "",
-        item.get("content") or "",
+        item.get("body_content") or item.get("content") or "",
     ])
     result.start_date = _adjust_relative_date_year(result.start_date, posted_year, evidence)
     result.end_date = _adjust_relative_date_year(result.end_date, posted_year, evidence)
 
 
 def _llm_item(item: dict) -> dict:
-    """LLM 메타데이터 추출용 입력 축소본. 원본 item은 저장 단계에서 보존된다.
+    """LLM 메타데이터 추출용 입력 축소본.
 
-    짧은 공지는 전체 텍스트를 그대로 보낸다. 긴 공지는 본문 앞부분과
-    첨부파일 목록만 전달한다.
+    저장/임베딩은 항상 원문 전체 사용.
+
+    refine 전략:
+    - body_content 우선
+    - body가 충분히 길면 attachment는 metadata만 사용
+    - body가 빈약하면 attachment excerpt 일부 포함
     """
-    content = item.get("content") or ""
-    if len(content) <= _REFINE_FULL_CONTENT_LIMIT:
-        return item
 
-    assets = item.get("assets") or []
-    body_text = _content_before_first_attachment(content)
-    asset_names = "\n".join(_asset_name_lines(assets))
-    body_budget = _REFINE_FULL_CONTENT_LIMIT - len(asset_names) - 120
-    compact_parts = [
-        "[본문 앞부분]",
-        _clip(body_text, max(800, body_budget)),
-    ]
-    if asset_names:
-        compact_parts.extend(["", "[첨부파일 목록]", asset_names])
-    compact_parts.append(
-        f"\n[원문 길이: {len(content)}자, 저장/임베딩에는 원문 전체 사용]"
-    )
+    body_content = str(
+        item.get("body_content")
+        or item.get("content")
+        or ""
+    ).strip()
 
     compact = dict(item)
+
+    # body 자체가 충분한 경우
+    if len(body_content) >= BODY_MIN_FOR_ATTACHMENT_SKIP:
+        if len(body_content) <= REFINE_FULL_CONTENT_LIMIT:
+            compact["content"] = body_content
+            return compact
+
+        asset_names = "\n".join(_asset_name_lines(item))
+
+        body_budget = (
+            REFINE_FULL_CONTENT_LIMIT
+            - len(asset_names)
+            - 120
+        )
+
+        compact_parts = [
+            "[본문]",
+            _clip(body_content, max(1000, body_budget)),
+        ]
+
+        if asset_names:
+            compact_parts.extend([
+                "",
+                "[첨부파일 목록]",
+                asset_names,
+            ])
+
+        compact_parts.append(
+            f"\n[body 길이: {len(body_content)}자 | attachment 원문은 retrieval 단계에서 사용]"
+        )
+
+        compact["content"] = "\n".join(compact_parts)
+        return compact
+
+    # body가 빈약한 경우
+    attachment_excerpt = _attachment_excerpt(
+        item,
+        ATTACHMENT_REFINE_FALLBACK_CHARS,
+    )
+
+    compact_parts = []
+
+    if body_content:
+        compact_parts.extend([
+            "[본문]",
+            body_content,
+            "",
+        ])
+
+    if attachment_excerpt:
+        compact_parts.extend([
+            "[첨부파일 일부]",
+            attachment_excerpt,
+        ])
+
+    asset_names = "\n".join(_asset_name_lines(item))
+
+    if asset_names:
+        compact_parts.extend([
+            "",
+            "[첨부파일 목록]",
+            asset_names,
+        ])
+
+    compact_parts.append(
+        f"\n[body 길이: {len(body_content)}자 | attachment excerpt 기반 refine]"
+    )
+
     compact["content"] = "\n".join(compact_parts)
+
     return compact
 
 

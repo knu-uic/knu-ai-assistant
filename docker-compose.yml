@@ -37,16 +37,23 @@ services:
       - DB_HOST=db
       - DB_PORT=5432
       - DATABASE_URL=postgresql://${DB_USER:-knu-uic}:${DB_PASSWORD}@db:5432/${DB_NAME:-knu-uic}
-      # LM Studio를 호스트 머신에서 실행할 때 Docker 컨테이너가 접근하는 주소
+      # provider/runtime
       - VLM_PROVIDER=${VLM_PROVIDER:-lmstudio}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-lmstudio}
-      - LLM_MODEL=${LLM_MODEL:-gemma-4-e4b}
+      - LLM_MODEL=${LLM_MODEL:-gemma-3-4b-it}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-nomic-embed-text-v1.5}
       - LMSTUDIO_BASE_URL=${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
-      - LLM_CONTEXT_WINDOW_TOKENS=${LLM_CONTEXT_WINDOW_TOKENS:-8192}
-      - LLM_CONTEXT_USAGE_RATIO=${LLM_CONTEXT_USAGE_RATIO:-0.8}
+      - RERANKER_MODEL=${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
+      - LLM_MAX_CONTEXT_WINDOW_TOKENS=${LLM_MAX_CONTEXT_WINDOW_TOKENS:-8192}
       - LLM_CHARS_PER_TOKEN=${LLM_CHARS_PER_TOKEN:-1.4}
-      - REFINE_CONTEXT_RATIO_MULTIPLIER=${REFINE_CONTEXT_RATIO_MULTIPLIER:-0.35}
+      - RERANK_CANDIDATES=${RERANK_CANDIDATES:-50}
+      - RERANK_TOP_N=${RERANK_TOP_N:-5}
+      - SUPPORT_DOC_TOP_N=${SUPPORT_DOC_TOP_N:-3}
+      - REFINE_FULL_CONTENT_LIMIT=${REFINE_FULL_CONTENT_LIMIT:-12000}
+      - ENABLE_VERIFIER=${ENABLE_VERIFIER:-false}
+
+      # retrieval / context budget
+
       # LangSmith 트레이싱 (LANGSMITH_TRACING이 비어있거나 false면 비활성화)
       - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY:-}

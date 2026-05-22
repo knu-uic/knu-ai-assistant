@@ -4,6 +4,8 @@ pgvector
 python-dotenv
 pydantic
 
+httpx
+
 # LangChain / LangGraph
 # - langchain-openai: LM Studio가 OpenAI 호환 API라서 필요
 # - langchain-google-genai: provider를 google로 바꿀 때 사용
@@ -16,11 +18,21 @@ langchain-postgres
 langgraph
 langsmith
 
+# 임베딩 / 리랭킹
+# - sentence-transformers: BGE reranker + embedding local inference
+# - transformers/torch: CrossEncoder backend
+sentence-transformers
+transformers
+torch
+
 # 크롤링
 # 설치 후 로컬에서는 별도로 실행:
 #   python3 -m playwright install chromium
 # Dockerfile에서는 자동 실행함
 playwright
+
+beautifulsoup4
+lxml
 
 # 첨부파일 처리
 # - pdfplumber: 텍스트 PDF 추출
@@ -35,6 +47,5 @@ xlrd
 pdf2image
 pyhwp2md
 
-# 리랭커
-# 첫 실행 시 HuggingFace에서 BGE reranker 모델을 내려받음
-sentence-transformers
+pillow
+

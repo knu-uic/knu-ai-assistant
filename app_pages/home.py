@@ -26,7 +26,13 @@ def _score_notice(
     """
     score = 0
 
-    haystack_parts = [notice.get("title") or "", notice.get("content") or ""]
+    haystack_parts = [
+        notice.get("title") or "",
+        notice.get("body_content")
+        or notice.get("summary")
+        or notice.get("content")
+        or "",
+    ]
     notice_kws = notice.get("keywords") or []
     if isinstance(notice_kws, str):
         notice_kws = [notice_kws]
@@ -89,7 +95,12 @@ def _render_recommendation_card(rank: int, notice: dict, matched: list[str], tod
 
         st.markdown(f"**[{notice['title']}]({notice['url']})**")
 
-        body = (notice.get("summary") or notice.get("content") or "").strip().replace("\n", " ")
+        body = (
+            notice.get("summary")
+            or notice.get("body_content")
+            or notice.get("content")
+            or ""
+        ).strip().replace("\n", " ")
         if len(body) > 120:
             body = body[:120] + "…"
         if body:
@@ -114,8 +125,14 @@ def _render_deadline_row(notice: dict, today: date):
         c[0].markdown(f"**{d_lbl}**")
         c[1].markdown(f"[{notice['title']}]({notice['url']})")
         source = notice.get("source_name") or ""
+        attachment_names = notice.get("attachment_names") or []
         end = notice.get("end_date")
-        c[1].caption(f"{source} · 마감 {end}" if end else source)
+        meta = f"{source} · 마감 {end}" if end else source
+
+        if attachment_names:
+            meta += f" · 첨부 {len(attachment_names)}개"
+
+        c[1].caption(meta)
         c[2].caption(f"{icon} {cat}")
 
 
