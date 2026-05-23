@@ -4,6 +4,9 @@ from pathlib import Path
 from typing import Callable, Iterator
 from urllib.parse import urljoin
 
+import requests
+from bs4 import BeautifulSoup
+
 from playwright.sync_api import sync_playwright
 
 from extractors.attachments import (
@@ -47,12 +50,37 @@ class BoardNoticeCrawler:
         self.DEPARTMENT = config.department
         self.BASE_URL = config.base_url
 
+        self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/148.0.0.0 Safari/537.36"
+            )
+        })
+
     def _abs(self, url: str) -> str:
         if not url:
             return ""
         if url.startswith("http"):
             return url
         return urljoin(self.BASE_URL, url)
+
+    def _fetch_html(self, url: str) -> BeautifulSoup:
+        res = self.session.get(url, timeout=30)
+        res.raise_for_status()
+        return BeautifulSoup(res.text, "html.parser")
+
+    def _fetch_html_text(self, url: str) -> str:
+        res = self.session.get(url, timeout=30)
+        res.raise_for_status()
+        return res.text
+
+    def _text_from_selector(self, soup: BeautifulSoup, selector: str) -> str:
+        node = soup.select_one(selector)
+        if not node:
+            return ""
+        return node.get_text("\n", strip=True)
 
     def _save_image_asset(
         self,
@@ -138,21 +166,42 @@ class BoardNoticeCrawler:
             return False
 
     def _collect_post_records(self, list_page, page_num: int) -> list[dict]:
-        row_selector = self.config.row_selector
-        if page_num != 1 and self.config.row_selector_after_first:
-            row_selector = self.config.row_selector_after_first
+        if self.config.list_url_template:
+            url = self.config.list_url_template.format(page=page_num)
+        elif page_num == 1:
+            url = self.config.list_url or self.BASE_URL
+        else:
+            raise ValueError(
+                f"{self.SOURCE_CODE}: list_url_template 설정이 필요합니다."
+            )
+
+        soup = self._fetch_html(url)
 
         records: list[dict] = []
-        for row in list_page.locator(row_selector).all():
-            try:
-                href = row.locator(".td-subject a").first.get_attribute("href")
-            except Exception:
+
+        for row in soup.select("tr"):
+            anchor = row.select_one(".td-subject a")
+            if not anchor:
                 continue
-            if href:
-                records.append({
-                    "url": self._abs(href),
-                    "is_pinned": self._row_is_pinned(row),
-                })
+
+            href = anchor.get("href")
+            if not href:
+                continue
+
+            class_names = row.get("class", [])
+            first_td = row.select_one("td")
+            first_text = first_td.get_text(strip=True) if first_td else ""
+
+            is_pinned = (
+                "notice" in class_names
+                or first_text in {"공지", "알림"}
+            )
+
+            records.append({
+                "url": self._abs(href),
+                "is_pinned": is_pinned,
+            })
+
         return records
 
     def _collect_post_urls(self, list_page, page_num: int) -> list[str]:
@@ -160,55 +209,75 @@ class BoardNoticeCrawler:
 
     def collect_pinned_urls(self) -> set[str]:
         """현재 목록 첫 페이지의 고정 공지 URL 집합."""
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context()
-            page = context.new_page()
-            page.on("dialog", lambda dialog: dialog.accept())
-            try:
-                self._goto_list_page(page, 1)
-                page.wait_for_selector(self.config.list_wait_selector)
-                return {
-                    record["url"]
-                    for record in self._collect_post_records(page, 1)
-                    if record.get("is_pinned")
-                }
-            finally:
-                browser.close()
+        return {
+            record["url"]
+            for record in self._collect_post_records(None, 1)
+            if record.get("is_pinned")
+        }
 
     def crawling(
         self,
         should_skip: Callable[[str], bool] | None = None,
     ) -> Iterator[dict]:
         seen_urls: set[str] = set()
+        consecutive_skips = 0
+        max_consecutive_skips = 20
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context()
-            list_page = context.new_page()
             detail_page = context.new_page()
-            list_page.on("dialog", lambda dialog: dialog.accept())
 
             try:
                 for page_num in range(1, self.config.pages + 1):
-                    self._goto_list_page(list_page, page_num)
-                    list_page.wait_for_selector(self.config.list_wait_selector)
+                    post_records = self._collect_post_records(None, page_num)
 
-                    post_records = self._collect_post_records(list_page, page_num)
                     if self.config.dedupe_urls:
-                        new_records = [r for r in post_records if r["url"] not in seen_urls]
+                        new_records = [
+                            r for r in post_records
+                            if r["url"] not in seen_urls
+                        ]
                         seen_urls.update(r["url"] for r in new_records)
                     else:
                         new_records = post_records
 
-                    print(f"\n=== {page_num}페이지: 게시글 {len(post_records)}건, 처리 대상 {len(new_records)}건 ===")
+                    print(
+                        f"\n=== {page_num}페이지: 게시글 {len(post_records)}건, 처리 대상 {len(new_records)}건 ==="
+                    )
 
                     if should_skip:
-                        before = len(new_records)
-                        new_records = [r for r in new_records if not should_skip(r["url"])]
-                        print(f"     ↳ DB 중복 제외: {before - len(new_records)}건 스킵, {len(new_records)}건 처리")
+                        filtered_records = []
+                        skipped_in_page = 0
+
+                        for r in new_records:
+                            if should_skip(r["url"]):
+                                skipped_in_page += 1
+                                consecutive_skips += 1
+                            else:
+                                consecutive_skips = 0
+                                filtered_records.append(r)
+
+                        new_records = filtered_records
+
+                        print(
+                            f"     ↳ DB 중복 제외: {skipped_in_page}건 스킵, {len(new_records)}건 처리"
+                        )
+
+                        if consecutive_skips >= max_consecutive_skips:
+                            print(
+                                f"     ↳ 연속 중복 {consecutive_skips}건 발견 — 크롤링 조기 종료"
+                            )
+                            return
 
                     for idx, record in enumerate(new_records, 1):
+                        # playwright page 장시간 재사용 시 메모리 누수 방지
+                        if idx % 50 == 0:
+                            try:
+                                detail_page.close()
+                            except Exception:
+                                pass
+                            detail_page = context.new_page()
+
                         yield self._crawl_detail(
                             context,
                             detail_page,
@@ -222,24 +291,26 @@ class BoardNoticeCrawler:
 
     def _crawl_detail(self, context, detail_page, post_url: str, idx: int, total: int, is_pinned: bool = False) -> dict:
         print(f"[{idx}/{total}] {post_url} 접속 중...")
-        detail_page.goto(post_url, wait_until=self.config.wait_until)
+        html = self._fetch_html_text(post_url)
+        soup = BeautifulSoup(html, "html.parser")
 
-        detail_page.wait_for_load_state("domcontentloaded")
+        # 첨부 다운로드 / synap viewer / inline image OCR 용도로만 playwright 사용
+        detail_page.goto(post_url, wait_until="domcontentloaded")
 
-        try:
-            title = detail_page.locator(self.config.title_selector).first.inner_text().strip()
-        except Exception:
-            title = "제목을 찾을 수 없음"
+        title = self._text_from_selector(
+            soup,
+            self.config.title_selector,
+        ) or "제목을 찾을 수 없음"
 
-        try:
-            date = detail_page.locator(self.config.date_selector).first.inner_text().strip()
-        except Exception:
-            date = "등록일을 찾을 수 없음"
+        date = self._text_from_selector(
+            soup,
+            self.config.date_selector,
+        ) or "등록일을 찾을 수 없음"
 
-        try:
-            body_text = detail_page.locator(self.config.body_selector).first.inner_text().strip()
-        except Exception:
-            body_text = ""
+        body_text = self._text_from_selector(
+            soup,
+            self.config.body_selector,
+        )
 
         # body는 별도 저장
         body_content = body_text.strip() if body_text else ""

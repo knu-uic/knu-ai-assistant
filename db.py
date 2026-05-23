@@ -329,6 +329,7 @@ def upsert_source(code: str, name: str, kind: str, department: str | None, base_
         return source_id
 
 
+
 def document_exists(url: str) -> bool:
     """5개 category 테이블 중 어디든 url이 있으면 True. 카테고리 간 url 중복은 application level에서 차단."""
     # EXISTS가 첫 행에서 short-circuit하므로 LIMIT 불필요. LIMIT을 넣으면 UNION ALL 문법 충돌.
@@ -340,6 +341,55 @@ def document_exists(url: str) -> bool:
         cur = conn.execute(query, tuple([url] * len(SLUGS)))
         row = cur.fetchone()
         return bool(row and row[0])
+
+
+# === 새로 추가: 특정 source의 기존 문서를 전부 삭제 ===
+def delete_documents_by_source(source_id: int) -> int:
+    """특정 source의 기존 문서를 전부 삭제.
+
+    curriculum/static 성격의 문서에서
+    같은 URL에 파일만 교체되는 경우 사용.
+
+    document_chunk는 FK cascade로 삭제되고,
+    document_asset는 직접 삭제한다.
+    """
+
+    deleted_total = 0
+
+    with psycopg.connect(DB_URL) as conn:
+        for slug in SLUGS:
+            category = SLUG_TO_CATEGORY[slug]
+
+            rows = conn.execute(
+                sql.SQL(
+                    """
+                    DELETE FROM {doc}
+                    WHERE source_id = %s
+                    RETURNING id;
+                    """
+                ).format(doc=_doc_ident(slug)),
+                (source_id,),
+            ).fetchall()
+
+            if not rows:
+                continue
+
+            deleted_ids = [row[0] for row in rows]
+
+            conn.execute(
+                """
+                DELETE FROM document_asset
+                WHERE category = %s
+                  AND document_id = ANY(%s);
+                """,
+                (category, deleted_ids),
+            )
+
+            deleted_total += len(deleted_ids)
+
+        conn.commit()
+
+    return deleted_total
 
 
 def insert_document(

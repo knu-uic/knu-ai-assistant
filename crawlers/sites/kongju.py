@@ -8,6 +8,7 @@ KONGJU_CRAWLERS = {
         department="공통",
         base_url="https://www.kongju.ac.kr",
         list_url="https://www.kongju.ac.kr/KNU/16909/subview.do",
+        list_url_template="https://www.kongju.ac.kr/KNU/16909/subview.do?page={page}",
         page_title_template="{page}페이지",
         pages=5,
         row_selector="tr:has(.td-subject a)",

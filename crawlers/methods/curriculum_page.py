@@ -53,10 +53,6 @@ class CurriculumCrawler:
     ) -> list[dict]:
         document_path = self._download_document()
 
-        if should_skip and should_skip(self.config.pdf_url):
-            print(f"[{self.SOURCE_CODE}] skip됨: {self.config.pdf_url}")
-            return []
-
         suffix = document_path.suffix.lower()
 
         parsed = None
@@ -111,6 +107,7 @@ class CurriculumCrawler:
             "url": self.config.pdf_url,
             "assets": [],
             "pre_refined": True,
+            "replace_by_source": True,
             "metadata": {
                 "title": title,
                 "content": body_content,

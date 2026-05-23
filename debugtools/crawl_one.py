@@ -1,16 +1,42 @@
 """
 공지사항 URL 하나를 크롤링하여 텍스트 보고서를 작성합니다.
-이 작업은 데이터베이스를 초기화하거나 기록하지 않습니다. 
-대신, 앱 파이프라인에서 사용하는 동일한 주요 단계인 크롤러 첨부파일 추출,
-LLM 메타데이터 정제, 임베딩 청크 생성 과정을 그대로 실행합니다.
+
+이 작업은 데이터베이스를 초기화하거나 기록하지 않습니다.
+대신, 실제 앱 파이프라인에서 사용하는 동일한 주요 단계들을 그대로 실행합니다.
+
+포함되는 단계:
+    - 크롤러 상세페이지 수집
+    - 첨부파일 다운로드 및 텍스트 추출
+    - OCR / synap preview 기반 추출
+    - LLM 메타데이터 정제(refine)
+    - body / attachment 기반 chunk 생성
+    - 임베딩 생성
+
+또한 운영 ingest.py 와 동일하게:
+    - attachment/body chunk 분리
+    - replace_by_source 처리
+    - DB 저장 (--db-write)
+
+동작을 테스트할 수 있습니다.
 
 
 실행방법(터미널):
-    python3 debugtools/crawl_one.py "공지사항(url)" 
+    python3 debugtools/crawl_one.py "공지사항(url)"
+
 추가 설정:
-    --crawler 옵션으로 크롤러 선택 가능 (default: main_notice)
-    --output 옵션으로 보고서 txt 경로 지정 가능 (default: crawl_result/reports/crawl_one_<time>_<hash>.txt)
-    --db-write 옵션으로 DB 저장 가능 (python3 debugtools/crawl_one.py "URL" --db-write)
+    --crawler
+        크롤러 선택 가능
+        (default: main_notice)
+
+    --output
+        보고서 txt 저장 경로 지정 가능
+        (default: crawl_result/reports/crawl_one_<time>_<hash>.txt)
+
+    --db-write
+        refine/chunk/embed 결과를 실제 DB에 저장
+
+        예시:
+            python3 debugtools/crawl_one.py "URL" --db-write
 """
 
 from __future__ import annotations
@@ -34,6 +60,7 @@ from playwright.sync_api import sync_playwright
 from crawlers import CRAWLERS
 import crawlers.methods.board_notice as board_notice
 from db import (
+    delete_documents_by_source,
     document_exists,
     init_db,
     insert_assets,
@@ -113,6 +140,7 @@ def build_report(
     lines.append(f"crawler: {crawler.SOURCE_CODE} / {crawler.SOURCE_NAME}")
     lines.append(f"url: {url}")
     lines.append("db_write: report-only mode")
+    lines.append(f"replace_by_source: {bool(item.get('replace_by_source'))}")
     lines.append("xlsx_filter: forced include for single-url attachment testing")
 
     _write_section(lines, "Crawl Result")
@@ -331,7 +359,13 @@ def main() -> None:
                     base_url=crawler.BASE_URL,
                 )
 
-                if document_exists(doc.url):
+                replace_by_source = bool(item.get("replace_by_source"))
+
+                if replace_by_source:
+                    print(f"[db] replace_by_source enabled: source_id={source_id}")
+                    delete_documents_by_source(source_id)
+
+                if not replace_by_source and document_exists(doc.url):
                     print(f"[db] already exists: {doc.url}")
                 else:
                     posted_at = _parse_posted_date(item.get("date"))

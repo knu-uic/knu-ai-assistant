@@ -26,11 +26,13 @@ transformers
 torch
 
 # 크롤링
+# - playwright: 동적 페이지 / 로그인 / JS 렌더링 처리
+# - beautifulsoup4 + lxml: 정적 페이지 HTML 파싱
+#
 # 설치 후 로컬에서는 별도로 실행:
 #   python3 -m playwright install chromium
 # Dockerfile에서는 자동 실행함
 playwright
-
 beautifulsoup4
 lxml
 
@@ -47,5 +49,6 @@ xlrd
 pdf2image
 pyhwp2md
 
+# 이미지/OCR 처리
 pillow
 

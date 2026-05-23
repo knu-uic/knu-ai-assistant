@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
-from playwright.sync_api import sync_playwright
+import requests
+from bs4 import BeautifulSoup
 
 
 @dataclass(frozen=True)
@@ -27,35 +28,29 @@ class StaticPageCrawler:
         self.BASE_URL = config.base_url
 
     def crawling(self, should_skip: Optional[Callable[[str], bool]] = None) -> List[dict]:
-        if should_skip and should_skip(self.config.page_url):
-            print(f"[{self.SOURCE_CODE}] DB에 이미 적재됨 - 스킵")
-            return []
-
         print(f"\n=== {self.SOURCE_NAME} 수집: {self.config.page_url} ===")
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.on("dialog", lambda dialog: dialog.accept())
-            page.goto(self.config.page_url, wait_until="networkidle")
-            page.wait_for_selector(self.config.wait_selector)
+        response = requests.get(self.config.page_url, timeout=30)
+        response.raise_for_status()
 
-            try:
-                title = page.locator(self.config.title_selector).first.inner_text().strip()
-            except Exception:
-                title = self.SOURCE_NAME
+        soup = BeautifulSoup(response.text, "html.parser")
 
-            try:
-                content = page.locator(self.config.content_selector).first.inner_text().strip()
-            except Exception:
-                content = ""
+        try:
+            title_el = soup.select_one(self.config.title_selector)
+            title = title_el.get_text(" ", strip=True) if title_el else self.SOURCE_NAME
+        except Exception:
+            title = self.SOURCE_NAME
 
-            # static page는 대부분 body 중심 문서
-            body_content = content
-            attachment_names: list[str] = []
-            attachment_contents: list[dict] = []
+        try:
+            content_el = soup.select_one(self.config.content_selector)
+            content = content_el.get_text("\n", strip=True) if content_el else ""
+        except Exception:
+            content = ""
 
-            browser.close()
+        # static page는 대부분 body 중심 문서
+        body_content = content
+        attachment_names: list[str] = []
+        attachment_contents: list[dict] = []
 
         if not content:
             print(f"[{self.SOURCE_CODE}] 본문 추출 실패")
@@ -76,4 +71,5 @@ class StaticPageCrawler:
 
             "url": self.config.page_url,
             "assets": [],
+            "replace_by_source": True,
         }]

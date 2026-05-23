@@ -13,6 +13,7 @@ from db import (
     insert_assets,
     insert_chunks,
     document_exists,
+    delete_documents_by_source,
 )
 from embedding.embed import embed_document_chunks
 
@@ -74,8 +75,16 @@ if __name__ == "__main__":
         for item in mod.crawling(should_skip=document_exists):
             crawled_count += 1
 
+            replace_by_source = bool(item.get("replace_by_source"))
+
+            if replace_by_source:
+                deleted = delete_documents_by_source(source_id)
+                print(
+                    f"   ↳ replace mode: 기존 문서 {deleted}건 삭제 후 최신 문서로 교체"
+                )
+
             # 이중 안전망 — 크롤러가 should_skip을 무시해도 여기서 한 번 더 거름.
-            if document_exists(item["url"]):
+            if (not replace_by_source) and document_exists(item["url"]):
                 skipped_count += 1
                 print(f"   ↳ 이미 적재됨: {item['url']}")
                 continue
