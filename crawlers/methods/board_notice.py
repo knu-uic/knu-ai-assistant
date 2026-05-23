@@ -221,7 +221,7 @@ class BoardNoticeCrawler:
     ) -> Iterator[dict]:
         seen_urls: set[str] = set()
         consecutive_skips = 0
-        max_consecutive_skips = 20
+        max_consecutive_skips = 1
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
