@@ -23,8 +23,7 @@ from config import (
 load_dotenv()
 
 # 임베딩 벡터 차원 수(pgvector schema와 반드시 동일해야 하며, embedding model 변경 시 함께 수정)
-EMBEDDING_DIM = 768
-
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM") or 768)
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
