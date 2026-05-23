@@ -224,3 +224,5 @@ CLAUDE.md
 state.json
 crawl_result
 .hf_cache/
+.idea/
+graphify-out/
