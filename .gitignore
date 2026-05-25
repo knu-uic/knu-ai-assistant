@@ -219,6 +219,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project local/generated files
+AGENTS.md
+data/
+tests/
 CLAUDE.md
 .DS_store
 state.json

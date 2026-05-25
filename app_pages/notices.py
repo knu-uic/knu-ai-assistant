@@ -15,6 +15,12 @@ from ui import (
     row_to_notice_search,
 )
 
+HIDDEN_FROM_DEFAULT_LIST_SOURCE_CODES = {
+    "cse_curriculum",
+    "business_curriculum",
+    "scholarship_info",
+}
+
 user = get_current_user()
 major = user.get("major")
 
@@ -84,6 +90,10 @@ try:
             major=major_filter,
         )
         notices = [row_to_notice_list(r) for r in (raw or [])]
+        notices = [
+            n for n in notices
+            if n.get("source_code") not in HIDDEN_FROM_DEFAULT_LIST_SOURCE_CODES
+        ]
 except Exception as e:
     st.error(f"검색 실패: {e}")
 
