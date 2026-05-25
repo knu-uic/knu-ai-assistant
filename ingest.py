@@ -131,13 +131,37 @@ if __name__ == "__main__":
             )
             insert_assets(doc.category, document_id, assets)
 
+            base_body_content = (
+                item.get("body_content")
+                or doc.content
+                or ""
+            )
+
+            inline_image_texts: list[str] = []
+            for asset in assets:
+                if asset.get("kind") != "inline_image":
+                    continue
+
+                ocr_text = (
+                    asset.get("ocr_text")
+                    or asset.get("text")
+                    or ""
+                ).strip()
+
+                if not ocr_text:
+                    continue
+
+                inline_image_texts.append(
+                    f"[본문 이미지 OCR]\n{ocr_text}"
+                )
+
+            merged_body_content = base_body_content
+            if inline_image_texts:
+                merged_body_content += "\n\n" + "\n\n".join(inline_image_texts)
+
             chunks = embed_document_chunks(
                 title=doc.title,
-                body_content=(
-                    item.get("body_content")
-                    or doc.content
-                    or ""
-                ),
+                body_content=merged_body_content,
                 attachment_contents=(
                     item.get("attachment_contents")
                     or []
