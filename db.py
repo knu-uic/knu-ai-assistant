@@ -6,6 +6,7 @@ from psycopg import sql
 from pgvector.psycopg import register_vector
 from dotenv import load_dotenv
 from model import EMBEDDING_DIM
+from config import DB_HOST
 
 
 
@@ -13,7 +14,7 @@ load_dotenv()
 #DB_URL 결정 로직: 먼저 DATABASE_URL 확인 -> 있으면 그대로 사용 -> 없으면 개별 환경변수 조합
 DB_URL = os.getenv("DATABASE_URL") or (
     f"postgresql://{os.getenv('DB_USER', 'knu-uic')}:"
-    f"{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST', 'localhost')}:"
+    f"{os.getenv('DB_PASSWORD')}@{DB_HOST}:"
     f"{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'knu-uic')}" )
 
 

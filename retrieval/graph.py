@@ -146,7 +146,7 @@ def _retrieve(
 ) -> List[Dict[str, Any]]:
     """LangSmith retriever 카드 시각화용 래퍼."""
     q_vec = embed_query(query)
-    rows = search_chunks(q_vec, major=major, categories=categories, limit=5)
+    rows = search_chunks(q_vec, major=major, categories=categories)
     return [
         {
             "url": r[0], "title": r[1], "snippet": r[2], "score": r[3],

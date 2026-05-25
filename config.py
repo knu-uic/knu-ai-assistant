@@ -14,9 +14,37 @@ import os
 
 
 # -----------------------------
-# env helpers
+# runtime environment
 # -----------------------------
 
+RUNTIME_ENV = (
+    os.getenv("RUNTIME_ENV", "local")
+    .strip()
+    .lower()
+)
+
+LOCAL_LLM_PORT = os.getenv(
+    "LOCAL_LLM_PORT",
+    "1234",
+).strip()
+
+if RUNTIME_ENV == "docker":
+    DB_HOST = "db"
+
+    OPENAI_COMPAT_BASE_URL = (
+        f"http://host.docker.internal:{LOCAL_LLM_PORT}/v1"
+    )
+
+else:
+    DB_HOST = "localhost"
+
+    OPENAI_COMPAT_BASE_URL = (
+        f"http://localhost:{LOCAL_LLM_PORT}/v1"
+    )
+
+# -----------------------------
+# env helpers
+# -----------------------------
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -138,12 +166,11 @@ ENABLE_VERIFIER = _env_bool(
 
 
 # -----------------------------
-# providers / runtime
+# providers
 # -----------------------------
 
 VLM_PROVIDER = os.getenv("VLM_PROVIDER")
 LLM_MODEL = os.getenv("LLM_MODEL")
-LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL")
 
 GOOGLE_API_KEY = (
     os.getenv("GOOGLE_API_KEY")

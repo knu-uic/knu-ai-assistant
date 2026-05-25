@@ -12,7 +12,7 @@ from config import (
     ATTACHMENT_NAME_RESERVE_RATIO,
     VLM_PROVIDER,
     LLM_MODEL,
-    LMSTUDIO_BASE_URL,
+    OPENAI_COMPAT_BASE_URL,
     GOOGLE_API_KEY,
     OPENAI_API_KEY,
     EMBEDDING_PROVIDER,
@@ -23,7 +23,7 @@ from config import (
 load_dotenv()
 
 # 임베딩 벡터 차원 수(pgvector schema와 반드시 동일해야 하며, embedding model 변경 시 함께 수정)
-EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM") or 768)
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM"))
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -97,10 +97,10 @@ def get_llm():
             temperature=0,
         )
 
-    if VLM_PROVIDER == "lmstudio":
+    if VLM_PROVIDER == "local":
         return ChatOpenAI(
             model=LLM_MODEL,
-            base_url=LMSTUDIO_BASE_URL,
+            base_url=OPENAI_COMPAT_BASE_URL,
             api_key="lm-studio",
             temperature=0,
             max_tokens=None,
@@ -123,10 +123,10 @@ def get_embeddings():
             api_key=OPENAI_API_KEY,
         )
 
-    if EMBEDDING_PROVIDER == "lmstudio":
+    if EMBEDDING_PROVIDER == "local":
         return OpenAIEmbeddings(
             model=EMBEDDING_MODEL,
-            base_url=LMSTUDIO_BASE_URL,
+            base_url=OPENAI_COMPAT_BASE_URL,
             api_key="lm-studio",
             check_embedding_ctx_length=False,
         )
