@@ -87,22 +87,22 @@ if credits:
         width: 100%;
         border-collapse: collapse;
         text-align: center;
-        font-size: 11px;
+        font-size: 13px;
         white-space: nowrap;
     }
     .grad-table th {
         background-color: rgba(128, 128, 128, 0.12);
         color: inherit;
         font-weight: 600;
-        padding: 6px 8px;
+        padding: 8px 10px;
         border: 1px solid rgba(128, 128, 128, 0.25);
-        font-size: 11px;
+        font-size: 12.5px;
         vertical-align: middle;
     }
     .grad-table td {
-        padding: 8px 10px;
+        padding: 10px 12px;
         border: 1px solid rgba(128, 128, 128, 0.15);
-        font-size: 11px;
+        font-size: 13px;
     }
     .grad-table tr:hover {
         background-color: rgba(128, 128, 128, 0.04);
@@ -111,8 +111,8 @@ if credits:
         font-weight: bold;
         background-color: rgba(128, 128, 128, 0.06);
         text-align: left !important;
-        padding-left: 12px !important;
-        font-size: 11.5px !important;
+        padding-left: 14px !important;
+        font-size: 13.5px !important;
     }
     .text-center {
         text-align: center;
