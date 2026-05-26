@@ -341,6 +341,87 @@ def _sync_announcements(
     return count
 
 
+def _sync_lecture_modules(
+    request: APIRequestContext,
+    student_id: str,
+    courses: dict[int, str],
+) -> int:
+    if not courses:
+        return 0
+
+    lecture_types = {"ExternalUrl", "ExternalTool", "Page", "File"}
+    count = 0
+    for course_id, course_name in courses.items():
+        try:
+            modules = _get_json_doseq(
+                request,
+                f"/api/v1/courses/{course_id}/modules",
+                {
+                    "include[]": ["items", "content_details"],
+                    "per_page": 100,
+                },
+            )
+        except RuntimeError as exc:
+            print(f"강의 모듈 동기화 건너뜀: course_{course_id} ({exc})")
+            continue
+
+        if not isinstance(modules, list):
+            continue
+
+        for module in modules:
+            module_id = module.get("id")
+            if module_id is None:
+                continue
+
+            items = module.get("items") or []
+            filtered = [item for item in items if item.get("type") in lecture_types]
+            if not filtered:
+                continue
+
+            total = len(filtered)
+            done_count = sum(
+                1
+                for item in filtered
+                if (item.get("completion_requirement") or {}).get("completed")
+            )
+            progress = int(100 * done_count / total)
+            is_done = progress == 100
+
+            due_dates = [
+                _parse_canvas_date((item.get("content_details") or {}).get("due_at"))
+                for item in filtered
+            ]
+            due_dates = [d for d in due_dates if d]
+            due_date = max(due_dates) if due_dates else None
+
+            incomplete_url = next(
+                (
+                    item.get("html_url")
+                    for item in filtered
+                    if not (item.get("completion_requirement") or {}).get("completed")
+                    and item.get("html_url")
+                ),
+                None,
+            )
+            module_url = incomplete_url or f"{DEFAULT_LMS_URL}/courses/{course_id}/modules"
+
+            upsert_lms_task(
+                student_id=student_id,
+                task_type="lecture",
+                title=module.get("name") or "강의 모듈",
+                course_name=course_name,
+                due_date=due_date,
+                progress=progress,
+                url=module_url,
+                is_done=is_done,
+                source="canvas",
+                external_id=f"module:{module_id}",
+                raw=module,
+            )
+            count += 1
+    return count
+
+
 def main() -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(description="Canvas API 기반 LMS 할 일 동기화")
@@ -372,6 +453,7 @@ def main() -> int:
             courses,
             args.announcement_days,
         )
+        lecture_count = _sync_lecture_modules(request, student_id, courses)
         request.dispose()
 
     current_user_path = Path(args.current_user_file)
@@ -392,7 +474,8 @@ def main() -> int:
     print(
         "LMS 동기화 완료: "
         f"{profile.get('name') or student_id} · "
-        f"planner {planner_count}건, todo {todo_count}건, 공지 {announcement_count}건"
+        f"planner {planner_count}건, todo {todo_count}건, 공지 {announcement_count}건, "
+        f"강의 모듈 {lecture_count}건"
     )
     return 0
 
