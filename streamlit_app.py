@@ -47,6 +47,24 @@ def _login_lms_with_credentials(username: str, password: str):
     )
 
 
+def _sync_portal_graduation(username: str, password: str):
+    return subprocess.run(
+        [
+            sys.executable,
+            "knuis_sync.py",
+            "--username",
+            username,
+            "--password-stdin",
+        ],
+        cwd=Path.cwd(),
+        input=password + "\n",
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
 def _sync_lms_at_startup():
     result = subprocess.run(
         [sys.executable, "lms_sync.py"],
@@ -94,6 +112,12 @@ def _render_login_gate():
                     result = _login_lms_with_credentials(username.strip(), password)
 
                 if result.returncode == 0 and LMS_STATE_PATH.exists():
+                    # KNUIS 포털 졸업자가진단 및 학적 정보 연동
+                    with st.spinner("통합정보시스템 학적 정보 및 졸업 학점을 연동하고 있어요."):
+                        portal_result = _sync_portal_graduation(username.strip(), password)
+                    if portal_result.returncode != 0:
+                        st.toast("통합정보시스템 연동 실패", icon="⚠️")
+                    
                     st.success("LMS 로그인이 확인됐어요. 앱을 준비합니다.")
                     st.session_state.lms_startup_synced = False
                     st.rerun()
