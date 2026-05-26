@@ -17,6 +17,7 @@ from playwright.sync_api import APIRequestContext, sync_playwright
 from db import (
     delete_canvas_lecture_tasks,
     ensure_users_schema,
+    set_favorite_courses,
     upsert_lms_course,
     upsert_lms_task,
 )
@@ -222,6 +223,22 @@ def _sync_courses(student_id: str, courses: dict[int, str]) -> int:
     for course_id, course_name in courses.items():
         upsert_lms_course(student_id, course_id, course_name)
     return len(courses)
+
+
+def _sync_favorite_courses(request: APIRequestContext, student_id: str) -> None:
+    """Canvas 즐겨찾기 과목을 동기화하여 users(favorite_courses) 에 갱신."""
+    try:
+        fav_courses = _get_json(request, "/api/v1/users/self/favorites/courses")
+        if isinstance(fav_courses, list):
+            names = []
+            for c in fav_courses:
+                name = c.get("name") or c.get("course_code")
+                if name:
+                    names.append(name.strip())
+            set_favorite_courses(student_id, sorted(names))
+            print(f"[fav sync] 즐겨찾기 과목 {len(names)}개 동기화 완료: {names}")
+    except Exception as exc:
+        print(f"Canvas 즐겨찾기 과목 동기화 실패: {exc}")
 
 
 def _is_done_from_planner(item: dict[str, Any]) -> bool:
@@ -440,6 +457,13 @@ def _sync_lecture_items(
                     if item.get("attendance_status") == "attendance":
                         continue
 
+                    # content_type 이 mp4, movie 가 아닌 것은 스킵 (pdf, file 등 가짜 강의 필터링)
+                    content_data = item.get("content_data") or {}
+                    item_content_data = content_data.get("item_content_data") or {}
+                    file_type = item_content_data.get("content_type")
+                    if file_type not in ("mp4", "movie"):
+                        continue
+
                     item_id = item.get("module_item_id")
                     if item_id is None:
                         continue
@@ -587,6 +611,7 @@ def main() -> int:
         courses = _course_map(request)
         student_id, profile = _sync_user_profile(request, args.student_id, courses)
         course_count = _sync_courses(student_id, courses)
+        _sync_favorite_courses(request, student_id)
         planner_count = _sync_planner_items(request, student_id, courses, args.days)
         todo_count = _sync_todo_items(request, student_id, courses)
         announcement_count = _sync_announcements(
