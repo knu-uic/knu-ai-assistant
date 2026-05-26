@@ -395,7 +395,13 @@ def _sync_lecture_items(
             for item in module.get("items") or []:
                 if item.get("type") != "ExternalTool":
                     continue
-                if (item.get("completion_requirement") or {}).get("completed"):
+                cr = item.get("completion_requirement")
+                # cr 미설정(None/dict 아님) 또는 이미 completed=True 면 skip.
+                # cr 없는 영상은 Canvas로 시청 여부 확인 불가하므로 "남은 수강"에
+                # 표시하지 않음 (가짜 남은 수강 방지).
+                if not isinstance(cr, dict):
+                    continue
+                if cr.get("completed") is True:
                     continue
                 item_id = item.get("id")
                 if item_id is None:
