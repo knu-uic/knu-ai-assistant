@@ -91,11 +91,11 @@ if credits:
         white-space: nowrap;
     }
     .grad-table th {
-        background: linear-gradient(135deg, #4f46e5, #3b82f6);
-        color: white;
+        background-color: rgba(128, 128, 128, 0.12);
+        color: inherit;
         font-weight: 600;
         padding: 6px 8px;
-        border: 1px solid rgba(128, 128, 128, 0.2);
+        border: 1px solid rgba(128, 128, 128, 0.25);
         font-size: 11px;
         vertical-align: middle;
     }
@@ -109,7 +109,7 @@ if credits:
     }
     .row-header {
         font-weight: bold;
-        background-color: rgba(128, 128, 128, 0.08);
+        background-color: rgba(128, 128, 128, 0.06);
         text-align: left !important;
         padding-left: 12px !important;
         font-size: 11.5px !important;
@@ -118,12 +118,11 @@ if credits:
         text-align: center;
     }
     .text-need {
-        color: #ef4444;
+        color: #e11d48;
         font-weight: bold;
     }
     .text-done {
-        color: #10b981;
-        font-weight: bold;
+        color: rgba(128, 128, 128, 0.5);
     }
     </style>
     <div class="grad-container">
