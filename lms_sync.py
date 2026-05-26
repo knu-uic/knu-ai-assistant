@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import requests
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,43 @@ def _request_context(playwright, base_url: str, state_path: Path) -> APIRequestC
     )
 
 
+def _load_state_cookies(state_path: Path, domain: str) -> dict[str, str]:
+    if not state_path.exists():
+        return {}
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    cookies: dict[str, str] = {}
+    for cookie in state.get("cookies", []):
+        cookie_domain = (cookie.get("domain") or "").lstrip(".")
+        if domain in cookie_domain:
+            cookies[cookie["name"]] = cookie.get("value", "")
+    return cookies
+
+
+def _learningx_session(base_url: str, state_path: Path) -> requests.Session | None:
+    cookies = _load_state_cookies(state_path, "knulms.kongju.ac.kr")
+    token = cookies.get("xn_api_token")
+    if not token:
+        return None
+
+    session = requests.Session()
+    session.headers.update(
+        {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "Referer": f"{base_url.rstrip('/')}/learningx/lti/modulebuilder",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/148.0.0.0 Safari/537.36"
+            ),
+        }
+    )
+    for name, value in cookies.items():
+        session.cookies.set(name, value, domain="knulms.kongju.ac.kr")
+    return session
+
+
 def _get_json(
     request: APIRequestContext,
     path: str,
@@ -66,6 +104,32 @@ def _get_json(
         body = response.text()[:500]
         raise RuntimeError(f"Canvas API 요청 실패: GET {path} -> {response.status} {body}")
     return response.json()
+
+
+def _get_learningx_modules(
+    session: requests.Session,
+    base_url: str,
+    course_id: int,
+) -> list[dict[str, Any]]:
+    url = (
+        f"{base_url.rstrip('/')}/learningx/api/v1/courses/"
+        f"{course_id}/modules?include_detail=true"
+    )
+    response = session.get(url, timeout=20)
+    if not response.ok:
+        body = response.text[:500]
+        raise RuntimeError(
+            f"LearningX API 요청 실패: GET {url} -> {response.status_code} {body}"
+        )
+
+    body = response.json()
+    if isinstance(body, list):
+        return body
+    if isinstance(body, dict):
+        for key in ("modules", "data", "items", "result"):
+            if isinstance(body.get(key), list):
+                return body[key]
+    return []
 
 
 def _get_json_doseq(
@@ -361,8 +425,10 @@ def _sync_lecture_items(
     request: APIRequestContext,
     student_id: str,
     courses: dict[int, str],
+    learningx: requests.Session | None,
+    base_url: str,
 ) -> int:
-    """미완료 동영상 강의(ExternalTool item) 만 1행씩 upsert.
+    """LearningX 기준 미시청 동영상 강의만 1행씩 upsert.
 
     sync 시작 시 학생의 canvas lecture task 전부 선제 DELETE → 완료된 영상은
     재삽입되지 않으므로 자연스럽게 사라짐. 이전 PR #25 의 `module:*` 행도
@@ -374,21 +440,103 @@ def _sync_lecture_items(
 
     count = 0
     for course_id, course_name in courses.items():
+        if learningx is not None:
+            try:
+                modules = _get_learningx_modules(learningx, base_url, course_id)
+            except RuntimeError as exc:
+                print(f"LearningX 강의 동기화 건너뜀: course_{course_id} ({exc})")
+                continue
+
+            for module in modules:
+                module_name = module.get("title") or ""
+                for item in module.get("module_items") or []:
+                    if item.get("content_type") != "attendance_item":
+                        continue
+                    if item.get("completed") is True:
+                        continue
+                    if item.get("attendance_status") == "attendance":
+                        continue
+
+                    item_id = item.get("module_item_id")
+                    if item_id is None:
+                        continue
+
+                    item_title = item.get("title") or "동영상 강의"
+                    title = f"{module_name} · {item_title}" if module_name else item_title
+                    url = f"{base_url.rstrip('/')}/courses/{course_id}/modules/items/{item_id}"
+                    due_date = _parse_canvas_date(
+                        item.get("content_data", {}).get("due_at")
+                    )
+
+                    upsert_lms_task(
+                        student_id=student_id,
+                        task_type="lecture",
+                        title=title,
+                        course_name=course_name,
+                        due_date=due_date,
+                        progress=None,
+                        url=url,
+                        is_done=False,
+                        source="canvas",
+                        external_id=f"lecture_item:{course_id}:{item_id}",
+                        raw=item,
+                    )
+                    count += 1
+            continue
+
+        modules = None
         try:
             modules = _get_json_doseq(
                 request,
                 f"/api/v1/courses/{course_id}/modules",
                 {
                     "include[]": ["items", "content_details"],
+                    "student_id": "self",
                     "per_page": 100,
                 },
             )
         except RuntimeError as exc:
-            print(f"강의 동기화 건너뜀: course_{course_id} ({exc})")
-            continue
+            print(f"[lecture probe] {course_name!r} student_id=self 실패 → default로 재시도: {exc}")
+
+        # 2차: 기본 호출(권한 401 등으로 1차 실패시).
+        if modules is None:
+            try:
+                modules = _get_json_doseq(
+                    request,
+                    f"/api/v1/courses/{course_id}/modules",
+                    {
+                        "include[]": ["items", "content_details"],
+                        "per_page": 100,
+                    },
+                )
+            except RuntimeError as exc:
+                print(f"강의 동기화 건너뜀: course_{course_id} ({exc})")
+                continue
 
         if not isinstance(modules, list):
             continue
+
+        # 진단 로그: item type 분포 + ExternalTool 의 completion_requirement 통계.
+        type_count: dict[str, int] = {}
+        ext_total = 0
+        ext_cr_dict = 0
+        ext_cr_completed_true = 0
+        for module in modules:
+            for item in module.get("items") or []:
+                t = item.get("type") or "?"
+                type_count[t] = type_count.get(t, 0) + 1
+                if t == "ExternalTool":
+                    ext_total += 1
+                    cr = item.get("completion_requirement")
+                    if isinstance(cr, dict):
+                        ext_cr_dict += 1
+                        if cr.get("completed") is True:
+                            ext_cr_completed_true += 1
+        print(
+            f"[lecture probe] {course_name!r} types={type_count} "
+            f"ExternalTool={ext_total} cr_present={ext_cr_dict} "
+            f"cr_completed_true={ext_cr_completed_true}"
+        )
 
         for module in modules:
             module_name = module.get("name") or ""
@@ -452,6 +600,7 @@ def main() -> int:
     ensure_users_schema()
     with sync_playwright() as p:
         request = _request_context(p, args.url, state_path)
+        learningx = _learningx_session(args.url, state_path)
         courses = _course_map(request)
         student_id, profile = _sync_user_profile(request, args.student_id, courses)
         course_count = _sync_courses(student_id, courses)
@@ -463,7 +612,13 @@ def main() -> int:
             courses,
             args.announcement_days,
         )
-        lecture_count = _sync_lecture_items(request, student_id, courses)
+        lecture_count = _sync_lecture_items(
+            request,
+            student_id,
+            courses,
+            learningx,
+            args.url,
+        )
         request.dispose()
 
     current_user_path = Path(args.current_user_file)
