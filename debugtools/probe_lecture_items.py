@@ -132,11 +132,14 @@ def probe(
                 print("  modules 응답이 list 가 아님. skip.")
                 continue
 
+            # module-level state 분포 요약 (module.state 가 출석/완료 신호인지 판단용)
+            state_counter: dict[str, int] = {}
             ext_items: list[dict] = []
             for module in picked:
                 module_id = module.get("id")
                 module_name = module.get("name")
                 module_state = module.get("state")
+                state_counter[str(module_state)] = state_counter.get(str(module_state), 0) + 1
                 for item in module.get("items") or []:
                     if item.get("type") != "ExternalTool":
                         continue
@@ -144,8 +147,31 @@ def probe(
                     summary["_module_id"] = module_id
                     summary["_module_name"] = module_name
                     summary["_module_state"] = module_state
+                    # 개별 item 의 더 자세한 응답이 있나 추가 호출 (read-only)
+                    try:
+                        item_full = _get_json_doseq(
+                            request,
+                            f"/api/v1/courses/{course_id}/modules/{module_id}/items/{item.get('id')}",
+                            {"include[]": ["content_details"]},
+                        )
+                    except RuntimeError:
+                        item_full = None
+                    summary["_item_endpoint_extra"] = (
+                        {
+                            k: item_full.get(k)
+                            for k in (
+                                "completion_requirement",
+                                "content_details",
+                                "module_item_completion_status",
+                            )
+                            if isinstance(item_full, dict)
+                        }
+                        if item_full
+                        else None
+                    )
                     ext_items.append(summary)
 
+            print(f"  module state 분포: {state_counter}")
             print(f"  ExternalTool item: {len(ext_items)}개")
             for it in ext_items:
                 cr = it["completion_requirement"]
@@ -185,7 +211,7 @@ def main() -> int:
     parser.add_argument("--url", default=os.getenv("KNU_LMS_URL", DEFAULT_LMS_URL))
     parser.add_argument("--state", default=DEFAULT_STATE_PATH)
     parser.add_argument("--course-id", type=int, default=None, help="특정 course_id 만 조회")
-    parser.add_argument("--max-courses", type=int, default=1, help="course-id 미지정 시 앞에서 N개")
+    parser.add_argument("--max-courses", type=int, default=5, help="course-id 미지정 시 앞에서 N개")
     parser.add_argument(
         "--out",
         default=str(REPO_ROOT / "crawl_result" / "lecture_probe.json"),
