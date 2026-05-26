@@ -1,5 +1,6 @@
 """LMS 페이지. 외부 LMS 실행 + 학생별 LMS 할 일 관리."""
 
+from collections import defaultdict
 from datetime import date
 from pathlib import Path
 import subprocess
@@ -8,7 +9,7 @@ import sys
 import streamlit as st
 import streamlit.components.v1 as components
 
-from db import add_lms_task, delete_lms_task, get_lms_tasks, set_lms_task_done
+from db import delete_lms_task, get_lms_tasks, set_favorite_courses, set_lms_task_done
 from ui import get_current_user
 
 LMS_URL = "https://knulms.kongju.ac.kr"
@@ -114,6 +115,7 @@ def _sync_lms_tasks(student_id: str):
 
 user = get_current_user()
 student_id = user["student_id"]
+favorite_courses = set(user.get("favorite_courses") or [])
 today = date.today()
 
 st.title("LMS")
@@ -133,12 +135,10 @@ _render_metric_cards(tasks)
 
 st.write("")
 
-tab_dashboard, tab_lms = st.tabs(["내 LMS 할 일", "LMS 실행"])
+tab_dashboard, tab_lms = st.tabs(["대시보드", "LMS 실행"])
 
 with tab_dashboard:
-    c1, c_sync, c2 = st.columns([3, 1, 1])
-    with c1:
-        st.subheader("남은 항목")
+    c_sync, c_show_done = st.columns([1, 1])
     with c_sync:
         if st.button("자동 동기화", type="primary", use_container_width=True):
             if not LMS_STATE_PATH.exists():
@@ -152,67 +152,72 @@ with tab_dashboard:
                     st.rerun()
                 else:
                     st.error(result.stderr.strip() or result.stdout.strip() or "LMS 동기화에 실패했어요.")
-    with c2:
-        show_done = st.toggle("완료 표시", value=False)
+    with c_show_done:
+        show_done = st.toggle("완료된 작업 표시", value=False)
 
     if not LMS_STATE_PATH.exists():
         st.caption("LMS 세션이 없습니다. 앱을 새로고침하면 로그인 화면에서 다시 로그인할 수 있어요.")
     else:
         st.caption("LMS 세션이 저장되어 있어요. 이 페이지에 들어오면 세션을 사용해 할 일을 자동 동기화합니다.")
 
-    visible_tasks = [t for t in tasks if show_done or not t["is_done"]]
-    if not visible_tasks:
-        st.info("등록된 LMS 할 일이 없어요.")
+    all_course_names = sorted({t["course_name"] for t in tasks if t.get("course_name")})
+    with st.expander("즐겨찾기 과목 설정", expanded=False):
+        if not all_course_names:
+            st.caption("표시할 과목이 없어요. 먼저 LMS 동기화를 실행하세요.")
+        else:
+            selected = st.multiselect(
+                "남은 과제·수강 섹션에 포함할 과목을 선택하세요.",
+                options=all_course_names,
+                default=[c for c in all_course_names if c in favorite_courses],
+                key="favorite_courses_multiselect",
+            )
+            if set(selected) != favorite_courses:
+                set_favorite_courses(student_id, selected)
+                st.rerun()
+
+    def _visible(ts: list[dict]) -> list[dict]:
+        return [t for t in ts if show_done or not t["is_done"]]
+
+    st.subheader("알림")
+    notice_tasks = _visible([t for t in tasks if t["task_type"] == "notice"])
+    if not notice_tasks:
+        st.info("표시할 알림이 없어요.")
     else:
-        for task in visible_tasks:
+        for task in notice_tasks:
             _render_task_card(task, today, student_id)
 
-    st.write("")
-    with st.expander("LMS 할 일 추가", expanded=not tasks):
-        with st.form("add_lms_task", clear_on_submit=True):
-            task_type_label = st.segmented_control(
-                "종류",
-                [spec["label"] for spec in TASK_TYPES.values()],
-                default=TASK_TYPES["lecture"]["label"],
-            )
-            selected_type = next(
-                key for key, spec in TASK_TYPES.items()
-                if spec["label"] == task_type_label
-            )
+    st.subheader("남은 과제")
+    if not favorite_courses:
+        st.info("즐겨찾기한 과목이 없어요. 위의 '즐겨찾기 과목 설정' 에서 추가하세요.")
+    else:
+        assignment_tasks = _visible([
+            t for t in tasks
+            if t["task_type"] == "assignment" and t.get("course_name") in favorite_courses
+        ])
+        if not assignment_tasks:
+            st.info("표시할 과제가 없어요.")
+        else:
+            for task in assignment_tasks:
+                _render_task_card(task, today, student_id)
 
-            title = st.text_input("제목", placeholder="예: 3주차 온라인 강의")
-            c_course, c_due, c_progress = st.columns([2, 1, 1])
-            course_name = c_course.text_input("과목", placeholder="예: 인공지능개론")
-            due_date = c_due.date_input("기한", value=None)
-            progress = None
-            if selected_type == "lecture":
-                progress = c_progress.number_input(
-                    "진도율",
-                    min_value=0,
-                    max_value=100,
-                    value=0,
-                    step=5,
-                )
-            else:
-                c_progress.write("")
-
-            url = st.text_input("링크", value=LMS_URL)
-            submitted = st.form_submit_button("추가", type="primary")
-            if submitted:
-                if not title.strip():
-                    st.warning("제목을 입력해 주세요.")
-                else:
-                    add_lms_task(
-                        student_id=student_id,
-                        task_type=selected_type,
-                        title=title.strip(),
-                        course_name=course_name.strip() or None,
-                        due_date=due_date,
-                        progress=int(progress) if progress is not None else None,
-                        url=url.strip() or None,
-                    )
-                    st.success("LMS 할 일을 추가했어요.")
-                    st.rerun()
+    st.subheader("남은 수강")
+    if not favorite_courses:
+        st.info("즐겨찾기한 과목이 없어요. 위의 '즐겨찾기 과목 설정' 에서 추가하세요.")
+    else:
+        lecture_tasks = _visible([
+            t for t in tasks
+            if t["task_type"] == "lecture" and t.get("course_name") in favorite_courses
+        ])
+        if not lecture_tasks:
+            st.info("표시할 수강 항목이 없어요.")
+        else:
+            grouped: dict[str, list[dict]] = defaultdict(list)
+            for t in lecture_tasks:
+                grouped[t.get("course_name") or "기타"].append(t)
+            for course_name in sorted(grouped.keys()):
+                with st.expander(course_name, expanded=True):
+                    for task in grouped[course_name]:
+                        _render_task_card(task, today, student_id)
 
 with tab_lms:
     top = st.columns([1, 1, 4])

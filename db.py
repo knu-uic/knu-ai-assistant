@@ -222,6 +222,7 @@ def init_db():
         """)
         # year 컬럼이 없는 기존 dev DB도 흡수.
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS favorite_courses TEXT;")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS lms_tasks (
@@ -837,6 +838,7 @@ def ensure_users_schema():
             );
         """)
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS favorite_courses TEXT;")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS lms_tasks (
                 id BIGSERIAL PRIMARY KEY,
@@ -870,38 +872,59 @@ def ensure_users_schema():
 
 
 def get_user(student_id: str) -> dict | None:
-    """users 테이블에서 student_id 조회. interests는 콤마문자열을 list로 풀어서 돌려준다."""
+    """users 테이블에서 student_id 조회. interests/favorite_courses는 콤마문자열을 list로 풀어서 돌려준다."""
     with psycopg.connect(DB_URL) as conn:
         cur = conn.execute(
-            "SELECT student_id, name, major, year, interests FROM users WHERE student_id = %s;",
+            "SELECT student_id, name, major, year, interests, favorite_courses FROM users WHERE student_id = %s;",
             (student_id,),
         )
         row = cur.fetchone()
     if not row:
         return None
-    sid, name, major, year, interests = row
+    sid, name, major, year, interests, favorite_courses = row
     return {
         "student_id": sid,
         "name": name,
         "major": major,
         "year": year,
         "interests": [s.strip() for s in (interests or "").split(",") if s.strip()],
+        "favorite_courses": [s.strip() for s in (favorite_courses or "").split(",") if s.strip()],
     }
 
 
-def upsert_user(student_id: str, name: str, major: str, year: int | None, interests: list[str]):
-    """profile UPSERT. interests는 콤마 문자열로 저장."""
+def upsert_user(
+    student_id: str,
+    name: str,
+    major: str,
+    year: int | None,
+    interests: list[str],
+    favorite_courses: list[str] | None = None,
+):
+    """profile UPSERT. interests/favorite_courses는 콤마 문자열로 저장."""
     interests_csv = ",".join(interests or [])
+    favorites_csv = ",".join(favorite_courses or [])
     with psycopg.connect(DB_URL) as conn:
         conn.execute("""
-            INSERT INTO users (student_id, name, major, year, interests)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO users (student_id, name, major, year, interests, favorite_courses)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (student_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 major = EXCLUDED.major,
                 year = EXCLUDED.year,
-                interests = EXCLUDED.interests;
-        """, (student_id, name, major, year, interests_csv))
+                interests = EXCLUDED.interests,
+                favorite_courses = EXCLUDED.favorite_courses;
+        """, (student_id, name, major, year, interests_csv, favorites_csv))
+        conn.commit()
+
+
+def set_favorite_courses(student_id: str, courses: list[str]) -> None:
+    """학생의 즐겨찾기 과목 목록만 갱신. user 행이 없으면 무시."""
+    favorites_csv = ",".join(courses or [])
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute(
+            "UPDATE users SET favorite_courses = %s WHERE student_id = %s;",
+            (favorites_csv, student_id),
+        )
         conn.commit()
 
 
@@ -936,29 +959,6 @@ def get_lms_tasks(student_id: str, include_done: bool = False) -> list[dict]:
         }
         for row in rows
     ]
-
-
-def add_lms_task(
-    student_id: str,
-    task_type: str,
-    title: str,
-    course_name: str | None = None,
-    due_date=None,
-    progress: int | None = None,
-    url: str | None = None,
-) -> int:
-    """LMS 할 일 추가. 자동 LMS 연동 전까지 수동 등록용."""
-    with psycopg.connect(DB_URL) as conn:
-        cur = conn.execute("""
-            INSERT INTO lms_tasks
-                (student_id, task_type, title, course_name, due_date, progress, url)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING id;
-        """, (student_id, task_type, title, course_name, due_date, progress, url))
-        row = cur.fetchone()
-        conn.commit()
-    assert row is not None
-    return row[0]
 
 
 def upsert_lms_task(

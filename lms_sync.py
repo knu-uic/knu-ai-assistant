@@ -150,6 +150,7 @@ def _sync_user_profile(
     major = _infer_major(profile, courses) or existing.get("major") or "컴퓨터공학과"
     year = _infer_year(student_id) or existing.get("year") or 1
     interests = existing.get("interests") or []
+    favorite_courses = existing.get("favorite_courses") or []
 
     upsert_user(
         student_id=student_id,
@@ -157,6 +158,7 @@ def _sync_user_profile(
         major=major,
         year=year,
         interests=interests,
+        favorite_courses=favorite_courses,
     )
     return student_id, profile
 
