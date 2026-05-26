@@ -391,6 +391,10 @@ def _sync_lecture_items(
             continue
 
         for module in modules:
+            # KNU LMS는 ExternalTool item에 completion_requirement를 안 박고
+            # module-level state로만 사용자별 완료/출석을 반영한다 (probe 결과).
+            if module.get("state") == "completed":
+                continue
             module_name = module.get("name") or ""
             for item in module.get("items") or []:
                 if item.get("type") != "ExternalTool":
