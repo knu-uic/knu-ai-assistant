@@ -13,7 +13,6 @@ from ui import get_current_user
 
 LMS_URL = "https://knulms.kongju.ac.kr"
 LMS_STATE_PATH = Path(".secrets/lms_storage_state.json")
-LMS_LOGIN_LOG_PATH = Path(".secrets/lms_login.log")
 
 TASK_TYPES = {
     "lecture": {"label": "남은 수강", "icon": "play_circle", "color": "#2563eb"},
@@ -97,26 +96,6 @@ def _render_task_card(task: dict, today: date, student_id: str):
                 st.rerun()
 
 
-def _start_lms_login():
-    LMS_LOGIN_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    log_file = LMS_LOGIN_LOG_PATH.open("a", encoding="utf-8")
-    process = subprocess.Popen(
-        [
-            sys.executable,
-            "lms_login.py",
-            "--auto",
-            "--timeout",
-            "300",
-        ],
-        cwd=Path.cwd(),
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    log_file.close()
-    st.session_state.lms_login_pid = process.pid
-
-
 def _sync_lms_tasks(student_id: str):
     return subprocess.run(
         [
@@ -163,8 +142,7 @@ with tab_dashboard:
     with c_sync:
         if st.button("자동 동기화", type="primary", use_container_width=True):
             if not LMS_STATE_PATH.exists():
-                _start_lms_login()
-                st.info("LMS 로그인 창을 열었어요. 로그인하면 세션이 자동 저장됩니다. 완료 후 이 페이지에서 자동 동기화를 다시 눌러 주세요.")
+                st.warning("LMS 세션이 없습니다. 앱을 새로고침하면 로그인 화면으로 이동합니다.")
             else:
                 with st.spinner("Canvas API로 LMS 할 일을 동기화하는 중이에요."):
                     result = _sync_lms_tasks(student_id)
@@ -178,13 +156,7 @@ with tab_dashboard:
         show_done = st.toggle("완료 표시", value=False)
 
     if not LMS_STATE_PATH.exists():
-        login_cols = st.columns([1, 4])
-        with login_cols[0]:
-            if st.button("LMS 로그인", use_container_width=True):
-                _start_lms_login()
-                st.info("로그인 창을 열었어요. 열린 브라우저에서 LMS 로그인을 완료해 주세요.")
-        with login_cols[1]:
-            st.caption("최초 1회만 앱에서 LMS 로그인 창을 열면 됩니다. 로그인 성공이 확인되면 세션이 자동 저장되고 이후 앱 진입 시 할 일이 동기화돼요.")
+        st.caption("LMS 세션이 없습니다. 앱을 새로고침하면 로그인 화면에서 다시 로그인할 수 있어요.")
     else:
         st.caption("LMS 세션이 저장되어 있어요. 이 페이지에 들어오면 세션을 사용해 할 일을 자동 동기화합니다.")
 

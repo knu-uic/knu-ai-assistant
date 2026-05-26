@@ -15,7 +15,6 @@ from ui import CURRENT_STUDENT_ID_KEY, get_current_user, render_sidebar_user_car
 
 LMS_STATE_PATH = Path(".secrets/lms_storage_state.json")
 LMS_CURRENT_USER_PATH = Path(".secrets/lms_current_user.json")
-LMS_LOGIN_LOG_PATH = Path(".secrets/lms_login.log")
 
 load_dotenv()
 
@@ -28,24 +27,24 @@ if "_schema_ensured" not in st.session_state:
     st.session_state._schema_ensured = True
 
 
-def _start_lms_login():
-    LMS_LOGIN_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    log_file = LMS_LOGIN_LOG_PATH.open("a", encoding="utf-8")
-    process = subprocess.Popen(
+def _login_lms_with_credentials(username: str, password: str):
+    return subprocess.run(
         [
             sys.executable,
             "lms_login.py",
-            "--auto",
+            "--username",
+            username,
+            "--password-stdin",
             "--timeout",
-            "300",
+            "60",
         ],
         cwd=Path.cwd(),
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
+        input=password + "\n",
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
     )
-    log_file.close()
-    st.session_state.lms_login_pid = process.pid
 
 
 def _sync_lms_at_startup():
@@ -81,23 +80,26 @@ def _render_login_gate():
 
     with st.container(border=True):
         st.subheader("LMS 로그인")
-        st.caption("열리는 브라우저에서 직접 로그인하세요. 비밀번호는 앱이 읽거나 저장하지 않습니다.")
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            if st.button("LMS로 로그인", type="primary", use_container_width=True):
-                _start_lms_login()
-                st.session_state.lms_login_started = True
-                st.rerun()
-        with c2:
-            if st.button("로그인 완료 확인", use_container_width=True):
-                st.rerun()
+        st.caption("계정 정보는 로그인 검증에만 사용하고 저장하지 않습니다. 성공하면 LMS 세션 쿠키만 저장합니다.")
+        with st.form("lms_login_form"):
+            username = st.text_input("LMS 아이디")
+            password = st.text_input("LMS 비밀번호", type="password")
+            submitted = st.form_submit_button("로그인", type="primary", use_container_width=True)
 
-        if st.session_state.get("lms_login_started"):
-            if LMS_STATE_PATH.exists():
-                st.success("LMS 로그인이 확인됐어요. 앱을 준비하는 중입니다.")
-                st.rerun()
+        if submitted:
+            if not username.strip() or not password:
+                st.warning("아이디와 비밀번호를 입력해 주세요.")
             else:
-                st.info("로그인 창에서 LMS 로그인을 완료해 주세요. 완료되면 자동으로 세션이 저장됩니다.")
+                with st.spinner("LMS 계정을 확인하는 중이에요."):
+                    result = _login_lms_with_credentials(username.strip(), password)
+
+                if result.returncode == 0 and LMS_STATE_PATH.exists():
+                    st.success("LMS 로그인이 확인됐어요. 앱을 준비합니다.")
+                    st.session_state.lms_startup_synced = False
+                    st.rerun()
+                else:
+                    message = result.stderr.strip() or result.stdout.strip() or "LMS 로그인에 실패했어요."
+                    st.error(message)
 
 
 if not LMS_STATE_PATH.exists():
