@@ -13,7 +13,14 @@ from urllib.parse import urlencode, urljoin
 from dotenv import load_dotenv
 from playwright.sync_api import APIRequestContext, sync_playwright
 
-from db import ensure_users_schema, get_user, upsert_lms_task, upsert_user
+from db import (
+    delete_canvas_lecture_tasks,
+    ensure_users_schema,
+    get_user,
+    upsert_lms_course,
+    upsert_lms_task,
+    upsert_user,
+)
 from ui import DEFAULT_STUDENT_ID, MAJORS
 
 DEFAULT_LMS_URL = "https://knulms.kongju.ac.kr"
@@ -150,6 +157,7 @@ def _sync_user_profile(
     major = _infer_major(profile, courses) or existing.get("major") or "컴퓨터공학과"
     year = _infer_year(student_id) or existing.get("year") or 1
     interests = existing.get("interests") or []
+    favorite_courses = existing.get("favorite_courses") or []
 
     upsert_user(
         student_id=student_id,
@@ -157,8 +165,16 @@ def _sync_user_profile(
         major=major,
         year=year,
         interests=interests,
+        favorite_courses=favorite_courses,
     )
     return student_id, profile
+
+
+def _sync_courses(student_id: str, courses: dict[int, str]) -> int:
+    """`_course_map` 결과를 lms_courses 에 upsert. 학생-과목 매핑을 영구화."""
+    for course_id, course_name in courses.items():
+        upsert_lms_course(student_id, course_id, course_name)
+    return len(courses)
 
 
 def _is_done_from_planner(item: dict[str, Any]) -> bool:
@@ -341,15 +357,21 @@ def _sync_announcements(
     return count
 
 
-def _sync_lecture_modules(
+def _sync_lecture_items(
     request: APIRequestContext,
     student_id: str,
     courses: dict[int, str],
 ) -> int:
+    """미완료 동영상 강의(ExternalTool item) 만 1행씩 upsert.
+
+    sync 시작 시 학생의 canvas lecture task 전부 선제 DELETE → 완료된 영상은
+    재삽입되지 않으므로 자연스럽게 사라짐. 이전 PR #25 의 `module:*` 행도
+    같은 트랜잭션 안에서 정리됨.
+    """
+    delete_canvas_lecture_tasks(student_id)
     if not courses:
         return 0
 
-    lecture_types = {"ExternalUrl", "ExternalTool", "Page", "File"}
     count = 0
     for course_id, course_name in courses.items():
         try:
@@ -362,63 +384,44 @@ def _sync_lecture_modules(
                 },
             )
         except RuntimeError as exc:
-            print(f"강의 모듈 동기화 건너뜀: course_{course_id} ({exc})")
+            print(f"강의 동기화 건너뜀: course_{course_id} ({exc})")
             continue
 
         if not isinstance(modules, list):
             continue
 
         for module in modules:
-            module_id = module.get("id")
-            if module_id is None:
-                continue
+            module_name = module.get("name") or ""
+            for item in module.get("items") or []:
+                if item.get("type") != "ExternalTool":
+                    continue
+                if (item.get("completion_requirement") or {}).get("completed"):
+                    continue
+                item_id = item.get("id")
+                if item_id is None:
+                    continue
 
-            items = module.get("items") or []
-            filtered = [item for item in items if item.get("type") in lecture_types]
-            if not filtered:
-                continue
+                item_title = item.get("title") or item.get("name") or "강의 영상"
+                title = f"{module_name} · {item_title}" if module_name else item_title
+                due_date = _parse_canvas_date(
+                    (item.get("content_details") or {}).get("due_at")
+                )
+                url = item.get("html_url") or f"{DEFAULT_LMS_URL}/courses/{course_id}/modules"
 
-            total = len(filtered)
-            done_count = sum(
-                1
-                for item in filtered
-                if (item.get("completion_requirement") or {}).get("completed")
-            )
-            progress = int(100 * done_count / total)
-            is_done = progress == 100
-
-            due_dates = [
-                _parse_canvas_date((item.get("content_details") or {}).get("due_at"))
-                for item in filtered
-            ]
-            due_dates = [d for d in due_dates if d]
-            due_date = max(due_dates) if due_dates else None
-
-            incomplete_url = next(
-                (
-                    item.get("html_url")
-                    for item in filtered
-                    if not (item.get("completion_requirement") or {}).get("completed")
-                    and item.get("html_url")
-                ),
-                None,
-            )
-            module_url = incomplete_url or f"{DEFAULT_LMS_URL}/courses/{course_id}/modules"
-
-            upsert_lms_task(
-                student_id=student_id,
-                task_type="lecture",
-                title=module.get("name") or "강의 모듈",
-                course_name=course_name,
-                due_date=due_date,
-                progress=progress,
-                url=module_url,
-                is_done=is_done,
-                source="canvas",
-                external_id=f"module:{module_id}",
-                raw=module,
-            )
-            count += 1
+                upsert_lms_task(
+                    student_id=student_id,
+                    task_type="lecture",
+                    title=title,
+                    course_name=course_name,
+                    due_date=due_date,
+                    progress=None,
+                    url=url,
+                    is_done=False,
+                    source="canvas",
+                    external_id=f"lecture_item:{course_id}:{item_id}",
+                    raw=item,
+                )
+                count += 1
     return count
 
 
@@ -445,6 +448,7 @@ def main() -> int:
         request = _request_context(p, args.url, state_path)
         courses = _course_map(request)
         student_id, profile = _sync_user_profile(request, args.student_id, courses)
+        course_count = _sync_courses(student_id, courses)
         planner_count = _sync_planner_items(request, student_id, courses, args.days)
         todo_count = _sync_todo_items(request, student_id, courses)
         announcement_count = _sync_announcements(
@@ -453,7 +457,7 @@ def main() -> int:
             courses,
             args.announcement_days,
         )
-        lecture_count = _sync_lecture_modules(request, student_id, courses)
+        lecture_count = _sync_lecture_items(request, student_id, courses)
         request.dispose()
 
     current_user_path = Path(args.current_user_file)
@@ -474,8 +478,8 @@ def main() -> int:
     print(
         "LMS 동기화 완료: "
         f"{profile.get('name') or student_id} · "
-        f"planner {planner_count}건, todo {todo_count}건, 공지 {announcement_count}건, "
-        f"강의 모듈 {lecture_count}건"
+        f"과목 {course_count}개, planner {planner_count}건, todo {todo_count}건, "
+        f"공지 {announcement_count}건, 남은 강의 {lecture_count}건"
     )
     return 0
 
