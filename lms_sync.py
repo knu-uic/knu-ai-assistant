@@ -17,10 +17,8 @@ from playwright.sync_api import APIRequestContext, sync_playwright
 from db import (
     delete_canvas_lecture_tasks,
     ensure_users_schema,
-    get_user,
     upsert_lms_course,
     upsert_lms_task,
-    upsert_user,
 )
 from ui import DEFAULT_STUDENT_ID, MAJORS
 
@@ -216,21 +214,6 @@ def _sync_user_profile(
         profile = {}
 
     student_id = _extract_student_id(profile, fallback_student_id)
-    existing = get_user(student_id) or get_user(fallback_student_id) or {}
-    name = _extract_name(profile) or existing.get("name") or "이름 미설정"
-    major = _infer_major(profile, courses) or existing.get("major") or "컴퓨터공학과"
-    year = _infer_year(student_id) or existing.get("year") or 1
-    interests = existing.get("interests") or []
-    favorite_courses = existing.get("favorite_courses") or []
-
-    upsert_user(
-        student_id=student_id,
-        name=name,
-        major=major,
-        year=year,
-        interests=interests,
-        favorite_courses=favorite_courses,
-    )
     return student_id, profile
 
 
