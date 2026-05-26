@@ -8,7 +8,13 @@ import sys
 import streamlit as st
 import streamlit.components.v1 as components
 
-from db import add_lms_task, delete_lms_task, get_lms_tasks, set_lms_task_done
+from db import (
+    delete_lms_task,
+    get_lms_courses,
+    get_lms_tasks,
+    set_favorite_courses,
+    set_lms_task_done,
+)
 from ui import get_current_user
 
 LMS_URL = "https://knulms.kongju.ac.kr"
@@ -114,6 +120,7 @@ def _sync_lms_tasks(student_id: str):
 
 user = get_current_user()
 student_id = user["student_id"]
+favorite_courses = set(user.get("favorite_courses") or [])
 today = date.today()
 
 st.title("LMS")
@@ -133,88 +140,91 @@ _render_metric_cards(tasks)
 
 st.write("")
 
-tab_dashboard, tab_lms = st.tabs(["내 LMS 할 일", "LMS 실행"])
-
-with tab_dashboard:
-    c1, c_sync, c2 = st.columns([3, 1, 1])
-    with c1:
-        st.subheader("남은 항목")
-    with c_sync:
-        if st.button("자동 동기화", type="primary", use_container_width=True):
-            if not LMS_STATE_PATH.exists():
-                st.warning("LMS 세션이 없습니다. 앱을 새로고침하면 로그인 화면으로 이동합니다.")
+c_sync, c_show_done = st.columns([1, 1])
+with c_sync:
+    if st.button("자동 동기화", type="primary", use_container_width=True):
+        if not LMS_STATE_PATH.exists():
+            st.warning("LMS 세션이 없습니다. 앱을 새로고침하면 로그인 화면으로 이동합니다.")
+        else:
+            with st.spinner("Canvas API로 LMS 할 일을 동기화하는 중이에요."):
+                result = _sync_lms_tasks(student_id)
+            if result.returncode == 0:
+                st.session_state.lms_synced_this_session = True
+                st.success(result.stdout.strip() or "LMS 동기화가 완료됐어요.")
+                st.rerun()
             else:
-                with st.spinner("Canvas API로 LMS 할 일을 동기화하는 중이에요."):
-                    result = _sync_lms_tasks(student_id)
-                if result.returncode == 0:
-                    st.session_state.lms_synced_this_session = True
-                    st.success(result.stdout.strip() or "LMS 동기화가 완료됐어요.")
-                    st.rerun()
-                else:
-                    st.error(result.stderr.strip() or result.stdout.strip() or "LMS 동기화에 실패했어요.")
-    with c2:
-        show_done = st.toggle("완료 표시", value=False)
+                st.error(result.stderr.strip() or result.stdout.strip() or "LMS 동기화에 실패했어요.")
+with c_show_done:
+    show_done = st.toggle("완료된 작업 표시", value=False)
 
-    if not LMS_STATE_PATH.exists():
-        st.caption("LMS 세션이 없습니다. 앱을 새로고침하면 로그인 화면에서 다시 로그인할 수 있어요.")
-    else:
-        st.caption("LMS 세션이 저장되어 있어요. 이 페이지에 들어오면 세션을 사용해 할 일을 자동 동기화합니다.")
+if not LMS_STATE_PATH.exists():
+    st.caption("LMS 세션이 없습니다. 앱을 새로고침하면 로그인 화면에서 다시 로그인할 수 있어요.")
+else:
+    st.caption("LMS 세션이 저장되어 있어요. 이 페이지에 들어오면 세션을 사용해 할 일을 자동 동기화합니다.")
 
-    visible_tasks = [t for t in tasks if show_done or not t["is_done"]]
-    if not visible_tasks:
-        st.info("등록된 LMS 할 일이 없어요.")
-    else:
-        for task in visible_tasks:
-            _render_task_card(task, today, student_id)
 
-    st.write("")
-    with st.expander("LMS 할 일 추가", expanded=not tasks):
-        with st.form("add_lms_task", clear_on_submit=True):
-            task_type_label = st.segmented_control(
-                "종류",
-                [spec["label"] for spec in TASK_TYPES.values()],
-                default=TASK_TYPES["lecture"]["label"],
-            )
-            selected_type = next(
-                key for key, spec in TASK_TYPES.items()
-                if spec["label"] == task_type_label
-            )
+def _visible(ts: list[dict]) -> list[dict]:
+    return [t for t in ts if show_done or not t["is_done"]]
 
-            title = st.text_input("제목", placeholder="예: 3주차 온라인 강의")
-            c_course, c_due, c_progress = st.columns([2, 1, 1])
-            course_name = c_course.text_input("과목", placeholder="예: 인공지능개론")
-            due_date = c_due.date_input("기한", value=None)
-            progress = None
-            if selected_type == "lecture":
-                progress = c_progress.number_input(
-                    "진도율",
-                    min_value=0,
-                    max_value=100,
-                    value=0,
-                    step=5,
-                )
+
+def _render_favorite_section(task_type: str, empty_msg: str):
+    """즐겨찾기 과목별 closed expander 안에 해당 task_type 카드 표시."""
+    if not favorite_courses:
+        st.info("즐겨찾기한 과목이 없어요. '과목' 탭에서 별표를 눌러 추가하세요.")
+        return
+    type_tasks = _visible([t for t in tasks if t["task_type"] == task_type])
+    for cname in sorted(favorite_courses):
+        course_tasks = [t for t in type_tasks if t.get("course_name") == cname]
+        with st.expander(cname, expanded=False):
+            if not course_tasks:
+                st.caption(empty_msg)
             else:
-                c_progress.write("")
+                for task in course_tasks:
+                    _render_task_card(task, today, student_id)
 
-            url = st.text_input("링크", value=LMS_URL)
-            submitted = st.form_submit_button("추가", type="primary")
-            if submitted:
-                if not title.strip():
-                    st.warning("제목을 입력해 주세요.")
-                else:
-                    add_lms_task(
-                        student_id=student_id,
-                        task_type=selected_type,
-                        title=title.strip(),
-                        course_name=course_name.strip() or None,
-                        due_date=due_date,
-                        progress=int(progress) if progress is not None else None,
-                        url=url.strip() or None,
-                    )
-                    st.success("LMS 할 일을 추가했어요.")
-                    st.rerun()
 
-with tab_lms:
+tab_courses, tab_notices, tab_lectures, tab_assignments, tab_lms_run = st.tabs(
+    ["과목", "알림", "남은 수강", "남은 과제", "LMS 실행"]
+)
+
+with tab_courses:
+    courses = get_lms_courses(student_id)
+    if not courses:
+        st.info("등록된 과목이 없어요. 위 '자동 동기화' 를 실행하세요.")
+    else:
+        for course in courses:
+            cname = course["course_name"]
+            is_fav = cname in favorite_courses
+            with st.container(border=True):
+                left, right = st.columns([6, 1])
+                with left:
+                    st.markdown(f"**{cname}**")
+                with right:
+                    icon = "⭐" if is_fav else "☆"
+                    if st.button(
+                        icon,
+                        key=f"fav_btn_{course['course_id']}",
+                        help="즐겨찾기 토글",
+                        use_container_width=True,
+                    ):
+                        new_favs = (
+                            favorite_courses - {cname}
+                            if is_fav
+                            else favorite_courses | {cname}
+                        )
+                        set_favorite_courses(student_id, sorted(new_favs))
+                        st.rerun()
+
+with tab_notices:
+    _render_favorite_section("notice", "표시할 알림이 없어요.")
+
+with tab_lectures:
+    _render_favorite_section("lecture", "표시할 강의가 없어요.")
+
+with tab_assignments:
+    _render_favorite_section("assignment", "표시할 과제가 없어요.")
+
+with tab_lms_run:
     top = st.columns([1, 1, 4])
     with top[0]:
         st.link_button("새 탭에서 열기", LMS_URL, use_container_width=True)
