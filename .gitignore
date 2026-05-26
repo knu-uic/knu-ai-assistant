@@ -221,6 +221,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Project local/generated files
+.secrets/
 AGENTS.md
 data/
 tests/

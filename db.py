@@ -222,6 +222,36 @@ def init_db():
         """)
         # year 컬럼이 없는 기존 dev DB도 흡수.
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lms_tasks (
+                id BIGSERIAL PRIMARY KEY,
+                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
+                task_type VARCHAR(20) NOT NULL CHECK (task_type IN ('lecture', 'assignment', 'notice')),
+                title VARCHAR(255) NOT NULL,
+                course_name VARCHAR(120),
+                due_date DATE,
+                progress INT CHECK (progress IS NULL OR (progress >= 0 AND progress <= 100)),
+                url VARCHAR(800),
+                is_done BOOLEAN NOT NULL DEFAULT false,
+                source VARCHAR(30) NOT NULL DEFAULT 'manual',
+                external_id VARCHAR(160),
+                synced_at TIMESTAMPTZ,
+                raw JSONB,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                updated_at TIMESTAMPTZ DEFAULT now()
+            );
+        """)
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS source VARCHAR(30) NOT NULL DEFAULT 'manual';")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS external_id VARCHAR(160);")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ;")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS raw JSONB;")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lms_tasks_student_done_due ON lms_tasks(student_id, is_done, due_date);")
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_lms_tasks_external
+            ON lms_tasks(student_id, source, external_id)
+            WHERE external_id IS NOT NULL;
+        """)
         conn.commit()
         print(f"✅ source + {len(SLUGS)}개 category 테이블({', '.join(SLUGS)}) + asset/users 생성 완료")
 
@@ -807,6 +837,35 @@ def ensure_users_schema():
             );
         """)
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lms_tasks (
+                id BIGSERIAL PRIMARY KEY,
+                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
+                task_type VARCHAR(20) NOT NULL CHECK (task_type IN ('lecture', 'assignment', 'notice')),
+                title VARCHAR(255) NOT NULL,
+                course_name VARCHAR(120),
+                due_date DATE,
+                progress INT CHECK (progress IS NULL OR (progress >= 0 AND progress <= 100)),
+                url VARCHAR(800),
+                is_done BOOLEAN NOT NULL DEFAULT false,
+                source VARCHAR(30) NOT NULL DEFAULT 'manual',
+                external_id VARCHAR(160),
+                synced_at TIMESTAMPTZ,
+                raw JSONB,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                updated_at TIMESTAMPTZ DEFAULT now()
+            );
+        """)
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS source VARCHAR(30) NOT NULL DEFAULT 'manual';")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS external_id VARCHAR(160);")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ;")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS raw JSONB;")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lms_tasks_student_done_due ON lms_tasks(student_id, is_done, due_date);")
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_lms_tasks_external
+            ON lms_tasks(student_id, source, external_id)
+            WHERE external_id IS NOT NULL;
+        """)
         conn.commit()
 
 
@@ -843,4 +902,139 @@ def upsert_user(student_id: str, name: str, major: str, year: int | None, intere
                 year = EXCLUDED.year,
                 interests = EXCLUDED.interests;
         """, (student_id, name, major, year, interests_csv))
+        conn.commit()
+
+
+# ── LMS tasks ──────────────────────────────────────────────────
+
+def get_lms_tasks(student_id: str, include_done: bool = False) -> list[dict]:
+    """학생별 LMS 할 일 목록."""
+    done_clause = "" if include_done else "AND is_done = false"
+    query = f"""
+        SELECT id, task_type, title, course_name, due_date, progress, url, is_done
+        FROM lms_tasks
+        WHERE student_id = %s
+          {done_clause}
+        ORDER BY
+          is_done ASC,
+          due_date ASC NULLS LAST,
+          created_at DESC;
+    """
+    with psycopg.connect(DB_URL) as conn:
+        rows = conn.execute(query, (student_id,)).fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "task_type": row[1],
+            "title": row[2],
+            "course_name": row[3],
+            "due_date": row[4],
+            "progress": row[5],
+            "url": row[6],
+            "is_done": row[7],
+        }
+        for row in rows
+    ]
+
+
+def add_lms_task(
+    student_id: str,
+    task_type: str,
+    title: str,
+    course_name: str | None = None,
+    due_date=None,
+    progress: int | None = None,
+    url: str | None = None,
+) -> int:
+    """LMS 할 일 추가. 자동 LMS 연동 전까지 수동 등록용."""
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute("""
+            INSERT INTO lms_tasks
+                (student_id, task_type, title, course_name, due_date, progress, url)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id;
+        """, (student_id, task_type, title, course_name, due_date, progress, url))
+        row = cur.fetchone()
+        conn.commit()
+    assert row is not None
+    return row[0]
+
+
+def upsert_lms_task(
+    student_id: str,
+    task_type: str,
+    title: str,
+    source: str,
+    external_id: str,
+    course_name: str | None = None,
+    due_date=None,
+    progress: int | None = None,
+    url: str | None = None,
+    is_done: bool = False,
+    raw: dict | None = None,
+) -> int:
+    """Canvas API 등 외부 원천에서 받은 LMS 할 일을 멱등하게 반영."""
+    raw_json = json.dumps(raw or {}, ensure_ascii=False)
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute("""
+            INSERT INTO lms_tasks
+                (
+                    student_id, task_type, title, course_name, due_date, progress,
+                    url, is_done, source, external_id, synced_at, raw
+                )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s)
+            ON CONFLICT (student_id, source, external_id)
+            WHERE external_id IS NOT NULL
+            DO UPDATE SET
+                task_type = EXCLUDED.task_type,
+                title = EXCLUDED.title,
+                course_name = EXCLUDED.course_name,
+                due_date = EXCLUDED.due_date,
+                progress = EXCLUDED.progress,
+                url = EXCLUDED.url,
+                is_done = EXCLUDED.is_done,
+                synced_at = now(),
+                raw = EXCLUDED.raw,
+                updated_at = now()
+            RETURNING id;
+        """, (
+            student_id,
+            task_type,
+            title,
+            course_name,
+            due_date,
+            progress,
+            url,
+            is_done,
+            source,
+            external_id,
+            raw_json,
+        ))
+        row = cur.fetchone()
+        conn.commit()
+    assert row is not None
+    return row[0]
+
+
+def set_lms_task_done(task_id: int, student_id: str, is_done: bool) -> None:
+    """소유 학생의 LMS 할 일 완료 상태 변경."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("""
+            UPDATE lms_tasks
+            SET is_done = %s,
+                updated_at = now()
+            WHERE id = %s
+              AND student_id = %s;
+        """, (is_done, task_id, student_id))
+        conn.commit()
+
+
+def delete_lms_task(task_id: int, student_id: str) -> None:
+    """소유 학생의 LMS 할 일 삭제."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute(
+            "DELETE FROM lms_tasks WHERE id = %s AND student_id = %s;",
+            (task_id, student_id),
+        )
         conn.commit()
