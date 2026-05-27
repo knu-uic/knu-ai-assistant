@@ -59,6 +59,7 @@ MAX_INTERESTS = 6
 # 프로토타입은 한 명만 쓴다고 가정. 학번 키만 정의하고 첫 진입 시 시드한다.
 
 DEFAULT_STUDENT_ID = "202112345"
+CURRENT_STUDENT_ID_KEY = "current_student_id"
 _DEFAULT_PROFILE = {
     "student_id": DEFAULT_STUDENT_ID,
     "name": "이지원",
@@ -70,16 +71,22 @@ _DEFAULT_PROFILE = {
 
 def get_current_user() -> dict:
     """현재 사용자 프로필. DB에 없으면 기본값으로 시드한 뒤 반환."""
-    user = get_user(DEFAULT_STUDENT_ID)
+    student_id = st.session_state.get(CURRENT_STUDENT_ID_KEY, DEFAULT_STUDENT_ID)
+    default_profile = {
+        **_DEFAULT_PROFILE,
+        "student_id": student_id,
+    }
+
+    user = get_user(student_id)
     if user is None:
         upsert_user(
-            student_id=_DEFAULT_PROFILE["student_id"],
-            name=_DEFAULT_PROFILE["name"],
-            major=_DEFAULT_PROFILE["major"],
-            year=_DEFAULT_PROFILE["year"],
-            interests=_DEFAULT_PROFILE["interests"],
+            student_id=default_profile["student_id"],
+            name=default_profile["name"],
+            major=default_profile["major"],
+            year=default_profile["year"],
+            interests=default_profile["interests"],
         )
-        user = get_user(DEFAULT_STUDENT_ID)
+        user = get_user(student_id)
     assert user is not None
     return user
 

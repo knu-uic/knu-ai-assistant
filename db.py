@@ -222,6 +222,48 @@ def init_db():
         """)
         # year 컬럼이 없는 기존 dev DB도 흡수.
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS favorite_courses TEXT;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS graduation_credits JSONB;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS timetable JSONB;")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lms_tasks (
+                id BIGSERIAL PRIMARY KEY,
+                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
+                task_type VARCHAR(20) NOT NULL CHECK (task_type IN ('lecture', 'assignment', 'notice')),
+                title VARCHAR(255) NOT NULL,
+                course_name VARCHAR(120),
+                due_date DATE,
+                progress INT CHECK (progress IS NULL OR (progress >= 0 AND progress <= 100)),
+                url VARCHAR(800),
+                is_done BOOLEAN NOT NULL DEFAULT false,
+                source VARCHAR(30) NOT NULL DEFAULT 'manual',
+                external_id VARCHAR(160),
+                synced_at TIMESTAMPTZ,
+                raw JSONB,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                updated_at TIMESTAMPTZ DEFAULT now()
+            );
+        """)
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS source VARCHAR(30) NOT NULL DEFAULT 'manual';")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS external_id VARCHAR(160);")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ;")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS raw JSONB;")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lms_tasks_student_done_due ON lms_tasks(student_id, is_done, due_date);")
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_lms_tasks_external
+            ON lms_tasks(student_id, source, external_id)
+            WHERE external_id IS NOT NULL;
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lms_courses (
+                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
+                course_id BIGINT NOT NULL,
+                course_name VARCHAR(200) NOT NULL,
+                synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (student_id, course_id)
+            );
+        """)
         conn.commit()
         print(f"✅ source + {len(SLUGS)}개 category 테이블({', '.join(SLUGS)}) + asset/users 생성 완료")
 
@@ -807,40 +849,267 @@ def ensure_users_schema():
             );
         """)
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS favorite_courses TEXT;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS graduation_credits JSONB;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS timetable JSONB;")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lms_tasks (
+                id BIGSERIAL PRIMARY KEY,
+                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
+                task_type VARCHAR(20) NOT NULL CHECK (task_type IN ('lecture', 'assignment', 'notice')),
+                title VARCHAR(255) NOT NULL,
+                course_name VARCHAR(120),
+                due_date DATE,
+                progress INT CHECK (progress IS NULL OR (progress >= 0 AND progress <= 100)),
+                url VARCHAR(800),
+                is_done BOOLEAN NOT NULL DEFAULT false,
+                source VARCHAR(30) NOT NULL DEFAULT 'manual',
+                external_id VARCHAR(160),
+                synced_at TIMESTAMPTZ,
+                raw JSONB,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                updated_at TIMESTAMPTZ DEFAULT now()
+            );
+        """)
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS source VARCHAR(30) NOT NULL DEFAULT 'manual';")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS external_id VARCHAR(160);")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ;")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS raw JSONB;")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lms_tasks_student_done_due ON lms_tasks(student_id, is_done, due_date);")
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_lms_tasks_external
+            ON lms_tasks(student_id, source, external_id)
+            WHERE external_id IS NOT NULL;
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lms_courses (
+                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
+                course_id BIGINT NOT NULL,
+                course_name VARCHAR(200) NOT NULL,
+                synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (student_id, course_id)
+            );
+        """)
         conn.commit()
 
 
 def get_user(student_id: str) -> dict | None:
-    """users 테이블에서 student_id 조회. interests는 콤마문자열을 list로 풀어서 돌려준다."""
+    """users 테이블에서 student_id 조회. interests/favorite_courses는 콤마문자열을 list로 풀어서 돌려준다."""
     with psycopg.connect(DB_URL) as conn:
         cur = conn.execute(
-            "SELECT student_id, name, major, year, interests FROM users WHERE student_id = %s;",
+            "SELECT student_id, name, major, year, interests, favorite_courses, graduation_credits, timetable FROM users WHERE student_id = %s;",
             (student_id,),
         )
         row = cur.fetchone()
     if not row:
         return None
-    sid, name, major, year, interests = row
+    sid, name, major, year, interests, favorite_courses, graduation_credits, timetable = row
+    if isinstance(graduation_credits, str):
+        try:
+            graduation_credits = json.loads(graduation_credits)
+        except Exception:
+            graduation_credits = None
+    if isinstance(timetable, str):
+        try:
+            timetable = json.loads(timetable)
+        except Exception:
+            timetable = None
     return {
         "student_id": sid,
         "name": name,
         "major": major,
         "year": year,
         "interests": [s.strip() for s in (interests or "").split(",") if s.strip()],
+        "favorite_courses": [s.strip() for s in (favorite_courses or "").split(",") if s.strip()],
+        "graduation_credits": graduation_credits,
+        "timetable": timetable,
     }
 
 
-def upsert_user(student_id: str, name: str, major: str, year: int | None, interests: list[str]):
-    """profile UPSERT. interests는 콤마 문자열로 저장."""
-    interests_csv = ",".join(interests or [])
+def upsert_user(
+    student_id: str,
+    name: str,
+    major: str,
+    year: int | None,
+    interests: list[str] | None = None,
+    favorite_courses: list[str] | None = None,
+    graduation_credits: dict | None = None,
+    timetable: list | None = None,
+):
+    """profile UPSERT. interests/favorite_courses는 콤마 문자열로 저장."""
+    interests_csv = ",".join(interests) if interests is not None else None
+    favorites_csv = ",".join(favorite_courses) if favorite_courses is not None else None
+    credits_json = json.dumps(graduation_credits, ensure_ascii=False) if graduation_credits is not None else None
+    timetable_json = json.dumps(timetable, ensure_ascii=False) if timetable is not None else None
     with psycopg.connect(DB_URL) as conn:
         conn.execute("""
-            INSERT INTO users (student_id, name, major, year, interests)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO users (student_id, name, major, year, interests, favorite_courses, graduation_credits, timetable)
+            VALUES (%s, %s, %s, %s, COALESCE(%s, ''), COALESCE(%s, ''), %s, %s)
             ON CONFLICT (student_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 major = EXCLUDED.major,
                 year = EXCLUDED.year,
-                interests = EXCLUDED.interests;
-        """, (student_id, name, major, year, interests_csv))
+                interests = CASE WHEN EXCLUDED.interests IS NOT NULL AND EXCLUDED.interests <> '' THEN EXCLUDED.interests ELSE users.interests END,
+                favorite_courses = CASE WHEN EXCLUDED.favorite_courses IS NOT NULL AND EXCLUDED.favorite_courses <> '' THEN EXCLUDED.favorite_courses ELSE users.favorite_courses END,
+                graduation_credits = COALESCE(EXCLUDED.graduation_credits, users.graduation_credits),
+                timetable = COALESCE(EXCLUDED.timetable, users.timetable);
+        """, (student_id, name, major, year, interests_csv, favorites_csv, credits_json, timetable_json))
+        conn.commit()
+
+
+def set_favorite_courses(student_id: str, courses: list[str]) -> None:
+    """학생의 즐겨찾기 과목 목록만 좁게 갱신. user 행이 없으면 동작 없음."""
+    favorites_csv = ",".join(courses or [])
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute(
+            "UPDATE users SET favorite_courses = %s WHERE student_id = %s;",
+            (favorites_csv, student_id),
+        )
+        conn.commit()
+
+
+def upsert_lms_course(student_id: str, course_id: int, course_name: str) -> None:
+    """학생-과목 매핑 upsert. sync 시 _course_map 결과로 호출."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("""
+            INSERT INTO lms_courses (student_id, course_id, course_name, synced_at)
+            VALUES (%s, %s, %s, now())
+            ON CONFLICT (student_id, course_id) DO UPDATE SET
+                course_name = EXCLUDED.course_name,
+                synced_at = now();
+        """, (student_id, course_id, course_name))
+        conn.commit()
+
+
+def get_lms_courses(student_id: str) -> list[dict]:
+    """학생의 LMS 과목 목록. course_name asc."""
+    with psycopg.connect(DB_URL) as conn:
+        rows = conn.execute(
+            "SELECT course_id, course_name FROM lms_courses WHERE student_id = %s ORDER BY course_name ASC;",
+            (student_id,),
+        ).fetchall()
+    return [{"course_id": r[0], "course_name": r[1]} for r in rows]
+
+
+def delete_canvas_lecture_tasks(student_id: str) -> int:
+    """학생의 canvas 출처 lecture task 전체 삭제. sync 시작 시 선제 cleanup 용도."""
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute(
+            "DELETE FROM lms_tasks WHERE student_id = %s AND task_type = 'lecture' AND source = 'canvas';",
+            (student_id,),
+        )
+        deleted = cur.rowcount
+        conn.commit()
+    return deleted
+
+
+# ── LMS tasks ──────────────────────────────────────────────────
+
+def get_lms_tasks(student_id: str, include_done: bool = False) -> list[dict]:
+    """학생별 LMS 할 일 목록."""
+    done_clause = "" if include_done else "AND is_done = false"
+    query = f"""
+        SELECT id, task_type, title, course_name, due_date, progress, url, is_done
+        FROM lms_tasks
+        WHERE student_id = %s
+          {done_clause}
+        ORDER BY
+          is_done ASC,
+          due_date ASC NULLS LAST,
+          created_at DESC;
+    """
+    with psycopg.connect(DB_URL) as conn:
+        rows = conn.execute(query, (student_id,)).fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "task_type": row[1],
+            "title": row[2],
+            "course_name": row[3],
+            "due_date": row[4],
+            "progress": row[5],
+            "url": row[6],
+            "is_done": row[7],
+        }
+        for row in rows
+    ]
+
+
+def upsert_lms_task(
+    student_id: str,
+    task_type: str,
+    title: str,
+    source: str,
+    external_id: str,
+    course_name: str | None = None,
+    due_date=None,
+    progress: int | None = None,
+    url: str | None = None,
+    is_done: bool = False,
+    raw: dict | None = None,
+) -> int:
+    """Canvas API 등 외부 원천에서 받은 LMS 할 일을 멱등하게 반영."""
+    raw_json = json.dumps(raw or {}, ensure_ascii=False)
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute("""
+            INSERT INTO lms_tasks
+                (
+                    student_id, task_type, title, course_name, due_date, progress,
+                    url, is_done, source, external_id, synced_at, raw
+                )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s)
+            ON CONFLICT (student_id, source, external_id)
+            WHERE external_id IS NOT NULL
+            DO UPDATE SET
+                task_type = EXCLUDED.task_type,
+                title = EXCLUDED.title,
+                course_name = EXCLUDED.course_name,
+                due_date = EXCLUDED.due_date,
+                progress = EXCLUDED.progress,
+                url = EXCLUDED.url,
+                is_done = EXCLUDED.is_done,
+                synced_at = now(),
+                raw = EXCLUDED.raw,
+                updated_at = now()
+            RETURNING id;
+        """, (
+            student_id,
+            task_type,
+            title,
+            course_name,
+            due_date,
+            progress,
+            url,
+            is_done,
+            source,
+            external_id,
+            raw_json,
+        ))
+        row = cur.fetchone()
+        conn.commit()
+    assert row is not None
+    return row[0]
+
+
+def set_lms_task_done(task_id: int, student_id: str, is_done: bool) -> None:
+    """소유 학생의 LMS 할 일 완료 상태 변경."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("""
+            UPDATE lms_tasks
+            SET is_done = %s,
+                updated_at = now()
+            WHERE id = %s
+              AND student_id = %s;
+        """, (is_done, task_id, student_id))
+        conn.commit()
+
+
+def delete_lms_task(task_id: int, student_id: str) -> None:
+    """소유 학생의 LMS 할 일 삭제."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute(
+            "DELETE FROM lms_tasks WHERE id = %s AND student_id = %s;",
+            (task_id, student_id),
+        )
         conn.commit()
