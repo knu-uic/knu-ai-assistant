@@ -1,10 +1,11 @@
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_openai import ChatOpenAI
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_openai import OpenAIEmbeddings
-from functools import lru_cache
-from dotenv import load_dotenv
+import base64
 import os
+from functools import lru_cache
+
+from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from config import (
     CONTEXT_WINDOW_CHARS,
     REFINE_FULL_CONTENT_LIMIT,
@@ -79,6 +80,50 @@ def get_attachment_name_reserve() -> int:
             pass
     ratio = ATTACHMENT_NAME_RESERVE_RATIO
     return max(0, int(get_answer_context_char_budget() * ratio))
+
+
+@lru_cache(maxsize=1)
+def _get_reranker():
+    # import을 lazy 하게: 다른 코드 경로(예: 크롤러)는 torch를 안 쓰는데
+    # 모듈 top-level import면 매번 ~수 초 페널티가 붙는다.
+    from sentence_transformers import CrossEncoder
+    return CrossEncoder(
+        RERANKER_MODEL,
+        max_length=RERANKER_MAX_LENGTH,
+    )
+
+
+# ── VLM 이미지 → 텍스트 유틸 ────────────────────────────────────
+# curriculum.py 등 이미지를 VLM에 넘기는 파서들이 공통으로 사용.
+
+
+
+@lru_cache(maxsize=4)
+def _vlm_client(model: str):
+    """모델별 LangChain Chat 클라이언트 캐시. provider 토글 따름."""
+    if VLM_PROVIDER == "openai":
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(model=model, api_key=OPENAI_API_KEY, temperature=0)
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    return ChatGoogleGenerativeAI(model=model, google_api_key=GOOGLE_API_KEY, temperature=0)
+
+
+def _vlm_image_block(data_url: str) -> dict:
+    """provider별 langchain image block 포맷."""
+    if VLM_PROVIDER == "openai":
+        return {"type": "image_url", "image_url": {"url": data_url}}
+    return {"type": "image_url", "image_url": data_url}
+
+
+def image_to_text(image_bytes: bytes, mime: str, prompt: str, model: str = LLM_MODEL) -> str:
+    """이미지 bytes를 VLM에 던져 텍스트로 받는다."""
+    data_url = f"data:{mime};base64,{base64.b64encode(image_bytes).decode()}"
+    msg = HumanMessage(content=[
+        {"type": "text", "text": prompt},
+        _vlm_image_block(data_url),
+    ])
+    response = _vlm_client(model).invoke([msg])
+    return response.content if isinstance(response.content, str) else str(response.content)
 
 
 @lru_cache(maxsize=1)

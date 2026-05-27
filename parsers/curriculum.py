@@ -14,8 +14,7 @@ import datetime
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from config import LLM_MODEL
-from parsers._vlm import image_to_text
+from model import LLM_MODEL, image_to_text
 
 logger = logging.getLogger(__name__)
 
