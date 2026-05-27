@@ -34,8 +34,8 @@ def wait_and_click_in_any_frame(page, selector, timeout_sec=15) -> bool:
         time.sleep(0.5)
     return False
 
-def parse_and_save_data(student_id: str, data_frame) -> tuple[str, str, int, dict]:
-    """졸업사전예고 프레임에서 학적 마스터 정보와 취득학점 상세 정보를 파싱 및 저장합니다."""
+def parse_graduation_data(data_frame) -> tuple[str, str, int, dict]:
+    """졸업사전예고 프레임에서 학적 마스터 정보와 취득학점 상세 정보를 파싱하여 반환합니다."""
     tables = data_frame.query_selector_all("table")
     
     # 1. 학적 기본정보 표 찾기 (소속학과와 적용학과가 들어있는 표)
@@ -59,7 +59,7 @@ def parse_and_save_data(student_id: str, data_frame) -> tuple[str, str, int, dic
                     if (input) {
                         return input.value.trim();
                     }
-                    return cell.innerText.trim().replace(/\\xa0/g, ' ').replace(/\\n/g, ' ');
+                    return cell.innerText.trim().replace(/\xa0/g, ' ').replace(/\n/g, ' ');
                 });
             });
         }
@@ -161,16 +161,81 @@ def parse_and_save_data(student_id: str, data_frame) -> tuple[str, str, int, dic
         }
     }
     
-    # 3. DB 반영
-    upsert_user(
-        student_id=student_id,
-        name=student_name,
-        major=student_major,
-        year=student_year,
-        graduation_credits=grad_json
-    )
-    
     return student_name, student_major, student_year, grad_json
+
+def click_menu_by_value(page, menu_value, timeout_sec=10) -> bool:
+    """모든 프레임을 돌며 value 속성에 menu_value가 포함된 요소를 찾아 클릭합니다."""
+    start_time = time.time()
+    selector = f'input[value*="{menu_value}"]'
+    while time.time() - start_time < timeout_sec:
+        for frame in page.frames:
+            try:
+                locator = frame.locator(selector)
+                if locator.count() > 0 and locator.first.is_visible():
+                    locator.first.scroll_into_view_if_needed()
+                    locator.first.click()
+                    return True
+            except Exception:
+                continue
+        time.sleep(0.5)
+    
+    # 2차 시도: 일반 text 매칭 검색 및 클릭
+    start_time = time.time()
+    while time.time() - start_time < 3:
+        for frame in page.frames:
+            try:
+                for element in frame.query_selector_all("input, button, a, td, div"):
+                    val = element.get_attribute("value") or ""
+                    text = element.inner_text() or ""
+                    if menu_value in val or menu_value in text:
+                        if element.is_visible():
+                            element.scroll_into_view_if_needed()
+                            element.click()
+                            return True
+            except Exception:
+                continue
+        time.sleep(0.5)
+    return False
+
+def parse_timetable_data(context) -> list[dict] | None:
+    """모든 페이지와 프레임을 탐색하여 시간표 데이터를 리스트 구조로 반환합니다."""
+    saved_data = []
+    found_timetable = False
+
+    for page in context.pages:
+        for frame in page.frames:
+            try:
+                tables = frame.query_selector_all("table")
+                for table in tables:
+                    text = table.inner_text()
+                    # 시간표 데이터 식별 키워드
+                    if any(kw in text for kw in ["교시", "요일", "교과목", "시간표", "월요일"]):
+                        rows = table.evaluate("""
+                            table => {
+                                const trs = Array.from(table.querySelectorAll('tr'));
+                                return trs.map(tr => {
+                                    const cells = Array.from(tr.querySelectorAll('td, th'));
+                                    return cells.map(cell => cell.innerText.trim().replace(/\\s+/g, ' '));
+                                });
+                            }
+                        """)
+
+                        table_data = []
+                        for row in rows:
+                            cleaned_cells = [cell for cell in row if cell != ""]
+                            if cleaned_cells:
+                                table_data.append(row)
+
+                        saved_data.append({
+                            "frame_url": frame.url,
+                            "frame_name": frame.name or "",
+                            "rows": table_data
+                        })
+                        found_timetable = True
+            except Exception:
+                continue
+
+    return saved_data if found_timetable else None
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="KNUIS 포털 졸업자가진단 연동")
@@ -262,8 +327,58 @@ def main() -> int:
             if not data_frame:
                 raise RuntimeError("졸업 상세 데이터 프레임(WHHJUV)을 식별하지 못했습니다.")
                 
-            name, major, year, _ = parse_and_save_data(args.username, data_frame)
-            print(f"포털 데이터 연동 성공: {name} ({major}, {year}학년)")
+            name, major, year, grad_json = parse_graduation_data(data_frame)
+            print(f"학적/졸업 정보 파싱 완료: {name} ({major}, {year}학년)")
+
+            # 6. 시간표 페이지로 이동 및 파싱
+            timetable_json = None
+            try:
+                print("시간표 조회를 시작합니다...")
+                # 대메뉴 '수업·수강' 혹은 '수업' 클릭
+                clicked_parent = click_menu_by_value(knuis_page, "수업·수강")
+                if not clicked_parent:
+                    clicked_parent = click_menu_by_value(knuis_page, "수업")
+                
+                if clicked_parent:
+                    knuis_page.wait_for_timeout(1500)
+                    # 서브메뉴 '수강' 클릭
+                    clicked_sub = click_menu_by_value(knuis_page, "수강")
+                    if clicked_sub:
+                        knuis_page.wait_for_timeout(1500)
+                        # 상세메뉴 '시간표조회' 클릭
+                        clicked_menu = click_menu_by_value(knuis_page, "시간표조회")
+                        if not clicked_menu:
+                            clicked_menu = click_menu_by_value(knuis_page, "시간표 조회")
+                            
+                        if clicked_menu:
+                            knuis_page.wait_for_timeout(3000)
+                            # 조회 버튼 클릭 (WorkFrame 내의 조회 버튼)
+                            clicked_search = click_menu_by_value(knuis_page, "조회")
+                            if clicked_search:
+                                knuis_page.wait_for_timeout(3000)
+                                # 시간표 데이터 파싱
+                                timetable_json = parse_timetable_data(context)
+                            else:
+                                print("시간표 조회 버튼을 클릭하지 못했습니다.", file=sys.stderr)
+                        else:
+                            print("시간표조회 메뉴를 클릭하지 못했습니다.", file=sys.stderr)
+                    else:
+                        print("수강 서브메뉴를 클릭하지 못했습니다.", file=sys.stderr)
+                else:
+                    print("수업·수강 부모 메뉴를 찾지 못했습니다.", file=sys.stderr)
+            except Exception as te:
+                print(f"시간표 연동 중 오류 발생: {te}", file=sys.stderr)
+
+            # 7. DB 일괄 저장
+            upsert_user(
+                student_id=args.username,
+                name=name,
+                major=major,
+                year=year,
+                graduation_credits=grad_json,
+                timetable=timetable_json
+            )
+            print(f"포털 데이터 연동 성공 (시간표 연동: {'성공' if timetable_json else '실패'})")
             browser.close()
             return 0
             
