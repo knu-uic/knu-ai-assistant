@@ -224,6 +224,7 @@ def init_db():
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS favorite_courses TEXT;")
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS graduation_credits JSONB;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS timetable JSONB;")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS lms_tasks (
@@ -850,6 +851,7 @@ def ensure_users_schema():
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS favorite_courses TEXT;")
         conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS graduation_credits JSONB;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS timetable JSONB;")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS lms_tasks (
                 id BIGSERIAL PRIMARY KEY,
@@ -895,18 +897,23 @@ def get_user(student_id: str) -> dict | None:
     """users 테이블에서 student_id 조회. interests/favorite_courses는 콤마문자열을 list로 풀어서 돌려준다."""
     with psycopg.connect(DB_URL) as conn:
         cur = conn.execute(
-            "SELECT student_id, name, major, year, interests, favorite_courses, graduation_credits FROM users WHERE student_id = %s;",
+            "SELECT student_id, name, major, year, interests, favorite_courses, graduation_credits, timetable FROM users WHERE student_id = %s;",
             (student_id,),
         )
         row = cur.fetchone()
     if not row:
         return None
-    sid, name, major, year, interests, favorite_courses, graduation_credits = row
+    sid, name, major, year, interests, favorite_courses, graduation_credits, timetable = row
     if isinstance(graduation_credits, str):
         try:
             graduation_credits = json.loads(graduation_credits)
         except Exception:
             graduation_credits = None
+    if isinstance(timetable, str):
+        try:
+            timetable = json.loads(timetable)
+        except Exception:
+            timetable = None
     return {
         "student_id": sid,
         "name": name,
@@ -915,6 +922,7 @@ def get_user(student_id: str) -> dict | None:
         "interests": [s.strip() for s in (interests or "").split(",") if s.strip()],
         "favorite_courses": [s.strip() for s in (favorite_courses or "").split(",") if s.strip()],
         "graduation_credits": graduation_credits,
+        "timetable": timetable,
     }
 
 
@@ -926,23 +934,26 @@ def upsert_user(
     interests: list[str] | None = None,
     favorite_courses: list[str] | None = None,
     graduation_credits: dict | None = None,
+    timetable: list | None = None,
 ):
     """profile UPSERT. interests/favorite_courses는 콤마 문자열로 저장."""
     interests_csv = ",".join(interests) if interests is not None else None
     favorites_csv = ",".join(favorite_courses) if favorite_courses is not None else None
     credits_json = json.dumps(graduation_credits, ensure_ascii=False) if graduation_credits is not None else None
+    timetable_json = json.dumps(timetable, ensure_ascii=False) if timetable is not None else None
     with psycopg.connect(DB_URL) as conn:
         conn.execute("""
-            INSERT INTO users (student_id, name, major, year, interests, favorite_courses, graduation_credits)
-            VALUES (%s, %s, %s, %s, COALESCE(%s, ''), COALESCE(%s, ''), %s)
+            INSERT INTO users (student_id, name, major, year, interests, favorite_courses, graduation_credits, timetable)
+            VALUES (%s, %s, %s, %s, COALESCE(%s, ''), COALESCE(%s, ''), %s, %s)
             ON CONFLICT (student_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 major = EXCLUDED.major,
                 year = EXCLUDED.year,
                 interests = CASE WHEN EXCLUDED.interests IS NOT NULL AND EXCLUDED.interests <> '' THEN EXCLUDED.interests ELSE users.interests END,
                 favorite_courses = CASE WHEN EXCLUDED.favorite_courses IS NOT NULL AND EXCLUDED.favorite_courses <> '' THEN EXCLUDED.favorite_courses ELSE users.favorite_courses END,
-                graduation_credits = COALESCE(EXCLUDED.graduation_credits, users.graduation_credits);
-        """, (student_id, name, major, year, interests_csv, favorites_csv, credits_json))
+                graduation_credits = COALESCE(EXCLUDED.graduation_credits, users.graduation_credits),
+                timetable = COALESCE(EXCLUDED.timetable, users.timetable);
+        """, (student_id, name, major, year, interests_csv, favorites_csv, credits_json, timetable_json))
         conn.commit()
 
 

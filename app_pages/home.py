@@ -196,3 +196,167 @@ if not upcoming:
 else:
     for n in upcoming:
         _render_deadline_row(n, today)
+
+st.write("")
+
+# ── 내 시간표 ──────────────────────────────────────────────────
+st.subheader("📅 내 시간표")
+timetable_list = user.get("timetable") or []
+timetable_rows = None
+
+# 요일/교시 정보가 들어있는 테이블 식별
+for item in timetable_list:
+    rows = item.get("rows") or []
+    if rows and len(rows) > 1 and any("요일" in cell or "교시" in cell for cell in rows[0]):
+        timetable_rows = rows
+        break
+        
+if timetable_rows:
+    try:
+        import re
+        header = timetable_rows[0]
+        data = timetable_rows[1:]
+        
+        # 행별 열 개수 정합성 맞추기 및 간소화
+        clean_data = []
+        for r in data:
+            if len(r) < len(header):
+                r = r + [""] * (len(header) - len(r))
+            elif len(r) > len(header):
+                r = r[:len(header)]
+            
+            # 교시 이름 간단하게 정리 ("1교시 주간:(09:00~09:50)" -> "1교시")
+            first_cell = r[0]
+            if "교시" in first_cell:
+                first_cell = first_cell.split(" ")[0]
+            clean_row = [first_cell] + r[1:]
+            clean_data.append(clean_row)
+        
+        # 수업이 하나도 없는 빈 교시 행은 제외하여 컴팩트하게 노출
+        non_empty_rows = []
+        for r in clean_data:
+            has_class = any(r[i].strip() != "" for i in range(1, len(r)))
+            if has_class:
+                non_empty_rows.append(r)
+                
+        if non_empty_rows:
+            # 토요일 컬럼에 수업이 전혀 없으면 토요일 컬럼 제외
+            has_saturday_class = any(len(r) > 6 and r[6].strip() != "" for r in non_empty_rows)
+            display_headers = list(header)
+            if display_headers:
+                display_headers[0] = "교시"
+            if not has_saturday_class and "토요일" in display_headers:
+                display_headers.remove("토요일")
+                
+            display_col_count = len(display_headers)
+            
+            def format_class_cell(cell_text: str) -> str:
+                cell_text = cell_text.strip()
+                if not cell_text:
+                    return '<span class="empty-cell">-</span>'
+                
+                # 정규식 매칭: 과목명(분반 교수명) 강의실
+                match = re.match(r"(.+)\((\d+)\s+([^)]+)\)\s*(.*)", cell_text)
+                if match:
+                    subject = match.group(1).strip()
+                    div = match.group(2).strip()
+                    prof = match.group(3).strip()
+                    room = match.group(4).strip()
+                    
+                    room_html = f'<div style="font-size:11px; font-weight:600; margin-top:3px; color:#4338ca;">📍 {room}</div>' if room else ""
+                    return (
+                        f'<div class="class-cell">'
+                        f'<div style="font-weight:600; font-size:12.5px; line-height:1.2;">{subject}</div>'
+                        f'<div style="font-size:11px; opacity:0.75; margin-top:2px;">{prof} 교수 ({div}분반)</div>'
+                        f'{room_html}'
+                        f'</div>'
+                    )
+                return f'<div class="class-cell">{cell_text}</div>'
+
+            html_lines = []
+            html_lines.append("""
+            <style>
+            .timetable-container {
+                margin-top: 10px;
+                margin-bottom: 20px;
+                border: 1px solid rgba(128, 128, 128, 0.15);
+                border-radius: 8px;
+                overflow-x: auto;
+                background-color: transparent;
+            }
+            .timetable-table {
+                width: 100%;
+                border-collapse: collapse;
+                text-align: center;
+                font-size: 13px;
+            }
+            .timetable-table th {
+                background-color: rgba(128, 128, 128, 0.12);
+                color: inherit;
+                font-weight: 600;
+                padding: 10px 12px;
+                border: 1px solid rgba(128, 128, 128, 0.25);
+                font-size: 12.5px;
+                vertical-align: middle;
+                white-space: nowrap;
+            }
+            .timetable-table td {
+                padding: 10px 12px;
+                border: 1px solid rgba(128, 128, 128, 0.15);
+                font-size: 13px;
+                vertical-align: middle;
+                white-space: normal;
+            }
+            .timetable-table tr:hover {
+                background-color: rgba(128, 128, 128, 0.04);
+            }
+            .time-col {
+                font-weight: bold;
+                background-color: rgba(128, 128, 128, 0.06);
+                text-align: center;
+                font-size: 13px;
+                width: 10%;
+                white-space: nowrap;
+            }
+            .class-cell {
+                background-color: rgba(99, 102, 241, 0.08);
+                color: #3730a3;
+                border: 1px solid rgba(99, 102, 241, 0.2);
+                border-radius: 6px;
+                padding: 8px 10px;
+                text-align: center;
+                white-space: normal;
+                word-break: keep-all;
+                max-width: 130px;
+                margin: 0 auto;
+            }
+            .empty-cell {
+                color: rgba(128, 128, 128, 0.35);
+            }
+            </style>
+            <div class="timetable-container">
+            <table class="timetable-table">
+                <thead>
+                    <tr>
+            """)
+            
+            for h in display_headers:
+                html_lines.append(f"<th>{h}</th>")
+            html_lines.append("</tr></thead><tbody>")
+            
+            for r in non_empty_rows:
+                html_lines.append("<tr>")
+                html_lines.append(f"<td class='time-col'>{r[0]}</td>")
+                for i in range(1, display_col_count):
+                    cell_val = r[i] if i < len(r) else ""
+                    html_lines.append(f"<td>{format_class_cell(cell_val)}</td>")
+                html_lines.append("</tr>")
+                
+            html_lines.append("</tbody></table></div>")
+            st.markdown("".join(html_lines), unsafe_allow_html=True)
+        else:
+            st.info("이번 학기 시간표에 등록된 수업이 없습니다.")
+    except Exception as ex:
+        st.error(f"시간표를 표시하는 중 오류가 발생했습니다: {ex}")
+else:
+    st.info("통합정보시스템(포털) 시간표 정보가 연동되지 않았습니다. 로그아웃 후 다시 로그인하여 연동해 주세요.")
