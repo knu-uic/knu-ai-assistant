@@ -162,6 +162,8 @@ except Exception as e:
     raw = []
 
 candidates = [row_to_notice_list(r) for r in (raw or [])]
+_HIDDEN_SOURCE_CODES = {"cse_curriculum", "business_curriculum", "scholarship_info"}
+candidates = [n for n in candidates if n.get("source_code") not in _HIDDEN_SOURCE_CODES]
 candidates = [n for n in candidates if not is_expired(n, today)]
 
 scored = []

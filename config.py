@@ -146,6 +146,16 @@ ATTACHMENT_REFINE_FALLBACK_CHARS = 10000
 
 
 # -----------------------------
+# crawling
+# -----------------------------
+
+MAX_CRAWL_WORKERS = _env_int(
+    "MAX_CRAWL_WORKERS",
+    4,
+)
+
+
+# -----------------------------
 # answer / verifier
 # -----------------------------
 

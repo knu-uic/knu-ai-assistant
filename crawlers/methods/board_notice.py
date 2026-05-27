@@ -1,4 +1,6 @@
 import hashlib
+import ssl
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
@@ -8,7 +10,9 @@ import requests
 from bs4 import BeautifulSoup
 
 from playwright.sync_api import sync_playwright
+from urllib3.util import create_urllib3_context
 
+from config import MAX_CRAWL_WORKERS
 from extractors.attachments import (
     attachment_to_text,
     hwpx_via_preview,
@@ -40,6 +44,21 @@ class BoardNoticeConfig:
     wait_until: str = "networkidle"
 
 
+class CustomSSLContextAdapter(requests.adapters.HTTPAdapter):
+    """구버전 TLS/SSL(SECLEVEL=1)을 허용하도록 urllib3의 SSLContext를 커스텀하는 어댑터."""
+    def init_poolmanager(self, *args, **kwargs):
+        context = create_urllib3_context()
+        context.set_ciphers("DEFAULT@SECLEVEL=1")
+        kwargs['ssl_context'] = context
+        return super().init_poolmanager(*args, **kwargs)
+
+    def proxy_manager_for(self, *args, **kwargs):
+        context = create_urllib3_context()
+        context.set_ciphers("DEFAULT@SECLEVEL=1")
+        kwargs['ssl_context'] = context
+        return super().proxy_manager_for(*args, **kwargs)
+
+
 class BoardNoticeCrawler:
     KIND = "notice"
 
@@ -51,6 +70,7 @@ class BoardNoticeCrawler:
         self.BASE_URL = config.base_url
 
         self.session = requests.Session()
+        self.session.mount("https://", CustomSSLContextAdapter())
         self.session.headers.update({
             "User-Agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -223,73 +243,96 @@ class BoardNoticeCrawler:
         consecutive_skips = 0
         max_consecutive_skips = 1
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context()
-            detail_page = context.new_page()
+        for page_num in range(1, self.config.pages + 1):
+            post_records = self._collect_post_records(None, page_num)
 
-            try:
-                for page_num in range(1, self.config.pages + 1):
-                    post_records = self._collect_post_records(None, page_num)
+            if self.config.dedupe_urls:
+                new_records = [
+                    r for r in post_records
+                    if r["url"] not in seen_urls
+                ]
+                seen_urls.update(r["url"] for r in new_records)
+            else:
+                new_records = post_records
 
-                    if self.config.dedupe_urls:
-                        new_records = [
-                            r for r in post_records
-                            if r["url"] not in seen_urls
-                        ]
-                        seen_urls.update(r["url"] for r in new_records)
+            print(
+                f"\n=== {page_num}페이지: 게시글 {len(post_records)}건, 처리 대상 {len(new_records)}건 ==="
+            )
+
+            if should_skip:
+                filtered_records = []
+                skipped_in_page = 0
+
+                for r in new_records:
+                    if should_skip(r["url"]):
+                        skipped_in_page += 1
+                        consecutive_skips += 1
                     else:
-                        new_records = post_records
+                        consecutive_skips = 0
+                        filtered_records.append(r)
 
+                new_records = filtered_records
+
+                print(
+                    f"     ↳ DB 중복 제외: {skipped_in_page}건 스킵, {len(new_records)}건 처리"
+                )
+
+                if consecutive_skips >= max_consecutive_skips:
                     print(
-                        f"\n=== {page_num}페이지: 게시글 {len(post_records)}건, 처리 대상 {len(new_records)}건 ==="
+                        f"     ↳ 연속 중복 {consecutive_skips}건 발견 — 크롤링 조기 종료"
                     )
+                    return
 
-                    if should_skip:
-                        filtered_records = []
-                        skipped_in_page = 0
+            if not new_records:
+                continue
 
-                        for r in new_records:
-                            if should_skip(r["url"]):
-                                skipped_in_page += 1
-                                consecutive_skips += 1
-                            else:
-                                consecutive_skips = 0
-                                filtered_records.append(r)
+            with ThreadPoolExecutor(max_workers=MAX_CRAWL_WORKERS) as executor:
+                futures = {
+                    executor.submit(
+                        self._crawl_post_parallel,
+                        record["url"],
+                        idx,
+                        len(new_records),
+                        is_pinned=record.get("is_pinned", False),
+                    ): record["url"]
+                    for idx, record in enumerate(new_records, 1)
+                }
 
-                        new_records = filtered_records
+                for future in as_completed(futures):
+                    url = futures[future]
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            yield result
+                    except Exception as e:
+                        print(f"  ❌ [{url}] 스레드 처리 중 잡히지 않은 예외 발생: {type(e).__name__}: {e}")
 
-                        print(
-                            f"     ↳ DB 중복 제외: {skipped_in_page}건 스킵, {len(new_records)}건 처리"
-                        )
+    def _crawl_post_parallel(self, post_url: str, idx: int, total: int, is_pinned: bool = False) -> dict | None:
+        """스레드별로 독립된 Playwright 인스턴스를 실행하여 상세 게시글을 안전하게 크롤링합니다.
+        예외가 발생할 경우 이를 격리(catch)하여 로그를 남기고 None을 리턴하여 다른 스레드에 영향이 없도록 합니다.
+        """
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context()
+                detail_page = context.new_page()
+                try:
+                    result = self._crawl_detail_internal(
+                        context,
+                        detail_page,
+                        post_url,
+                        idx,
+                        total,
+                        is_pinned=is_pinned,
+                    )
+                    return result
+                finally:
+                    browser.close()
+        except Exception as e:
+            print(f"  ⚠️ [{idx}/{total}] {post_url} 병렬 수집 중 예외 발생 (스킵함): {type(e).__name__}: {e}")
+            return None
 
-                        if consecutive_skips >= max_consecutive_skips:
-                            print(
-                                f"     ↳ 연속 중복 {consecutive_skips}건 발견 — 크롤링 조기 종료"
-                            )
-                            return
-
-                    for idx, record in enumerate(new_records, 1):
-                        # playwright page 장시간 재사용 시 메모리 누수 방지
-                        if idx % 50 == 0:
-                            try:
-                                detail_page.close()
-                            except Exception:
-                                pass
-                            detail_page = context.new_page()
-
-                        yield self._crawl_detail(
-                            context,
-                            detail_page,
-                            record["url"],
-                            idx,
-                            len(new_records),
-                            is_pinned=record.get("is_pinned", False),
-                        )
-            finally:
-                browser.close()
-
-    def _crawl_detail(self, context, detail_page, post_url: str, idx: int, total: int, is_pinned: bool = False) -> dict:
+    def _crawl_detail_internal(self, context, detail_page, post_url: str, idx: int, total: int, is_pinned: bool = False) -> dict:
         print(f"[{idx}/{total}] {post_url} 접속 중...")
         html = self._fetch_html_text(post_url)
         soup = BeautifulSoup(html, "html.parser")
