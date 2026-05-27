@@ -18,12 +18,7 @@ langchain-postgres
 langgraph
 langsmith
 
-# 임베딩 / 리랭킹
-# - sentence-transformers: BGE reranker + embedding local inference
-# - transformers/torch: CrossEncoder backend
-sentence-transformers
-transformers
-torch
+
 
 # 크롤링
 # - playwright: 동적 페이지 / 로그인 / JS 렌더링 처리
