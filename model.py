@@ -134,14 +134,3 @@ def get_embeddings():
     raise ValueError(
         f"지원하지 않는 provider: {EMBEDDING_PROVIDER}"
     )
-    
-
-@lru_cache(maxsize=1)
-def _get_reranker():
-    # import을 lazy 하게: 다른 코드 경로(예: 크롤러)는 torch를 안 쓰는데
-    # 모듈 top-level import면 매번 ~수 초 페널티가 붙는다.
-    from sentence_transformers import CrossEncoder
-    return CrossEncoder(
-        RERANKER_MODEL,
-        max_length=RERANKER_MAX_LENGTH,
-    )
