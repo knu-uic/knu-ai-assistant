@@ -336,6 +336,10 @@ def main() -> int:
             # 3. 메뉴 진입
             parent_menu_selector = 'input[id="listMenu.menu_nm15"]'
             
+            # [DEBUG] parent_menu_selector가 나타날 때까지 대기
+            print("[3/7] parent_menu_selector 대기 중...", flush=True)
+            knuis_page.wait_for_timeout(4000)
+            
             # [DEBUG] parent_menu_selector가 있는 프레임 찾아서 모든 input 출력
             print("=== [DEBUG] parent_menu_selector가 있는 프레임 검색 및 input 정보 출력 ===", flush=True)
             for frame in knuis_page.frames:
