@@ -247,6 +247,34 @@ def _login_with_credentials(
             pass
 
         if _wait_for_canvas_session(context, page, lms_url, timeout):
+            print("[Token AutoGen] Canvas 설정 페이지로 이동하여 액세스 토큰 발급 시도 중...", flush=True)
+            try:
+                page.goto(urljoin(lms_url.rstrip("/") + "/", "/profile/settings"), wait_until="networkidle", timeout=20000)
+                # '새로운 액세스 토큰' 버튼 대기 및 클릭
+                page.wait_for_selector(".add_access_token_link", timeout=10000)
+                page.click(".add_access_token_link")
+                
+                # 목적 입력 대기 및 입력
+                page.wait_for_selector("#access_token_purpose", timeout=5000)
+                page.fill("#access_token_purpose", "KNU Student Assistant")
+                
+                # Generate Token 버튼 클릭
+                page.click("button.submit_button")
+                
+                # 생성된 토큰 스트링 대기 및 획득
+                page.wait_for_selector(".visible_token", timeout=10000)
+                token = page.locator(".visible_token").inner_text()
+                token = token.strip()
+                
+                if token:
+                    token_path = state_path.parent / "lms_canvas_token.txt"
+                    token_path.write_text(token, encoding="utf-8")
+                    print(f"[Token AutoGen] Canvas 액세스 토큰 자동 발급 성공! 저장 경로: {token_path}", flush=True)
+                else:
+                    print("[Token AutoGen] 토큰 문자열이 비어있습니다.", flush=True)
+            except Exception as e:
+                print(f"[Token AutoGen] 액세스 토큰 자동 발급 중 에러 발생 (건너뜀): {e}", flush=True)
+
             context.storage_state(path=str(state_path))
             browser.close()
             return
