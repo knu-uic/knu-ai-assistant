@@ -351,6 +351,11 @@ def _sync_planner_items(
 
     count = 0
     for item in items:
+        plannable_type = (item.get("plannable_type") or "").lower()
+        # 이미 _sync_announcements에서 공식 공지를 중복 없이 더 신뢰성 있게 긁어오므로 스킵
+        if "announcement" in plannable_type:
+            continue
+
         plannable = item.get("plannable") or {}
         title = (
             item.get("title")
@@ -368,10 +373,14 @@ def _sync_planner_items(
             or item.get("plannable_date")
             or item.get("todo_date")
         )
+        url = item.get("html_url") or plannable.get("html_url")
+        if url and url.startswith("/"):
+            url = urljoin(DEFAULT_LMS_URL, url)
+
         external_id = "planner:" + str(
             item.get("plannable_id")
             or item.get("id")
-            or item.get("html_url")
+            or url
             or title
         )
 
@@ -381,7 +390,7 @@ def _sync_planner_items(
             title=title,
             course_name=course_name,
             due_date=_parse_canvas_date(due),
-            url=item.get("html_url") or plannable.get("html_url"),
+            url=url,
             is_done=_is_done_from_planner(item),
             source="canvas",
             external_id=external_id,
@@ -419,13 +428,17 @@ def _sync_todo_items(
         if assignment.get("id") is not None:
             external_id += f":{assignment['id']}"
 
+        url = assignment.get("html_url") or item.get("html_url")
+        if url and url.startswith("/"):
+            url = urljoin(DEFAULT_LMS_URL, url)
+
         upsert_lms_task(
             student_id=student_id,
             task_type="assignment",
             title=title,
             course_name=course_name,
             due_date=_parse_canvas_date(assignment.get("due_at")),
-            url=assignment.get("html_url") or item.get("html_url"),
+            url=url,
             is_done=False,
             source="canvas",
             external_id=external_id,
