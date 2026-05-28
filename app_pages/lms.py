@@ -155,15 +155,6 @@ def _render_favorite_section(task_type: str, empty_msg: str):
     type_tasks = _visible([t for t in tasks if t["task_type"] == task_type])
     for cname in sorted(favorite_courses):
         course_tasks = [t for t in type_tasks if t.get("course_name") == cname]
-        
-        # notice 타입이면 최신 알림순(due_date 내림차순)으로 정렬
-        if task_type == "notice":
-            course_tasks = sorted(
-                course_tasks,
-                key=lambda x: x.get("due_date") or date.min,
-                reverse=True
-            )
-
         with st.expander(cname, expanded=False):
             if not course_tasks:
                 st.caption(empty_msg)
@@ -179,7 +170,7 @@ tab_courses, tab_notices, tab_lectures, tab_assignments = st.tabs(
 with tab_courses:
     courses = get_lms_courses(student_id)
     if not courses:
-        st.info("등록된 과목이 없어요. 로그아웃 후 다시 로그인하여 LMS 정보를 동기화해 주세요.")
+        st.info("등록된 과목이 없어요. 위 '🔄 할 일 동기화' 를 실행하세요.")
     else:
         for course in courses:
             cname = course["course_name"]

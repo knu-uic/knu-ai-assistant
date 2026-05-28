@@ -53,42 +53,16 @@ if user_input:
 
     with st.chat_message("assistant"):
         try:
-            state_updates = {
-                "question": user_input,
-                "major": major,
-            }
-            with st.status("AI 비서가 질문을 확인하고 있습니다... 🌟", expanded=True) as status:
-                st.write("🔍 질문 의도를 분석하고 검색 키워드를 정제하고 있어요...")
-                for event in GRAPH.stream(
-                    state_updates,
-                    config={
-                        "metadata": {"major": major, "question": user_input},
-                        "tags": ["streamlit-chat", f"major:{major}"],
-                    },
-                    stream_mode="updates"
-                ):
-                    node_name = list(event.keys())[0]
-                    node_output = event[node_name]
-                    state_updates.update(node_output)
-                    
-                    if node_name == "router":
-                        status.update(label="캠퍼스 공지사항을 검색하고 있습니다... 📚", state="running")
-                        st.write("✓ 질문 분석 완료! 관련 카테고리 선정 및 쿼리 확장 완료")
-                        st.write("⚡ 데이터베이스 및 첨부파일 내 관련 정보 수집 중...")
-                    elif node_name == "retriever":
-                        status.update(label="적절한 답변을 다듬고 요약하는 중입니다... ✍️", state="running")
-                        st.write("✓ 정보 수집 완료! Reranker v3 기반 관련도 정렬 완료")
-                        st.write("✍️ 수집된 자료를 조율하여 맞춤형 답변을 작성하고 있어요...")
-                    elif node_name == "answerer":
-                        from config import ENABLE_VERIFIER
-                        if ENABLE_VERIFIER:
-                            status.update(label="답변의 신뢰성을 자가 검증하고 있습니다... 🛡️", state="running")
-                            st.write("✓ 답변 초안 완성!")
-                            st.write("🛡️ 컨텍스트 기반 팩트체크 및 할루시네이션 의심 구간 검증 중...")
-                
-                status.update(label="답변 생성 완료! ✨", state="complete", expanded=False)
-
-            result = state_updates
+            result = GRAPH.invoke(
+                {
+                    "question": user_input,
+                    "major": major,
+                },
+                config={
+                    "metadata": {"major": major, "question": user_input},
+                    "tags": ["streamlit-chat", f"major:{major}"],
+                },
+            )
             answer = result.get("answer", "")
             st.markdown(answer)
 
