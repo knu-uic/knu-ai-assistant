@@ -335,6 +335,24 @@ def main() -> int:
             
             # 3. 메뉴 진입
             parent_menu_selector = 'input[id="listMenu.menu_nm15"]'
+            
+            # [DEBUG] parent_menu_selector가 있는 프레임 찾아서 모든 input 출력
+            print("=== [DEBUG] parent_menu_selector가 있는 프레임 검색 및 input 정보 출력 ===", flush=True)
+            for frame in knuis_page.frames:
+                try:
+                    locator = frame.locator(parent_menu_selector)
+                    if locator.count() > 0:
+                        print(f"  - 발견된 프레임 URL: {frame.url}", flush=True)
+                        inputs = frame.query_selector_all("input")
+                        for idx, inp in enumerate(inputs):
+                            iid = inp.get_attribute("id") or ""
+                            ival = inp.get_attribute("value") or ""
+                            itype = inp.get_attribute("type") or ""
+                            print(f"    - Input[{idx}]: id='{iid}', type='{itype}', value='{ival}'", flush=True)
+                except Exception as ex:
+                    print(f"    - 프레임 {frame.url} 조회 중 에러: {ex}", flush=True)
+            print("======================================================================", flush=True)
+            
             clicked_parent = wait_and_click_in_any_frame(knuis_page, parent_menu_selector, timeout_sec=15)
             if clicked_parent:
                 knuis_page.wait_for_timeout(2000)
