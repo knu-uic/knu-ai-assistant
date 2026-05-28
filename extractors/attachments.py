@@ -263,7 +263,7 @@ def _find_soffice() -> str | None:
     return next((c for c in candidates if c and Path(c).exists()), None)
 
 
-def _run_soffice_convert(input_path: Path, out_dir: Path, page_range: str | None = None) -> Path | None:
+def run_soffice_convert(input_path: Path, out_dir: Path, page_range: str | None = None) -> Path | None:
     soffice = _find_soffice()
     if not soffice:
         raise RuntimeError("LibreOffice(soffice)를 찾을 수 없습니다. LIBREOFFICE_BIN을 설정하세요.")
@@ -284,7 +284,7 @@ def _run_soffice_convert(input_path: Path, out_dir: Path, page_range: str | None
         convert_to,
         input_path.name,
         "--outdir",
-        str(out_dir),
+        str(out_dir.resolve()),
     ]
     try:
         result = subprocess.run(
@@ -349,7 +349,7 @@ def hwp_bytes_to_text(data: bytes, filename: str = "attachment.hwp") -> str:
         full_dir = tmp_dir / "full"
         full_dir.mkdir()
 
-        pdf_path = _run_soffice_convert(input_path, full_dir)
+        pdf_path = run_soffice_convert(input_path, full_dir)
         if pdf_path:
             return _pdf_bytes_full(pdf_path.read_bytes())
 
@@ -359,7 +359,7 @@ def hwp_bytes_to_text(data: bytes, filename: str = "attachment.hwp") -> str:
         for page_no in range(1, max_pages + 1):
             page_dir = tmp_dir / f"page-{page_no}"
             page_dir.mkdir()
-            page_pdf = _run_soffice_convert(input_path, page_dir, str(page_no))
+            page_pdf = run_soffice_convert(input_path, page_dir, str(page_no))
             if not page_pdf:
                 empty_streak += 1
                 if empty_streak >= 3:

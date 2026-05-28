@@ -7,14 +7,16 @@ VLM이 양식 다양성을 흡수하고 [이수구분 | 과목명 | 학점 | 학
 
 from __future__ import annotations
 
-import io
 import logging
 import re
 import datetime
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from model import LLM_MODEL, image_to_text
+import json
+import pdfplumber
+from model import get_llm
+from langchain_core.messages import HumanMessage
 
 logger = logging.getLogger(__name__)
 
@@ -22,20 +24,28 @@ logger = logging.getLogger(__name__)
 _YEAR_RE = re.compile(r"^\s*\[YEAR:\s*(.*?)\]\s*$", re.MULTILINE)
 _NO_TABLE = "[NO_TABLE]"
 
-_PROMPT = """이 이미지는 대학 학과의 교육과정표(커리큘럼) 한 페이지다.
-다음 형식을 정확히 지켜 응답하라. 다른 설명·코드 블록(```) 금지.
-1. 첫 줄: 페이지에 적힌 입학년도 라벨을 `[YEAR: <라벨>]` 형식으로 출력.
-   (예: `[YEAR: 2014학년도 입학자 적용]`). 라벨 없으면 `[YEAR: ]` (값 비움).
-2. 두 번째 줄부터: 강좌를 4컬럼 마크다운 표로 출력. 헤더 행은 정확히:
+_HYBRID_PROMPT = """이 데이터는 대학 교육과정표 PDF에서 pdfplumber로 추출한 표 데이터(2차원 리스트) 및 페이지 텍스트다.
+가로 격자선 분리 등으로 인해 하나의 과목명이 여러 행으로 쪼개졌거나(예: 'Global management'와 'case analysis' 등), 셀 병합(머지)으로 인해 빈 값("")이 다수 존재할 수 있다.
+
+이 데이터를 철저히 해독하여 다음 형식을 정확히 지켜 마크다운 표로 정규화하여 출력하라. 다른 설명이나 코드블록(```) 금지.
+1. 첫 줄: 페이지 텍스트 등에서 적용 입학년도 라벨을 감지하여 `[YEAR: <라벨>]` 형식으로 출력 (예: `[YEAR: 2025학년도 입학자부터 적용]`). 라벨을 찾을 수 없으면 `[YEAR: ]` (비움)으로 출력.
+2. 두 번째 줄부터: 4컬럼 마크다운 표 출력. 헤더는 정확히:
    `| 이수구분 | 과목명 | 학점 | 학년/학기 |`
    `| --- | --- | --- | --- |`
-3. 행 규칙 (반드시 준수):
-   - 한 강좌가 여러 학기에 개설되면 학기별로 행 분리 (1 row = 1 (과목 × 학기) 개설).
-   - 이수구분: 표의 분류 셀 (전공필수/전공선택/교양 등). 머지된 빈 셀은 위 셀 값 forward-fill.
-   - 학점: 그 과목의 학점.
-   - 학년/학기: 표가 매트릭스(행렬) 형태로 되어 있어 학년/학기가 '열 제목(Header)'에 있다면, 학점이나 동그라미(O)가 표기된 교차점을 읽고 해당 열의 학년/학기를 반드시 논리적으로 채워 넣는다 (예: "1-1", "2학년 2학기" 등 표의 맥락을 살려서 기재). 절대 빈칸으로 두지 말 것.
-4. 커리큘럼 표가 없는 페이지(표지·목차·부록 등): `[NO_TABLE]` 만 한 줄로 출력.
-5. 환각 금지: 이미지에 없는 과목이나 학점을 지어내지 않는다."""
+
+행 작성 규칙 (반드시 준수):
+- 이수구분: 표의 첫 번째 '구분' 또는 분류 열을 읽는다. 병합으로 인한 빈 칸은 상하 문맥을 파악해 '전공필수', '콜라주', '전공선택' 등으로 완벽히 forward-fill/backward-fill하여 채워 넣는다.
+- 과목명: 가로선 분리로 인해 아래위 행으로 분할된 과목명(예: 'Global management'와 'case analysis')은 반드시 하나의 과목명('Global management case analysis')으로 온전히 결합해야 한다.
+- 학점: 해당 과목의 취득 학점 수(예: '3', '1').
+- 학년/학기: 학년 헤더(1학년, 2학년 혹은 1, 2, 3, 4 등)와 학기(1학기/2학기 혹은 1, 2, Ⅰ, Ⅱ 등)의 열 인덱스를 정확히 판독하여 '학년-학기' 형식으로 변환하여 채운다 (예: '1-1', '2-2', '3-1', '4-2').
+- 소계, 합계, 편성 합계 등의 요약 통계 행은 최종 표에서 제외하라.
+
+[페이지 상단 텍스트 컨텍스트]
+{page_text}
+
+[입력 데이터 (2차원 리스트 JSON)]
+{table_json}
+"""
 
 
 def _split_year_prefix(response: str) -> tuple[str | None, str]:
@@ -54,22 +64,36 @@ def _is_no_table(response: str) -> bool:
     return response.strip() == _NO_TABLE
 
 
-def _page_to_year(page_num: int, page_image) -> dict | None:
-    """페이지 이미지 1장을 VLM에 던져 year dict 1개 반환. 표 없으면 None.
-    VLM 호출 실패 시 예외를 그대로 위로 던진다 (fail-fast).
+def _page_to_year(page_num: int, page_text_str: str, raw_table: list[list[str]] | None) -> dict | None:
+    """페이지 텍스트와 pdfplumber 표 데이터를 LLM에 던져 year dict 1개 반환. 표 없으면 None.
+    LLM 호출 실패 시 예외를 그대로 위로 던진다 (fail-fast).
     """
-    png_buffer = io.BytesIO()
-    page_image.save(png_buffer, format="PNG")
-    response = image_to_text(
-        png_buffer.getvalue(), "image/png", _PROMPT, model=LLM_MODEL
-    )
-    if _is_no_table(response):
+    if not raw_table:
+        logger.info("page %d: 테이블 데이터 없음 — skip", page_num)
+        return None
+        
+    cleaned_table = [
+        ["" if cell is None else str(cell).strip() for cell in row]
+        for row in raw_table
+    ]
+    
+    table_json_str = json.dumps(cleaned_table, ensure_ascii=False, indent=2)
+    prompt = _HYBRID_PROMPT.format(table_json=table_json_str, page_text=page_text_str)
+    
+    llm = get_llm()
+    msg = HumanMessage(content=prompt)
+    response = llm.invoke([msg])
+    content = response.content.strip()
+    
+    if _is_no_table(content):
         logger.info("page %d: NO_TABLE — 커리큘럼 표 없는 페이지, skip", page_num)
         return None
-    year_label, markdown_table = _split_year_prefix(response)
+        
+    year_label, markdown_table = _split_year_prefix(content)
     if not markdown_table:
         logger.info("page %d: 응답에 표 본문 없음 — skip", page_num)
         return None
+        
     return {
         "page_number": page_num,
         "year_label": year_label,
@@ -134,23 +158,32 @@ def resolve_applicable_years(parsed_years: list[dict]) -> list[dict]:
 
 
 def parse(pdf_path: str | Path) -> dict:
-    """PDF의 모든 페이지를 VLM에 던져 입학년도별 정규화 마크다운 표를 모으고 적용 연도를 보정합니다.
+    """PDF의 모든 페이지를 pdfplumber + LLM으로 파싱하여 입학년도별 정규화 마크다운 표를 모으고 적용 연도를 보정합니다.
 
     반환: {"years": [{"page_number": int, "year_label": str|None, "markdown_table": str, "applicable_years": list[int], "lead_sentence": str}]}
-    실패 정책: 한 페이지라도 VLM 호출에서 예외 발생하면 즉시 raise (fail-fast).
+    실패 정책: 한 페이지라도 LLM 호출에서 예외 발생하면 즉시 raise (fail-fast).
     """
-    from pdf2image import convert_from_path
-
-    pages = convert_from_path(str(pdf_path), dpi=600)
-    if not pages:
+    if not Path(pdf_path).exists():
         return {"years": []}
 
-    # API 지연 흡수용 병렬 (rate limit 고려 5 workers).
+    pages_data = []
+    with pdfplumber.open(str(pdf_path)) as pdf:
+        for i, page in enumerate(pdf.pages):
+            page_num = i + 1
+            page_text_str = page.extract_text() or ""
+            tables = page.extract_tables()
+            raw_table = tables[0] if tables else None
+            pages_data.append((page_num, page_text_str, raw_table))
+
+    if not pages_data:
+        return {"years": []}
+
+    # API 지연 흡수용 병렬 (Rate Limit 고려하여 max_workers=3으로 제한)
     # 한 페이지라도 예외 발생하면 list() 평가 중 raise → ingest 스크립트 abort.
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         results = list(executor.map(
-            lambda t: _page_to_year(*t),
-            enumerate(pages, start=1),
+            lambda t: _page_to_year(t[0], t[1], t[2]),
+            pages_data,
         ))
 
     years_data = [r for r in results if r is not None]

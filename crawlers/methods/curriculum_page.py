@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from typing import Callable
 
 from parsers.curriculum import parse, render_text
-from extractors.attachments import extract_attachment_text
+from extractors.attachments import run_soffice_convert
 
 
 @dataclass(frozen=True)
@@ -57,18 +57,27 @@ class CurriculumCrawler:
         suffix = document_path.suffix.lower()
         results = []
 
-        # PDF curriculum은 VLM 구조 parser 사용.
-        if suffix == ".pdf":
-            parsed = parse(document_path)
+        converted_pdf_path = None
+        if suffix != ".pdf":
+            # PDF가 아닌 포맷(HWP, HWPX, XLSX 등)은 LibreOffice로 PDF 변환
+            converted_pdf_path = run_soffice_convert(document_path, document_path.parent)
+            if not converted_pdf_path or not converted_pdf_path.exists():
+                raise RuntimeError(
+                    f"[{self.SOURCE_CODE}] PDF 변환에 실패했습니다: {document_path}"
+                )
+            target_pdf_path = converted_pdf_path
+        else:
+            target_pdf_path = document_path
+
+        try:
+            parsed = parse(target_pdf_path)
 
             if not parsed:
-                print(f"[{self.SOURCE_CODE}] curriculum parse 결과 없음")
-                return []
+                raise RuntimeError(f"[{self.SOURCE_CODE}] curriculum parse 결과 없음")
 
-            years = parsed["years"]
+            years = parsed.get("years")
             if not years:
-                print(f"[{self.SOURCE_CODE}] 파싱된 연도 데이터 없음")
-                return []
+                raise RuntimeError(f"[{self.SOURCE_CODE}] 파싱된 연도 데이터 없음")
 
             # 모든 입학년도별 페이지를 개별 문서로 분리하여 RAG에 적재
             for item in years:
@@ -112,41 +121,12 @@ class CurriculumCrawler:
                         "page_url": self.config.page_url,
                     },
                 })
-
-        # HWP/HWPX/XLSX 등은 generic extractor fallback.
-        else:
-            content = extract_attachment_text(document_path).strip()
-            if not content:
-                print(f"[{self.SOURCE_CODE}] curriculum render 결과 비어있음")
-                return []
-                
-            title = f"{self.SOURCE_NAME} (최신)"
-            results.append({
-                "title": title,
-                "date": "",
-                "content": content,
-                "body_content": content,
-                "attachment_names": [],
-                "attachment_contents": [],
-                "url": self.config.pdf_url,
-                "assets": [],
-                "pre_refined": True,
-                "replace_by_source": True,
-                "metadata": {
-                    "title": title,
-                    "content": content,
-                    "summary": f"{self.SOURCE_NAME} 교육과정 정보입니다.",
-                    "target": ["전체"],
-                    "start_date": None,
-                    "end_date": None,
-                    "category": "수강",
-                    "keywords": ["교육과정", "전공", "학점"],
-                    "url": self.config.pdf_url,
-                },
-                "extra": {
-                    "document_type": suffix,
-                    "page_url": self.config.page_url,
-                },
-            })
+        finally:
+            if converted_pdf_path and converted_pdf_path.exists():
+                try:
+                    converted_pdf_path.unlink()
+                except Exception as e:
+                    print(f"[{self.SOURCE_CODE}] 임시 변환 PDF 파일 삭제 실패 ({converted_pdf_path}): {e}")
 
         return results
+
