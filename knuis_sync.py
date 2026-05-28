@@ -264,6 +264,14 @@ def main() -> int:
             page = context.new_page()
             
             # 1. 로그인 단계
+            print("[1/7] 포털 로그인 시도 중...", flush=True)
+            
+            # Dialog(알럿창 등) 이벤트 감지 추가
+            def handle_dialog(dialog):
+                print(f"[1/7] [브라우저 알림창 발생] 메시지: {dialog.message}", file=sys.stderr, flush=True)
+                dialog.accept()
+            page.on("dialog", handle_dialog)
+            
             page.goto(KNUIS_URL)
             id_selector = 'input[id="frmIlban.sg_uid"]'
             pw_selector = 'input[id="frmIlban.sg_pwd"]'
@@ -272,21 +280,36 @@ def main() -> int:
             page.wait_for_selector(id_selector, timeout=15000)
             page.fill(id_selector, args.username)
             page.fill(pw_selector, password)
+            print(f"[1/7] 로그인 입력 폼 작성 완료 (ID: {args.username})", flush=True)
             page.click(btn_selector)
             
             # 대기 및 새로고침 (포털 구조상 필수)
+            print("[1/7] 로그인 클릭 후 리다이렉트 대기 (4초)...", flush=True)
             page.wait_for_timeout(4000)
+            print(f"[1/7] 대기 완료 후 현재 URL: {page.url}", flush=True)
+            
+            print("[1/7] 통합정보시스템 진입을 위한 새로고침(Reload) 시도...", flush=True)
             page.reload()
             page.wait_for_load_state("load")
+            print(f"[1/7] 새로고침 완료 후 현재 URL: {page.url}", flush=True)
             page.wait_for_timeout(2000)
             
             # 2. 통합정보시스템 진입
+            print("[2/7] 통합정보시스템 버튼 탐색 중...", flush=True)
             sys_btn_selector = 'img[id="frmsystem_s.imgsys1"]'
+            
+            # 현재 페이지 프레임 URL 정보 로깅
+            frame_urls = [f.url for f in page.frames]
+            print(f"[2/7] 현재 페이지 전체 프레임 URL 목록: {frame_urls}", flush=True)
+            
             with context.expect_page() as new_page_info:
                 clicked = wait_and_click_in_any_frame(page, sys_btn_selector, timeout_sec=15)
                 if not clicked:
+                    print("[2/7] 1차 이미지 버튼 ID로 클릭 실패. 2차 alt 텍스트로 시도...", flush=True)
                     clicked = wait_and_click_in_any_frame(page, 'img[alt="통합정보시스템"]', timeout_sec=5)
                 if not clicked:
+                    # 최종 실패 시 디버깅을 위한 HTML 정보 출력
+                    print("[2/7] 통합정보시스템 버튼 클릭 실패. 최종 바디 텍스트 길이:", len(page.content()), file=sys.stderr, flush=True)
                     raise RuntimeError("통합정보시스템 진입 버튼을 찾지 못했습니다.")
                     
             knuis_page = new_page_info.value
