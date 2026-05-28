@@ -18,6 +18,7 @@ from playwright.sync_api import APIRequestContext, sync_playwright
 from db import (
     delete_canvas_lecture_tasks,
     ensure_users_schema,
+    get_user,
     set_favorite_courses,
     upsert_lms_course,
     upsert_lms_task,
@@ -706,13 +707,14 @@ def main() -> int:
         learningx = _learningx_session(args.url, state_path)
         courses = _course_map(request)
         student_id, profile = _sync_user_profile(request, args.student_id, courses)
-        # lms_courses FK(student_id → users) 위반 방지: knuis_sync 없이 단독 실행 시에도 user row를 먼저 보장
-        upsert_user(
-            student_id=student_id,
-            name=_extract_name(profile) or student_id,
-            major=_infer_major(profile, courses) or "",
-            year=_infer_year(student_id),
-        )
+        # lms_courses FK(student_id → users) 위반 방지: 기존 user row가 있으면 덮어쓰지 않고, 없을 때만 기본값으로 삽입
+        if get_user(student_id) is None:
+            upsert_user(
+                student_id=student_id,
+                name="이름 미설정",
+                major="",
+                year=None,
+            )
         course_count = _sync_courses(student_id, courses)
         _sync_favorite_courses(request, student_id)
         planner_count = _sync_planner_items(request, student_id, courses, args.days)

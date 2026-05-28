@@ -49,7 +49,7 @@ def parse_graduation_data(data_frame) -> tuple[str, str, int, dict]:
     if not info_table:
         raise RuntimeError("학적 기본 정보 테이블을 찾지 못했습니다.")
         
-    rows_data = info_table.evaluate("""
+    rows_data = info_table.evaluate(r"""
         table => {
             const trs = Array.from(table.querySelectorAll('tr'));
             return trs.map(tr => {
@@ -165,6 +165,7 @@ def parse_graduation_data(data_frame) -> tuple[str, str, int, dict]:
 
 def click_menu_by_value(page, menu_value, timeout_sec=10) -> bool:
     """모든 프레임을 돌며 value 속성에 menu_value가 포함된 요소를 찾아 클릭합니다."""
+    print(f"[click_menu] '{menu_value}' 메뉴 클릭 시도 중...", flush=True)
     start_time = time.time()
     selector = f'input[value*="{menu_value}"]'
     while time.time() - start_time < timeout_sec:
@@ -172,6 +173,7 @@ def click_menu_by_value(page, menu_value, timeout_sec=10) -> bool:
             try:
                 locator = frame.locator(selector)
                 if locator.count() > 0 and locator.first.is_visible():
+                    print(f"[click_menu] 1차 성공: '{menu_value}' (frame: {frame.url})", flush=True)
                     locator.first.scroll_into_view_if_needed()
                     locator.first.click()
                     return True
@@ -179,22 +181,38 @@ def click_menu_by_value(page, menu_value, timeout_sec=10) -> bool:
                 continue
         time.sleep(0.5)
     
+    print(f"[click_menu] 1차 실패, 2차 일반 text 매칭 탐색 시작 (키워드: {menu_value})", flush=True)
     # 2차 시도: 일반 text 매칭 검색 및 클릭
     start_time = time.time()
-    while time.time() - start_time < 3:
+    while time.time() - start_time < 5:
         for frame in page.frames:
             try:
-                for element in frame.query_selector_all("input, button, a, td, div"):
+                elements = frame.query_selector_all("input, button, a, td, div, span")
+                for element in elements:
                     val = element.get_attribute("value") or ""
                     text = element.inner_text() or ""
+                    tag = element.evaluate("el => el.tagName")
+                    
                     if menu_value in val or menu_value in text:
-                        if element.is_visible():
+                        is_vis = element.is_visible()
+                        print(f"[click_menu] 매칭 후보 발견 -> 태그: {tag}, value: {val.strip()}, text: {text.strip()}, visible: {is_vis}, frame: {frame.url}", flush=True)
+                        if is_vis:
+                            print(f"[click_menu] 2차 클릭 실행: {tag} ({menu_value})", flush=True)
                             element.scroll_into_view_if_needed()
                             element.click()
                             return True
             except Exception:
                 continue
         time.sleep(0.5)
+        
+    print(f"[click_menu] '{menu_value}' 메뉴를 찾지 못함. 현재 가시 프레임들의 텍스트 요약:", file=sys.stderr, flush=True)
+    for frame in page.frames:
+        try:
+            texts = [el.inner_text().strip() for el in frame.query_selector_all("input, a, span, div") if el.is_visible() and el.inner_text().strip()]
+            if texts:
+                print(f"  - Frame [{frame.url}]: {texts[:10]}...", file=sys.stderr, flush=True)
+        except Exception:
+            pass
     return False
 
 def parse_timetable_data(context) -> list[dict] | None:
@@ -356,7 +374,19 @@ def main() -> int:
             # 6. 시간표 페이지로 이동 및 파싱
             timetable_json = None
             try:
-                print("시간표 조회를 시작합니다...")
+                print("시간표 조회를 시작합니다...", flush=True)
+                
+                print("=== [DEBUG] mainMenuS.html 내의 모든 input 태그 정보 출력 ===", flush=True)
+                for frame in knuis_page.frames:
+                    if "mainMenuS.html" in frame.url:
+                        inputs = frame.query_selector_all("input")
+                        for idx, inp in enumerate(inputs):
+                            iid = inp.get_attribute("id") or ""
+                            ival = inp.get_attribute("value") or ""
+                            itype = inp.get_attribute("type") or ""
+                            print(f"  - Input[{idx}]: id='{iid}', type='{itype}', value='{ival}'", flush=True)
+                print("=========================================================", flush=True)
+
                 # 대메뉴 '수업·수강' 혹은 '수업' 클릭
                 clicked_parent = click_menu_by_value(knuis_page, "수업·수강")
                 if not clicked_parent:
