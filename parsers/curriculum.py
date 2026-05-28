@@ -144,7 +144,7 @@ def parse(pdf_path: str | Path) -> dict:
     """
     from pdf2image import convert_from_path
 
-    pages = convert_from_path(str(pdf_path), dpi=600)
+    pages = convert_from_path(str(pdf_path), dpi=200)
     if not pages:
         return {"years": []}
 
