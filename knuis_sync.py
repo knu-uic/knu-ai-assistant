@@ -175,7 +175,10 @@ def click_menu_by_value(page, menu_value, timeout_sec=10) -> bool:
                 if locator.count() > 0 and locator.first.is_visible():
                     print(f"[click_menu] 1차 성공: '{menu_value}' (frame: {frame.url})", flush=True)
                     locator.first.scroll_into_view_if_needed()
-                    locator.first.click()
+                    try:
+                        locator.first.click(timeout=2000)
+                    except Exception:
+                        locator.first.evaluate("el => el.click()")
                     return True
             except Exception:
                 continue
@@ -195,11 +198,13 @@ def click_menu_by_value(page, menu_value, timeout_sec=10) -> bool:
                     
                     if menu_value in val or menu_value in text:
                         is_vis = element.is_visible()
-                        print(f"[click_menu] 매칭 후보 발견 -> 태그: {tag}, value: {val.strip()}, text: {text.strip()}, visible: {is_vis}, frame: {frame.url}", flush=True)
                         if is_vis:
-                            print(f"[click_menu] 2차 클릭 실행: {tag} ({menu_value})", flush=True)
+                            print(f"[click_menu] 2차 매칭 성공 -> 태그: {tag}, value: {val.strip()}, text: {text.strip()}, frame: {frame.url}", flush=True)
                             element.scroll_into_view_if_needed()
-                            element.click()
+                            try:
+                                element.click(timeout=2000)
+                            except Exception:
+                                element.evaluate("el => el.click()")
                             return True
             except Exception:
                 continue
@@ -372,41 +377,38 @@ def main() -> int:
             name, major, year, grad_json = parse_graduation_data(data_frame)
             print(f"학적/졸업 정보 파싱 완료: {name} ({major}, {year}학년)")
 
-            # 6. 시간표 페이지로 이동 및 파싱
+            # 6. 시간표 페이지로 이동 및 파싱 (Brute-Force 탐색)
             timetable_json = None
             try:
                 print("시간표 조회를 시작합니다...", flush=True)
                 
-                # LeftFrame 프레임 획득
-                left_frame = knuis_page.frame_locator("iframe[name=\"LeftFrame\"]")
-                
-                # 1) 대메뉴 '수업 · 수강' 클릭
-                print("[6/7] 대메뉴 '수업 · 수강' 클릭 시도...", flush=True)
-                left_frame.get_by_role("textbox", name="수업 · 수강").click()
-                knuis_page.wait_for_timeout(1500)
-                
-                # 2) 서브메뉴 '수강과목조회' 클릭
-                print("[6/7] 서브메뉴 '수강과목조회' 클릭 시도...", flush=True)
-                left_frame.get_by_role("textbox", name="수강과목조회").click()
-                knuis_page.wait_for_timeout(1500)
-                
-                # 3) 상세메뉴 '시간표조회' 클릭
-                print("[6/7] 상세메뉴 '시간표조회' 클릭 시도...", flush=True)
-                left_frame.get_by_role("textbox", name="시간표조회").click()
-                knuis_page.wait_for_timeout(3000)
-                
-                # 4) 시간표조회 화면의 조회 버튼(#Master00) 클릭
-                print("[6/7] 시간표조회 화면의 조회 버튼(#Master00) 클릭 시도...", flush=True)
-                timetable_frame = knuis_page.frame_locator("iframe[title=\"시간표조회\"]")
-                timetable_frame.locator("#Master00").click()
-                knuis_page.wait_for_timeout(3000)
-                
-                # 5) 시간표 데이터 파싱
-                timetable_json = parse_timetable_data(context)
-                print(f"[6/7] 시간표 파싱 완료 (테이블 수: {len(timetable_json) if timetable_json else 0})", flush=True)
+                # 1) 대메뉴 '수업' 클릭 (Contains 검색)
+                clicked_parent = click_menu_by_value(knuis_page, "수업")
+                if clicked_parent:
+                    knuis_page.wait_for_timeout(2000)
+                    
+                    # 2) 상세메뉴 '시간표' 클릭 (Contains 검색, 수강과목조회 건너뜀)
+                    clicked_menu = click_menu_by_value(knuis_page, "시간표")
+                    if clicked_menu:
+                        knuis_page.wait_for_timeout(4000)
+                        
+                        # 3) 시간표조회 화면의 조회 버튼 클릭
+                        clicked_search = click_menu_by_value(knuis_page, "조회")
+                        if clicked_search:
+                            knuis_page.wait_for_timeout(4000)
+                            
+                            # 4) 시간표 데이터 파싱
+                            timetable_json = parse_timetable_data(context)
+                            print(f"[6/7] 시간표 파싱 완료 (테이블 수: {len(timetable_json) if timetable_json else 0})", flush=True)
+                        else:
+                            print("시간표 조회 버튼을 클릭하지 못했습니다.", file=sys.stderr, flush=True)
+                    else:
+                        print("시간표조회 메뉴를 클릭하지 못했습니다.", file=sys.stderr, flush=True)
+                else:
+                    print("수업 대메뉴를 찾지 못했습니다.", file=sys.stderr, flush=True)
                 
             except Exception as te:
-                print(f"시간표 연동 중 오류 발생: {te}", file=sys.stderr)
+                print(f"시간표 연동 중 오류 발생: {te}", file=sys.stderr, flush=True)
 
             # 7. DB 일괄 저장
             upsert_user(

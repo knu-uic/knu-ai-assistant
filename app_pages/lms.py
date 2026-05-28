@@ -155,6 +155,15 @@ def _render_favorite_section(task_type: str, empty_msg: str):
     type_tasks = _visible([t for t in tasks if t["task_type"] == task_type])
     for cname in sorted(favorite_courses):
         course_tasks = [t for t in type_tasks if t.get("course_name") == cname]
+        
+        # notice 타입이면 최신 알림순(due_date 내림차순)으로 정렬
+        if task_type == "notice":
+            course_tasks = sorted(
+                course_tasks,
+                key=lambda x: x.get("due_date") or date.min,
+                reverse=True
+            )
+
         with st.expander(cname, expanded=False):
             if not course_tasks:
                 st.caption(empty_msg)
