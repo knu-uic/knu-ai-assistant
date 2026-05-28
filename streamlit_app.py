@@ -149,6 +149,20 @@ with st.sidebar:
 user = get_current_user()
 render_sidebar_user_card(user)
 
+# 로그아웃 버튼 추가 (DB 유저는 남겨두고 로컬 세션 캐시 파일만 소거)
+with st.sidebar:
+    st.write("")
+    if st.button("로그아웃 🚪", use_container_width=True, key="logout_sidebar_btn"):
+        token_file = LMS_STATE_PATH.parent / "lms_canvas_token.txt"
+        for path in (LMS_STATE_PATH, LMS_CURRENT_USER_PATH, token_file):
+            if path.exists():
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
+        st.session_state.clear()
+        st.rerun()
+
 home_page = st.Page("app_pages/home.py", title="홈", icon=":material/home:", default=True)
 notices_page = st.Page("app_pages/notices.py", title="공지사항", icon=":material/notifications:")
 lms_page = st.Page("app_pages/lms.py", title="LMS", icon=":material/school:")
