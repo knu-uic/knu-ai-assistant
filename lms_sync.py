@@ -21,6 +21,7 @@ from db import (
     set_favorite_courses,
     upsert_lms_course,
     upsert_lms_task,
+    upsert_user,
 )
 from ui import DEFAULT_STUDENT_ID, MAJORS
 
@@ -705,6 +706,13 @@ def main() -> int:
         learningx = _learningx_session(args.url, state_path)
         courses = _course_map(request)
         student_id, profile = _sync_user_profile(request, args.student_id, courses)
+        # lms_courses FK(student_id → users) 위반 방지: knuis_sync 없이 단독 실행 시에도 user row를 먼저 보장
+        upsert_user(
+            student_id=student_id,
+            name=_extract_name(profile) or student_id,
+            major=_infer_major(profile, courses) or "",
+            year=_infer_year(student_id),
+        )
         course_count = _sync_courses(student_id, courses)
         _sync_favorite_courses(request, student_id)
         planner_count = _sync_planner_items(request, student_id, courses, args.days)
