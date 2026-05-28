@@ -130,6 +130,22 @@ if not LMS_STATE_PATH.exists():
     _render_login_gate()
     st.stop()
 
+# Canvas Access Token 백그라운드 비동기 발급 (메인 화면 진입 후 조용히 처리)
+token_file = LMS_STATE_PATH.parent / "lms_canvas_token.txt"
+if not token_file.exists():
+    import threading
+    def _run_bg_token_generation():
+        subprocess.run(
+            [sys.executable, "lms_login.py", "--token-only"],
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+        )
+    if "_bg_token_thread_started" not in st.session_state:
+        st.session_state._bg_token_thread_started = True
+        t = threading.Thread(target=_run_bg_token_generation, daemon=True)
+        t.start()
+
 if not st.session_state.get("lms_startup_synced"):
     with st.spinner("LMS 프로필과 할 일을 불러오는 중이에요."):
         sync_result = _sync_lms_at_startup()
