@@ -179,7 +179,7 @@ tab_courses, tab_notices, tab_lectures, tab_assignments = st.tabs(
 with tab_courses:
     courses = get_lms_courses(student_id)
     if not courses:
-        st.info("등록된 과목이 없어요. 위 '🔄 할 일 동기화' 를 실행하세요.")
+        st.info("등록된 과목이 없어요. 로그아웃 후 다시 로그인하여 LMS 정보를 동기화해 주세요.")
     else:
         for course in courses:
             cname = course["course_name"]
