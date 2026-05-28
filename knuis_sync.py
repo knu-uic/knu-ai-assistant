@@ -334,29 +334,8 @@ def main() -> int:
             knuis_page.wait_for_load_state("load")
             
             # 3. 메뉴 진입
+            print("[3/7] 졸업사전예고 메뉴 탐색 중...", flush=True)
             parent_menu_selector = 'input[id="listMenu.menu_nm15"]'
-            
-            # [DEBUG] parent_menu_selector가 나타날 때까지 대기
-            print("[3/7] parent_menu_selector 대기 중...", flush=True)
-            knuis_page.wait_for_timeout(4000)
-            
-            # [DEBUG] parent_menu_selector가 있는 프레임 찾아서 모든 input 출력
-            print("=== [DEBUG] parent_menu_selector가 있는 프레임 검색 및 input 정보 출력 ===", flush=True)
-            for frame in knuis_page.frames:
-                try:
-                    locator = frame.locator(parent_menu_selector)
-                    if locator.count() > 0:
-                        print(f"  - 발견된 프레임 URL: {frame.url}", flush=True)
-                        inputs = frame.query_selector_all("input")
-                        for idx, inp in enumerate(inputs):
-                            iid = inp.get_attribute("id") or ""
-                            ival = inp.get_attribute("value") or ""
-                            itype = inp.get_attribute("type") or ""
-                            print(f"    - Input[{idx}]: id='{iid}', type='{itype}', value='{ival}'", flush=True)
-                except Exception as ex:
-                    print(f"    - 프레임 {frame.url} 조회 중 에러: {ex}", flush=True)
-            print("======================================================================", flush=True)
-            
             clicked_parent = wait_and_click_in_any_frame(knuis_page, parent_menu_selector, timeout_sec=15)
             if clicked_parent:
                 knuis_page.wait_for_timeout(2000)
@@ -398,49 +377,34 @@ def main() -> int:
             try:
                 print("시간표 조회를 시작합니다...", flush=True)
                 
-                print("=== [DEBUG] mainMenuS.html 내의 모든 input 태그 정보 출력 ===", flush=True)
-                for frame in knuis_page.frames:
-                    if "mainMenuS.html" in frame.url:
-                        inputs = frame.query_selector_all("input")
-                        for idx, inp in enumerate(inputs):
-                            iid = inp.get_attribute("id") or ""
-                            ival = inp.get_attribute("value") or ""
-                            itype = inp.get_attribute("type") or ""
-                            print(f"  - Input[{idx}]: id='{iid}', type='{itype}', value='{ival}'", flush=True)
-                print("=========================================================", flush=True)
-
-                # 대메뉴 '수업·수강' 혹은 '수업' 클릭
-                clicked_parent = click_menu_by_value(knuis_page, "수업·수강")
-                if not clicked_parent:
-                    clicked_parent = click_menu_by_value(knuis_page, "수업")
+                # LeftFrame 프레임 획득
+                left_frame = knuis_page.frame_locator("iframe[name=\"LeftFrame\"]")
                 
-                if clicked_parent:
-                    knuis_page.wait_for_timeout(1500)
-                    # 서브메뉴 '수강' 클릭
-                    clicked_sub = click_menu_by_value(knuis_page, "수강")
-                    if clicked_sub:
-                        knuis_page.wait_for_timeout(1500)
-                        # 상세메뉴 '시간표조회' 클릭
-                        clicked_menu = click_menu_by_value(knuis_page, "시간표조회")
-                        if not clicked_menu:
-                            clicked_menu = click_menu_by_value(knuis_page, "시간표 조회")
-                            
-                        if clicked_menu:
-                            knuis_page.wait_for_timeout(3000)
-                            # 조회 버튼 클릭 (WorkFrame 내의 조회 버튼)
-                            clicked_search = click_menu_by_value(knuis_page, "조회")
-                            if clicked_search:
-                                knuis_page.wait_for_timeout(3000)
-                                # 시간표 데이터 파싱
-                                timetable_json = parse_timetable_data(context)
-                            else:
-                                print("시간표 조회 버튼을 클릭하지 못했습니다.", file=sys.stderr)
-                        else:
-                            print("시간표조회 메뉴를 클릭하지 못했습니다.", file=sys.stderr)
-                    else:
-                        print("수강 서브메뉴를 클릭하지 못했습니다.", file=sys.stderr)
-                else:
-                    print("수업·수강 부모 메뉴를 찾지 못했습니다.", file=sys.stderr)
+                # 1) 대메뉴 '수업 · 수강' 클릭
+                print("[6/7] 대메뉴 '수업 · 수강' 클릭 시도...", flush=True)
+                left_frame.get_by_role("textbox", name="수업 · 수강").click()
+                knuis_page.wait_for_timeout(1500)
+                
+                # 2) 서브메뉴 '수강과목조회' 클릭
+                print("[6/7] 서브메뉴 '수강과목조회' 클릭 시도...", flush=True)
+                left_frame.get_by_role("textbox", name="수강과목조회").click()
+                knuis_page.wait_for_timeout(1500)
+                
+                # 3) 상세메뉴 '시간표조회' 클릭
+                print("[6/7] 상세메뉴 '시간표조회' 클릭 시도...", flush=True)
+                left_frame.get_by_role("textbox", name="시간표조회").click()
+                knuis_page.wait_for_timeout(3000)
+                
+                # 4) 시간표조회 화면의 조회 버튼(#Master00) 클릭
+                print("[6/7] 시간표조회 화면의 조회 버튼(#Master00) 클릭 시도...", flush=True)
+                timetable_frame = knuis_page.frame_locator("iframe[title=\"시간표조회\"]")
+                timetable_frame.locator("#Master00").click()
+                knuis_page.wait_for_timeout(3000)
+                
+                # 5) 시간표 데이터 파싱
+                timetable_json = parse_timetable_data(context)
+                print(f"[6/7] 시간표 파싱 완료 (테이블 수: {len(timetable_json) if timetable_json else 0})", flush=True)
+                
             except Exception as te:
                 print(f"시간표 연동 중 오류 발생: {te}", file=sys.stderr)
 
