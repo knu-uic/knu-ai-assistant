@@ -17,6 +17,7 @@ from playwright.sync_api import APIRequestContext, sync_playwright
 
 from db import (
     delete_canvas_lecture_tasks,
+    delete_canvas_notice_tasks,
     ensure_users_schema,
     set_favorite_courses,
     upsert_lms_course,
@@ -454,6 +455,7 @@ def _sync_announcements(
     courses: dict[int, str],
     days: int,
 ) -> int:
+    delete_canvas_notice_tasks(student_id)
     if not courses:
         return 0
 

@@ -1003,6 +1003,18 @@ def delete_canvas_lecture_tasks(student_id: str) -> int:
     return deleted
 
 
+def delete_canvas_notice_tasks(student_id: str) -> int:
+    """학생의 canvas 출처 notice task(알림) 전체 삭제. sync 시작 시 선제 cleanup 용도."""
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute(
+            "DELETE FROM lms_tasks WHERE student_id = %s AND task_type = 'notice' AND source = 'canvas';",
+            (student_id,),
+        )
+        deleted = cur.rowcount
+        conn.commit()
+    return deleted
+
+
 # ── LMS tasks ──────────────────────────────────────────────────
 
 def get_lms_tasks(student_id: str, include_done: bool = False) -> list[dict]:
