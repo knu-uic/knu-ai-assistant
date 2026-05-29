@@ -145,7 +145,11 @@ major = user.get("major")
 year = user.get("year")
 
 st.caption(today.strftime("%Y년 %-m월 %-d일"))
-st.title(f"{user.get('name', '학생')}님, 오늘 꼭 필요한 3가지예요")
+name = user.get("name")
+if name:
+    st.title(f"{name}님, 오늘 꼭 필요한 3가지예요")
+else:
+    st.title("오늘 꼭 필요한 3가지예요")
 
 st.caption("관심사를 기준으로 큐레이션한 추천 공지입니다.")
 
