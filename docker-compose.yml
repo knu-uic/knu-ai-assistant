@@ -30,6 +30,7 @@ services:
       - .env  # .env의 모든 변수들을 자동으로 컨테이너 환경변수로 로드
     volumes:
       - .:/app
+      - hf_cache:/root/.cache/huggingface
     depends_on:
       db:
         condition: service_healthy   # pg_isready 통과 후에만 app 기동
@@ -40,6 +41,7 @@ services:
 
 volumes:
   pgdata:
+  hf_cache:
 
 networks:
   bot_network:
