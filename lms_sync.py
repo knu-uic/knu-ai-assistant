@@ -311,7 +311,6 @@ def _sync_favorite_courses(request: APIRequestContext, student_id: str) -> None:
                 if name:
                     names.append(name.strip())
             set_favorite_courses(student_id, sorted(names))
-            print(f"[fav sync] 즐겨찾기 과목 {len(names)}개 동기화 완료: {names}")
     except Exception as exc:
         print(f"Canvas 즐겨찾기 과목 동기화 실패: {exc}")
 
@@ -640,28 +639,6 @@ def _sync_lecture_items(
 
         if not isinstance(modules, list):
             continue
-
-        # 진단 로그: item type 분포 + ExternalTool 의 completion_requirement 통계.
-        type_count: dict[str, int] = {}
-        ext_total = 0
-        ext_cr_dict = 0
-        ext_cr_completed_true = 0
-        for module in modules:
-            for item in module.get("items") or []:
-                t = item.get("type") or "?"
-                type_count[t] = type_count.get(t, 0) + 1
-                if t == "ExternalTool":
-                    ext_total += 1
-                    cr = item.get("completion_requirement")
-                    if isinstance(cr, dict):
-                        ext_cr_dict += 1
-                        if cr.get("completed") is True:
-                            ext_cr_completed_true += 1
-        print(
-            f"[lecture probe] {course_name!r} types={type_count} "
-            f"ExternalTool={ext_total} cr_present={ext_cr_dict} "
-            f"cr_completed_true={ext_cr_completed_true}"
-        )
 
         for module in modules:
             module_name = module.get("name") or ""

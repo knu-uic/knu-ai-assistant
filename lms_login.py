@@ -18,19 +18,10 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sy
 
 DEFAULT_LMS_URL = "https://knulms.kongju.ac.kr"
 DEFAULT_PORTAL_URL = "https://portal.kongju.ac.kr/index.jsp"
-DEFAULT_SSO_LOGIN_URL = (
-    "https://kncu.kongju.ac.kr/xn-sso/login.php"
-    "?auto_login=&sso_only=&cvs_lgn=true&return_url="
-    "https%3A%2F%2Fkncu.kongju.ac.kr%2Fxn-sso%2Fgw-cb.php%3Ffrom%3Dweb_redirect%26"
-    "login_type%3Dstandalone%26return_url%3Dhttps%253A%252F%252Fknulms.kongju.ac.kr%252Flearningx%252Flogin"
-)
-DEFAULT_SSO_CALLBACK_URL = (
-    "https://kncu.kongju.ac.kr/xn-sso/gw-cb.php"
-    "?from=web_redirect&login_type=standalone&return_url="
-    "https%3A%2F%2Fknulms.kongju.ac.kr%2Flearningx%2Flogin"
-)
+DEFAULT_SSO_LOGIN_URL = "https://knulms.kongju.ac.kr"
 DEFAULT_STATE_PATH = ".secrets/lms_storage_state.json"
 DEFAULT_DEBUG_DIR = ".secrets/lms_login_debug"
+
 
 
 def _canvas_api_url(lms_url: str, path: str) -> str:
@@ -63,35 +54,13 @@ def _fill_first_available(page: Page, selectors: list[str], value: str) -> bool:
 
 
 def _submit_login_form(page: Page) -> None:
-    if page.locator("form[name='form1']").count() > 0:
-        try:
-            page.evaluate(
-                """(action) => {
-                    const form = document.forms["form1"];
-                    form.action = action;
-                    form.target = "_top";
-                    if (form.requestSubmit) {
-                        form.requestSubmit();
-                    } else {
-                        form.submit();
-                    }
-                }""",
-                DEFAULT_SSO_CALLBACK_URL,
-            )
-            page.wait_for_url(lambda url: "login.php" not in url, timeout=3000)
-            return
-        except Exception:
-            login_link = page.locator("a[href*='OnLogon']:visible")
-            if login_link.count() > 0:
-                login_link.first.click(timeout=3000)
-                return
-
     submit_selectors = [
+        "a[href*='OnLogon']",
+        "a:has-text('로그인')",
+        "button:has-text('로그인')",
+        "input[value='로그인']",
         "button[type='submit']",
         "input[type='submit']",
-        "a[href*='OnLogon']",
-        "button:has-text('로그인')",
-        "a:has-text('로그인')",
         "button:has-text('Login')",
     ]
     for selector in submit_selectors:
