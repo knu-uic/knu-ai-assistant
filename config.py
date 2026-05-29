@@ -146,6 +146,16 @@ ATTACHMENT_REFINE_FALLBACK_CHARS = 10000
 
 
 # -----------------------------
+# crawling
+# -----------------------------
+
+MAX_CRAWL_WORKERS = _env_int(
+    "MAX_CRAWL_WORKERS",
+    4,
+)
+
+
+# -----------------------------
 # answer / verifier
 # -----------------------------
 
@@ -181,6 +191,13 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
+
+RERANKER_PROVIDER = os.getenv("RERANKER_PROVIDER")
+if not RERANKER_PROVIDER:
+    if os.getenv("JINA_API_KEY"):
+        RERANKER_PROVIDER = "jina"
+    else:
+        RERANKER_PROVIDER = "local"
 
 RERANKER_MODEL = os.getenv("RERANKER_MODEL")
 

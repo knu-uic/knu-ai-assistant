@@ -19,8 +19,6 @@ langgraph
 langsmith
 
 # 임베딩 / 리랭킹
-# - sentence-transformers: BGE reranker + embedding local inference
-# - transformers/torch: CrossEncoder backend
 sentence-transformers
 transformers
 torch

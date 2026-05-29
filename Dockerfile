@@ -2,6 +2,8 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ENV HF_HOME=/root/.cache/huggingface
+
 # 시스템 패키지:
 #   - poppler-utils: pdf2image가 PDF 페이지를 이미지로 렌더링할 때 필요 (스캔 PDF VLM 폴백 경로)
 #   - fonts-noto-cjk: PDF 안에 한글 폰트가 임베드 안 돼 있을 때 렌더링 깨짐 방지

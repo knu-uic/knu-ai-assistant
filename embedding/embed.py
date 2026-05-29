@@ -179,19 +179,21 @@ def embed_document_chunks(
         attachment_name = item["attachment_name"]
         text = item["text"]
 
-        if title:
-            chunk_source = f"{title}\n\n{text}"
-        else:
-            chunk_source = text
-
-        chunks = chunk_text(chunk_source)
+        # 꼬리표를 합치지 않은 순수한 본문 텍스트 기준 분할
+        chunks = chunk_text(text)
 
         if not chunks:
             continue
 
-        vectors = embedder.embed_documents(chunks)
+        # 모든 쪼개진 개별 청크의 맨 앞에 공지 제목 꼬리표 부착
+        if title:
+            enriched_chunks = [f"[공지 제목: {title}]\n{c}" for c in chunks]
+        else:
+            enriched_chunks = chunks
 
-        for chunk_text_value, vector in zip(chunks, vectors):
+        vectors = embedder.embed_documents(enriched_chunks)
+
+        for chunk_text_value, vector in zip(enriched_chunks, vectors):
             results.append(
                 (
                     chunk_idx,

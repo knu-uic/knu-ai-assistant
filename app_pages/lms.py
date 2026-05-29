@@ -123,8 +123,21 @@ student_id = user["student_id"]
 favorite_courses = set(user.get("favorite_courses") or [])
 today = date.today()
 
-st.title("LMS")
-st.caption("공주대학교 LMS를 열고, 수강·과제·알림을 한곳에서 확인해요.")
+col_title, col_btn = st.columns([5, 2])
+with col_title:
+    st.title("LMS")
+    st.caption("공주대학교 LMS를 열고, 수강·과제·알림을 한곳에서 확인해요.")
+with col_btn:
+    st.write("")  # Vertical spacing to align with title
+    st.write("")
+    if st.button("🔄 LMS 동기화", use_container_width=True):
+        with st.spinner("LMS 동기화 중..."):
+            result = _sync_lms_tasks(student_id)
+            if result.returncode == 0:
+                st.success("동기화 완료!")
+                st.rerun()
+            else:
+                st.error("동기화 실패")
 
 if LMS_STATE_PATH.exists() and not st.session_state.get("lms_synced_this_session"):
     with st.spinner("LMS 세션을 확인하고 할 일을 자동 동기화하는 중이에요."):
@@ -140,27 +153,7 @@ _render_metric_cards(tasks)
 
 st.write("")
 
-c_sync, c_show_done = st.columns([1, 1])
-with c_sync:
-    if st.button("자동 동기화", type="primary", use_container_width=True):
-        if not LMS_STATE_PATH.exists():
-            st.warning("LMS 세션이 없습니다. 앱을 새로고침하면 로그인 화면으로 이동합니다.")
-        else:
-            with st.spinner("Canvas API로 LMS 할 일을 동기화하는 중이에요."):
-                result = _sync_lms_tasks(student_id)
-            if result.returncode == 0:
-                st.session_state.lms_synced_this_session = True
-                st.success(result.stdout.strip() or "LMS 동기화가 완료됐어요.")
-                st.rerun()
-            else:
-                st.error(result.stderr.strip() or result.stdout.strip() or "LMS 동기화에 실패했어요.")
-with c_show_done:
-    show_done = st.toggle("완료된 작업 표시", value=False)
-
-if not LMS_STATE_PATH.exists():
-    st.caption("LMS 세션이 없습니다. 앱을 새로고침하면 로그인 화면에서 다시 로그인할 수 있어요.")
-else:
-    st.caption("LMS 세션이 저장되어 있어요. 이 페이지에 들어오면 세션을 사용해 할 일을 자동 동기화합니다.")
+show_done = st.toggle("완료된 작업 표시", value=False)
 
 
 def _visible(ts: list[dict]) -> list[dict]:
@@ -175,6 +168,15 @@ def _render_favorite_section(task_type: str, empty_msg: str):
     type_tasks = _visible([t for t in tasks if t["task_type"] == task_type])
     for cname in sorted(favorite_courses):
         course_tasks = [t for t in type_tasks if t.get("course_name") == cname]
+        
+        # notice 타입이면 최신 알림순(due_date 내림차순)으로 정렬
+        if task_type == "notice":
+            course_tasks = sorted(
+                course_tasks,
+                key=lambda x: x.get("due_date") or date.min,
+                reverse=True
+            )
+
         with st.expander(cname, expanded=False):
             if not course_tasks:
                 st.caption(empty_msg)
@@ -183,14 +185,14 @@ def _render_favorite_section(task_type: str, empty_msg: str):
                     _render_task_card(task, today, student_id)
 
 
-tab_courses, tab_notices, tab_lectures, tab_assignments, tab_lms_run = st.tabs(
-    ["과목", "알림", "남은 수강", "남은 과제", "LMS 실행"]
+tab_courses, tab_notices, tab_lectures, tab_assignments = st.tabs(
+    ["과목", "알림", "남은 수강", "남은 과제"]
 )
 
 with tab_courses:
     courses = get_lms_courses(student_id)
     if not courses:
-        st.info("등록된 과목이 없어요. 위 '자동 동기화' 를 실행하세요.")
+        st.info("등록된 과목이 없어요. 위 '🔄 할 일 동기화' 를 실행하세요.")
     else:
         for course in courses:
             cname = course["course_name"]
@@ -223,14 +225,3 @@ with tab_lectures:
 
 with tab_assignments:
     _render_favorite_section("assignment", "표시할 과제가 없어요.")
-
-with tab_lms_run:
-    top = st.columns([1, 1, 4])
-    with top[0]:
-        st.link_button("새 탭에서 열기", LMS_URL, use_container_width=True)
-    with top[1]:
-        if st.button("다시 불러오기", use_container_width=True):
-            st.rerun()
-
-    st.caption("학교 SSO 로그인 화면이 보이면 그대로 로그인하면 됩니다. 브라우저 보안 정책으로 화면이 비어 보일 때는 새 탭에서 열어 주세요.")
-    components.iframe(LMS_URL, height=760, scrolling=True)

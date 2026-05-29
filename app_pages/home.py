@@ -145,13 +145,13 @@ major = user.get("major")
 year = user.get("year")
 
 st.caption(today.strftime("%Y년 %-m월 %-d일"))
-st.title(f"{user.get('name', '학생')}님, 오늘 꼭 필요한 3가지예요")
+name = user.get("name")
+if name:
+    st.title(f"{name}님, 오늘 꼭 필요한 3가지예요")
+else:
+    st.title("오늘 꼭 필요한 3가지예요")
 
-interest_label = ", ".join(f"'{kw}'" for kw in interests[:3]) if interests else "(없음)"
-st.caption(
-    f"{major or '학과 미설정'} · {user.get('year') or '-'}학년 기준으로 큐레이션했어요. "
-    f"관심사 {interest_label} 반영됨."
-)
+st.caption("관심사를 기준으로 큐레이션한 추천 공지입니다.")
 
 # ── 추천 3건 ───────────────────────────────────────────────────
 try:
@@ -162,6 +162,8 @@ except Exception as e:
     raw = []
 
 candidates = [row_to_notice_list(r) for r in (raw or [])]
+_HIDDEN_SOURCE_CODES = {"cse_curriculum", "business_curriculum", "scholarship_info"}
+candidates = [n for n in candidates if n.get("source_code") not in _HIDDEN_SOURCE_CODES]
 candidates = [n for n in candidates if not is_expired(n, today)]
 
 scored = []
@@ -359,4 +361,4 @@ if timetable_rows:
     except Exception as ex:
         st.error(f"시간표를 표시하는 중 오류가 발생했습니다: {ex}")
 else:
-    st.info("통합정보시스템(포털) 시간표 정보가 연동되지 않았습니다. 로그아웃 후 다시 로그인하여 연동해 주세요.")
+    st.info("통합정보시스템(포털) 시간표가 아직 연동되지 않았습니다. 설정 페이지에서 포털을 연동하면 시간표가 표시됩니다.")

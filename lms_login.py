@@ -18,19 +18,10 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sy
 
 DEFAULT_LMS_URL = "https://knulms.kongju.ac.kr"
 DEFAULT_PORTAL_URL = "https://portal.kongju.ac.kr/index.jsp"
-DEFAULT_SSO_LOGIN_URL = (
-    "https://kncu.kongju.ac.kr/xn-sso/login.php"
-    "?auto_login=&sso_only=&cvs_lgn=true&return_url="
-    "https%3A%2F%2Fkncu.kongju.ac.kr%2Fxn-sso%2Fgw-cb.php%3Ffrom%3Dweb_redirect%26"
-    "login_type%3Dstandalone%26return_url%3Dhttps%253A%252F%252Fknulms.kongju.ac.kr%252Flearningx%252Flogin"
-)
-DEFAULT_SSO_CALLBACK_URL = (
-    "https://kncu.kongju.ac.kr/xn-sso/gw-cb.php"
-    "?from=web_redirect&login_type=standalone&return_url="
-    "https%3A%2F%2Fknulms.kongju.ac.kr%2Flearningx%2Flogin"
-)
+DEFAULT_SSO_LOGIN_URL = "https://knulms.kongju.ac.kr"
 DEFAULT_STATE_PATH = ".secrets/lms_storage_state.json"
 DEFAULT_DEBUG_DIR = ".secrets/lms_login_debug"
+
 
 
 def _canvas_api_url(lms_url: str, path: str) -> str:
@@ -63,35 +54,13 @@ def _fill_first_available(page: Page, selectors: list[str], value: str) -> bool:
 
 
 def _submit_login_form(page: Page) -> None:
-    if page.locator("form[name='form1']").count() > 0:
-        try:
-            page.evaluate(
-                """(action) => {
-                    const form = document.forms["form1"];
-                    form.action = action;
-                    form.target = "_top";
-                    if (form.requestSubmit) {
-                        form.requestSubmit();
-                    } else {
-                        form.submit();
-                    }
-                }""",
-                DEFAULT_SSO_CALLBACK_URL,
-            )
-            page.wait_for_url(lambda url: "login.php" not in url, timeout=3000)
-            return
-        except Exception:
-            login_link = page.locator("a[href*='OnLogon']:visible")
-            if login_link.count() > 0:
-                login_link.first.click(timeout=3000)
-                return
-
     submit_selectors = [
+        "a[href*='OnLogon']",
+        "a:has-text('로그인')",
+        "button:has-text('로그인')",
+        "input[value='로그인']",
         "button[type='submit']",
         "input[type='submit']",
-        "a[href*='OnLogon']",
-        "button:has-text('로그인')",
-        "a:has-text('로그인')",
         "button:has-text('Login')",
     ]
     for selector in submit_selectors:
@@ -247,6 +216,34 @@ def _login_with_credentials(
             pass
 
         if _wait_for_canvas_session(context, page, lms_url, timeout):
+            print("[Token AutoGen] Canvas 설정 페이지로 이동하여 액세스 토큰 발급 시도 중...", flush=True)
+            try:
+                page.goto(urljoin(lms_url.rstrip("/") + "/", "/profile/settings"), wait_until="networkidle", timeout=20000)
+                # '새로운 액세스 토큰' 버튼 대기 및 클릭
+                page.wait_for_selector(".add_access_token_link", timeout=10000)
+                page.click(".add_access_token_link")
+                
+                # 목적 입력 대기 및 입력
+                page.wait_for_selector("#access_token_purpose", timeout=5000)
+                page.fill("#access_token_purpose", "KNU Student Assistant")
+                
+                # Generate Token 버튼 클릭
+                page.click("button.submit_button")
+                
+                # 생성된 토큰 스트링 대기 및 획득
+                page.wait_for_selector(".visible_token", timeout=10000)
+                token = page.locator(".visible_token").inner_text()
+                token = token.strip()
+                
+                if token:
+                    token_path = state_path.parent / "lms_canvas_token.txt"
+                    token_path.write_text(token, encoding="utf-8")
+                    print(f"[Token AutoGen] Canvas 액세스 토큰 자동 발급 성공! 저장 경로: {token_path}", flush=True)
+                else:
+                    print("[Token AutoGen] 토큰 문자열이 비어있습니다.", flush=True)
+            except Exception as e:
+                print(f"[Token AutoGen] 액세스 토큰 자동 발급 중 에러 발생 (건너뜀): {e}", flush=True)
+
             context.storage_state(path=str(state_path))
             browser.close()
             return

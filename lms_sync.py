@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import requests
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -16,13 +17,17 @@ from playwright.sync_api import APIRequestContext, sync_playwright
 
 from db import (
     delete_canvas_lecture_tasks,
+    delete_canvas_notice_tasks,
     ensure_users_schema,
+    get_user,
     set_favorite_courses,
     upsert_lms_course,
     upsert_lms_task,
+    upsert_user,
 )
-from ui import DEFAULT_STUDENT_ID, MAJORS
+from ui import MAJORS
 
+DEFAULT_STUDENT_ID = ""
 DEFAULT_LMS_URL = "https://knulms.kongju.ac.kr"
 DEFAULT_STATE_PATH = ".secrets/lms_storage_state.json"
 DEFAULT_CURRENT_USER_PATH = ".secrets/lms_current_user.json"
@@ -42,7 +47,13 @@ def _parse_canvas_date(value: str | None) -> date | None:
 
 
 def _request_context(playwright, base_url: str, state_path: Path) -> APIRequestContext:
-    token = os.getenv("CANVAS_ACCESS_TOKEN") or os.getenv("KNU_LMS_TOKEN")
+    token = None
+    token_path = state_path.parent / "lms_canvas_token.txt"
+    if token_path.exists():
+        token = token_path.read_text(encoding="utf-8").strip()
+    if not token:
+        token = os.getenv("CANVAS_ACCESS_TOKEN") or os.getenv("KNU_LMS_TOKEN")
+        
     headers = {"Accept": "application/json"}
     storage_state = str(state_path) if state_path.exists() else None
 
@@ -54,6 +65,70 @@ def _request_context(playwright, base_url: str, state_path: Path) -> APIRequestC
         extra_http_headers=headers,
         storage_state=storage_state,
     )
+
+
+def _refresh_learningx_session_with_token(token: str, state_path: Path, lms_url: str) -> bool:
+    """Canvas Access Token을 사용해 sessionless_launch API를 쏘고,
+    Playwright headless로 해당 URL에 접속하여 LearningX 세션 쿠키(xn_api_token)를 백그라운드 갱신합니다.
+    """
+    print("[LMS Sync] Canvas 토큰을 사용해 LearningX 세션 쿠키 갱신을 시도합니다...", flush=True)
+    try:
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+        
+        # 1. 수강 중인 임의의 코스 ID 획득
+        courses_url = urljoin(lms_url.rstrip("/") + "/", "/api/v1/courses")
+        res = requests.get(courses_url, headers=headers, params={"enrollment_state": "active", "per_page": 1}, timeout=10)
+        if not res.ok:
+            print(f"[LMS Sync] 코스 조회 실패 (Token Invalid 가능성): {res.status_code}", flush=True)
+            return False
+            
+        courses = res.json()
+        if not isinstance(courses, list) or not courses:
+            print("[LMS Sync] 활성화된 코스가 없어 갱신할 수 없습니다.", flush=True)
+            return False
+            
+        course_id = courses[0]["id"]
+        
+        # 2. sessionless_launch API 호출
+        launch_api_url = urljoin(lms_url.rstrip("/") + "/", f"/api/v1/courses/{course_id}/external_tools/sessionless_launch")
+        launch_res = requests.get(
+            launch_api_url,
+            headers=headers,
+            params={"url": urljoin(lms_url.rstrip("/") + "/", "/learningx/login")},
+            timeout=10
+        )
+        if not launch_res.ok:
+            print(f"[LMS Sync] sessionless_launch API 실패: {launch_res.status_code}", flush=True)
+            return False
+            
+        launch_url = launch_res.json().get("url")
+        if not launch_url:
+            print("[LMS Sync] Launch URL을 획득하지 못했습니다.", flush=True)
+            return False
+            
+        # 3. Playwright headless로 Launch URL 접속하여 쿠키 갱신
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context_opts = {}
+            if state_path.exists():
+                context_opts["storage_state"] = str(state_path)
+            context = browser.new_context(**context_opts)
+            page = context.new_page()
+            
+            page.goto(launch_url, wait_until="networkidle", timeout=20000)
+            time.sleep(3)  # 쿠키 쓰기 대기
+            
+            context.storage_state(path=str(state_path))
+            browser.close()
+            
+        print("[LMS Sync] Canvas 토큰 기반 LearningX 세션 쿠키 갱신 완료", flush=True)
+        return True
+    except Exception as e:
+        print(f"[LMS Sync] 토큰 기반 세션 갱신 중 예외 발생: {e}", flush=True)
+        return False
 
 
 def _load_state_cookies(state_path: Path, domain: str) -> dict[str, str]:
@@ -236,7 +311,6 @@ def _sync_favorite_courses(request: APIRequestContext, student_id: str) -> None:
                 if name:
                     names.append(name.strip())
             set_favorite_courses(student_id, sorted(names))
-            print(f"[fav sync] 즐겨찾기 과목 {len(names)}개 동기화 완료: {names}")
     except Exception as exc:
         print(f"Canvas 즐겨찾기 과목 동기화 실패: {exc}")
 
@@ -280,6 +354,11 @@ def _sync_planner_items(
 
     count = 0
     for item in items:
+        plannable_type = (item.get("plannable_type") or "").lower()
+        # 이미 _sync_announcements에서 공식 공지를 중복 없이 더 신뢰성 있게 긁어오므로 스킵
+        if "announcement" in plannable_type:
+            continue
+
         plannable = item.get("plannable") or {}
         title = (
             item.get("title")
@@ -297,12 +376,20 @@ def _sync_planner_items(
             or item.get("plannable_date")
             or item.get("todo_date")
         )
-        external_id = "planner:" + str(
-            item.get("plannable_id")
-            or item.get("id")
-            or item.get("html_url")
-            or title
-        )
+        url = item.get("html_url") or plannable.get("html_url")
+        if url and url.startswith("/"):
+            url = urljoin(DEFAULT_LMS_URL, url)
+
+        plannable_id = item.get("plannable_id")
+        if plannable_type == "assignment" and plannable_id:
+            external_id = f"assignment:{plannable_id}"
+        else:
+            external_id = "planner:" + str(
+                plannable_id
+                or item.get("id")
+                or url
+                or title
+            )
 
         upsert_lms_task(
             student_id=student_id,
@@ -310,7 +397,7 @@ def _sync_planner_items(
             title=title,
             course_name=course_name,
             due_date=_parse_canvas_date(due),
-            url=item.get("html_url") or plannable.get("html_url"),
+            url=url,
             is_done=_is_done_from_planner(item),
             source="canvas",
             external_id=external_id,
@@ -339,14 +426,19 @@ def _sync_todo_items(
         if not course_name and course_id is not None:
             course_name = courses.get(int(course_id))
 
-        external_id = "todo:" + str(
-            item.get("type")
-            or assignment.get("id")
-            or item.get("html_url")
-            or title
-        )
-        if assignment.get("id") is not None:
-            external_id += f":{assignment['id']}"
+        url = assignment.get("html_url") or item.get("html_url")
+        if url and url.startswith("/"):
+            url = urljoin(DEFAULT_LMS_URL, url)
+
+        assignment_id = assignment.get("id")
+        if assignment_id:
+            external_id = f"assignment:{assignment_id}"
+        else:
+            external_id = "todo:" + str(
+                item.get("type")
+                or url
+                or title
+            )
 
         upsert_lms_task(
             student_id=student_id,
@@ -354,7 +446,7 @@ def _sync_todo_items(
             title=title,
             course_name=course_name,
             due_date=_parse_canvas_date(assignment.get("due_at")),
-            url=assignment.get("html_url") or item.get("html_url"),
+            url=url,
             is_done=False,
             source="canvas",
             external_id=external_id,
@@ -370,6 +462,7 @@ def _sync_announcements(
     courses: dict[int, str],
     days: int,
 ) -> int:
+    delete_canvas_notice_tasks(student_id)
     if not courses:
         return 0
 
@@ -440,56 +533,80 @@ def _sync_lecture_items(
 
     count = 0
     for course_id, course_name in courses.items():
+        learningx_success = False
         if learningx is not None:
             try:
                 modules = _get_learningx_modules(learningx, base_url, course_id)
+                learningx_success = True
             except RuntimeError as exc:
-                print(f"LearningX 강의 동기화 건너뜀: course_{course_id} ({exc})")
+                print(f"LearningX 강의 동기화 실패: course_{course_id} ({exc})", flush=True)
+                
+                # Canvas 토큰이 있으면 세션 쿠키 백그라운드 갱신 후 1회 재시도
+                token_path = Path(DEFAULT_STATE_PATH).parent / "lms_canvas_token.txt"
+                if token_path.exists():
+                    token_val = token_path.read_text(encoding="utf-8").strip()
+                    if token_val:
+                        if _refresh_learningx_session_with_token(token_val, Path(DEFAULT_STATE_PATH), base_url):
+                            # learningx 세션 객체 쿠키 갱신 및 재생성
+                            new_learningx = _learningx_session(base_url, Path(DEFAULT_STATE_PATH))
+                            if new_learningx is not None:
+                                try:
+                                    print(f"LearningX 강의 동기화 재시도 중: course_{course_id}", flush=True)
+                                    modules = _get_learningx_modules(new_learningx, base_url, course_id)
+                                    learningx_success = True
+                                    # 갱신된 세션 정보를 원래 세션 변수에도 덮어씌워 다음 코스 조회 때 사용되도록 함
+                                    learningx = new_learningx
+                                except RuntimeError as retry_exc:
+                                    print(f"LearningX 강의 동기화 재시도 실패: {retry_exc}", flush=True)
+                
+                if not learningx_success:
+                    print(f"LearningX 강의 동기화 최종 실패(Canvas API 폴백 시도): course_{course_id}", flush=True)
+                    learningx_success = False
+                
+            if learningx_success:
+                for module in modules:
+                    module_name = module.get("title") or ""
+                    for item in module.get("module_items") or []:
+                        if item.get("content_type") != "attendance_item":
+                            continue
+                        if item.get("completed") is True:
+                            continue
+                        if item.get("attendance_status") == "attendance":
+                            continue
+
+                        # content_type 이 mp4, movie, readystream 이 아닌 것은 스킵 (pdf, file 등 가짜 강의 필터링)
+                        content_data = item.get("content_data") or {}
+                        item_content_data = content_data.get("item_content_data") or {}
+                        file_type = str(item_content_data.get("content_type") or "").lower()
+                        if file_type not in ("mp4", "movie", "readystream"):
+                            continue
+
+                        item_id = item.get("module_item_id")
+                        if item_id is None:
+                            continue
+
+                        item_title = item.get("title") or "동영상 강의"
+                        title = f"{module_name} · {item_title}" if module_name else item_title
+                        url = f"{base_url.rstrip('/')}/courses/{course_id}/modules/items/{item_id}"
+                        due_date = _parse_canvas_date(
+                            item.get("content_data", {}).get("due_at")
+                        )
+
+                        upsert_lms_task(
+                            student_id=student_id,
+                            task_type="lecture",
+                            title=title,
+                            course_name=course_name,
+                            due_date=due_date,
+                            progress=None,
+                            url=url,
+                            is_done=False,
+                            source="canvas",
+                            external_id=f"lecture_item:{course_id}:{item_id}",
+                            raw=item,
+                        )
+                        count += 1
                 continue
-
-            for module in modules:
-                module_name = module.get("title") or ""
-                for item in module.get("module_items") or []:
-                    if item.get("content_type") != "attendance_item":
-                        continue
-                    if item.get("completed") is True:
-                        continue
-                    if item.get("attendance_status") == "attendance":
-                        continue
-
-                    # content_type 이 mp4, movie 가 아닌 것은 스킵 (pdf, file 등 가짜 강의 필터링)
-                    content_data = item.get("content_data") or {}
-                    item_content_data = content_data.get("item_content_data") or {}
-                    file_type = item_content_data.get("content_type")
-                    if file_type not in ("mp4", "movie"):
-                        continue
-
-                    item_id = item.get("module_item_id")
-                    if item_id is None:
-                        continue
-
-                    item_title = item.get("title") or "동영상 강의"
-                    title = f"{module_name} · {item_title}" if module_name else item_title
-                    url = f"{base_url.rstrip('/')}/courses/{course_id}/modules/items/{item_id}"
-                    due_date = _parse_canvas_date(
-                        item.get("content_data", {}).get("due_at")
-                    )
-
-                    upsert_lms_task(
-                        student_id=student_id,
-                        task_type="lecture",
-                        title=title,
-                        course_name=course_name,
-                        due_date=due_date,
-                        progress=None,
-                        url=url,
-                        is_done=False,
-                        source="canvas",
-                        external_id=f"lecture_item:{course_id}:{item_id}",
-                        raw=item,
-                    )
-                    count += 1
-            continue
 
         modules = None
         try:
@@ -522,28 +639,6 @@ def _sync_lecture_items(
 
         if not isinstance(modules, list):
             continue
-
-        # 진단 로그: item type 분포 + ExternalTool 의 completion_requirement 통계.
-        type_count: dict[str, int] = {}
-        ext_total = 0
-        ext_cr_dict = 0
-        ext_cr_completed_true = 0
-        for module in modules:
-            for item in module.get("items") or []:
-                t = item.get("type") or "?"
-                type_count[t] = type_count.get(t, 0) + 1
-                if t == "ExternalTool":
-                    ext_total += 1
-                    cr = item.get("completion_requirement")
-                    if isinstance(cr, dict):
-                        ext_cr_dict += 1
-                        if cr.get("completed") is True:
-                            ext_cr_completed_true += 1
-        print(
-            f"[lecture probe] {course_name!r} types={type_count} "
-            f"ExternalTool={ext_total} cr_present={ext_cr_dict} "
-            f"cr_completed_true={ext_cr_completed_true}"
-        )
 
         for module in modules:
             module_name = module.get("name") or ""
@@ -610,10 +705,18 @@ def main() -> int:
         learningx = _learningx_session(args.url, state_path)
         courses = _course_map(request)
         student_id, profile = _sync_user_profile(request, args.student_id, courses)
+        # lms_courses FK(student_id → users) 위반 방지: 기존 user row가 있으면 덮어쓰지 않고, 없을 때만 기본값으로 삽입
+        if get_user(student_id) is None:
+            upsert_user(
+                student_id=student_id,
+                name="이름 미설정",
+                major="",
+                year=None,
+            )
         course_count = _sync_courses(student_id, courses)
         _sync_favorite_courses(request, student_id)
-        planner_count = _sync_planner_items(request, student_id, courses, args.days)
         todo_count = _sync_todo_items(request, student_id, courses)
+        planner_count = _sync_planner_items(request, student_id, courses, args.days)
         announcement_count = _sync_announcements(
             request,
             student_id,

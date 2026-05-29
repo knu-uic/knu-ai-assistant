@@ -1,10 +1,11 @@
 """페이지 공용 상수, 데이터 변환 헬퍼, 사용자 컨텍스트."""
 
+import html
 from datetime import date
 
 import streamlit as st
 
-from db import get_user, upsert_user
+from db import get_user
 
 
 # ── 도메인 상수 ─────────────────────────────────────────────────
@@ -55,39 +56,37 @@ INTEREST_KEYWORD_POOL = [
 MAX_INTERESTS = 6
 
 
-# ── 단일 사용자 컨텍스트 ────────────────────────────────────────
-# 프로토타입은 한 명만 쓴다고 가정. 학번 키만 정의하고 첫 진입 시 시드한다.
+# ── 사용자 컨텍스트 ─────────────────────────────────────────────
+# 신원(학번)은 세션/연동 상태에서 가져오며, 없으면 익명으로 동작한다.
 
-DEFAULT_STUDENT_ID = "202112345"
 CURRENT_STUDENT_ID_KEY = "current_student_id"
-_DEFAULT_PROFILE = {
-    "student_id": DEFAULT_STUDENT_ID,
-    "name": "이지원",
-    "major": "컴퓨터공학과",
-    "year": 3,
-    "interests": ["인턴", "장학금", "캡스톤", "해커톤"],
+
+
+_ANON_PROFILE = {
+    "student_id": None,
+    "name": None,
+    "major": None,
+    "year": None,
+    "interests": [],
 }
 
 
 def get_current_user() -> dict:
-    """현재 사용자 프로필. DB에 없으면 기본값으로 시드한 뒤 반환."""
-    student_id = st.session_state.get(CURRENT_STUDENT_ID_KEY, DEFAULT_STUDENT_ID)
-    default_profile = {
-        **_DEFAULT_PROFILE,
-        "student_id": student_id,
-    }
+    """현재 사용자 프로필. 신원(학번)이 없으면 익명 빈 프로필을 반환(가짜 시드 안 함).
+
+    신원 판별은 integrations.get_student_id()에 위임(지연 import로 순환 방지).
+    """
+    from integrations import get_student_id
+
+    student_id = get_student_id()
+    if not student_id:
+        anon = dict(_ANON_PROFILE)
+        anon["interests"] = st.session_state.get("interests", [])
+        return anon
 
     user = get_user(student_id)
     if user is None:
-        upsert_user(
-            student_id=default_profile["student_id"],
-            name=default_profile["name"],
-            major=default_profile["major"],
-            year=default_profile["year"],
-            interests=default_profile["interests"],
-        )
-        user = get_user(student_id)
-    assert user is not None
+        return {**_ANON_PROFILE, "student_id": student_id, "interests": st.session_state.get("interests", [])}
     return user
 
 
@@ -209,3 +208,82 @@ def render_sidebar_user_card(user: dict):
             st.markdown(f"**{user.get('name') or '이름 미설정'}**")
             year_str = f"· {user['year']}학년" if user.get("year") else ""
             st.caption(f"{user.get('major') or '학과 미설정'} {year_str}")
+
+
+# ── 포털 성적 그리드 렌더 ────────────────────────────────────────
+# knuis_sync.py가 저장하는 그리드는 {title, columns: [...], rows: [[...]]} 구조.
+# pandas 의존을 피하려 가로 스크롤 HTML 표로 렌더(시간표/취득학점 렌더와 동일 방식).
+
+_GRADE_GRID_CSS = """
+<style>
+.grade-grid-container {
+    margin: 6px 0 14px 0;
+    border: 1px solid rgba(128, 128, 128, 0.15);
+    border-radius: 8px;
+    overflow-x: auto;
+}
+.grade-grid {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: center;
+    font-size: 13px;
+    white-space: nowrap;
+}
+.grade-grid th {
+    background-color: rgba(128, 128, 128, 0.12);
+    color: inherit;
+    font-weight: 600;
+    padding: 8px 10px;
+    border: 1px solid rgba(128, 128, 128, 0.25);
+}
+.grade-grid td {
+    padding: 8px 10px;
+    border: 1px solid rgba(128, 128, 128, 0.15);
+}
+.grade-grid tbody tr:hover {
+    background-color: rgba(128, 128, 128, 0.04);
+}
+</style>
+"""
+
+
+def _esc(value) -> str:
+    return html.escape(str(value if value is not None else ""))
+
+
+def render_grade_grid(grid: dict):
+    """{title, columns, rows} 그리드를 가로 스크롤 HTML 표로 렌더. 빈 그리드는 무시."""
+    if not grid or not grid.get("rows"):
+        return
+    columns = grid.get("columns") or []
+    rows = grid.get("rows") or []
+    title = grid.get("title")
+    if title:
+        st.markdown(f"**{_esc(title)}**")
+
+    width = len(columns) if columns else (len(rows[0]) if rows else 0)
+    parts = ['<div class="grade-grid-container"><table class="grade-grid">']
+    if columns:
+        parts.append(
+            "<thead><tr>"
+            + "".join(f"<th>{_esc(c)}</th>" for c in columns)
+            + "</tr></thead>"
+        )
+    parts.append("<tbody>")
+    for row in rows:
+        cells = (list(row) + [""] * width)[:width] if width else list(row)
+        parts.append(
+            "<tr>" + "".join(f"<td>{_esc(c)}</td>" for c in cells) + "</tr>"
+        )
+    parts.append("</tbody></table></div>")
+    st.markdown(_GRADE_GRID_CSS + "".join(parts), unsafe_allow_html=True)
+
+
+def render_kv_summary(pairs):
+    """[[라벨, 값], ...] 요약을 metric 카드 행으로 렌더."""
+    pairs = [p for p in (pairs or []) if p and len(p) >= 2]
+    if not pairs:
+        return
+    cols = st.columns(len(pairs))
+    for col, pair in zip(cols, pairs):
+        col.metric(str(pair[0]), str(pair[1]))
