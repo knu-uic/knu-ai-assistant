@@ -25,8 +25,9 @@ from db import (
     upsert_lms_task,
     upsert_user,
 )
-from ui import DEFAULT_STUDENT_ID, MAJORS
+from ui import MAJORS
 
+DEFAULT_STUDENT_ID = ""
 DEFAULT_LMS_URL = "https://knulms.kongju.ac.kr"
 DEFAULT_STATE_PATH = ".secrets/lms_storage_state.json"
 DEFAULT_CURRENT_USER_PATH = ".secrets/lms_current_user.json"
@@ -380,12 +381,16 @@ def _sync_planner_items(
         if url and url.startswith("/"):
             url = urljoin(DEFAULT_LMS_URL, url)
 
-        external_id = "planner:" + str(
-            item.get("plannable_id")
-            or item.get("id")
-            or url
-            or title
-        )
+        plannable_id = item.get("plannable_id")
+        if plannable_type == "assignment" and plannable_id:
+            external_id = f"assignment:{plannable_id}"
+        else:
+            external_id = "planner:" + str(
+                plannable_id
+                or item.get("id")
+                or url
+                or title
+            )
 
         upsert_lms_task(
             student_id=student_id,
@@ -426,14 +431,15 @@ def _sync_todo_items(
         if url and url.startswith("/"):
             url = urljoin(DEFAULT_LMS_URL, url)
 
-        external_id = "todo:" + str(
-            item.get("type")
-            or assignment.get("id")
-            or url
-            or title
-        )
-        if assignment.get("id") is not None:
-            external_id += f":{assignment['id']}"
+        assignment_id = assignment.get("id")
+        if assignment_id:
+            external_id = f"assignment:{assignment_id}"
+        else:
+            external_id = "todo:" + str(
+                item.get("type")
+                or url
+                or title
+            )
 
         upsert_lms_task(
             student_id=student_id,
@@ -569,11 +575,11 @@ def _sync_lecture_items(
                         if item.get("attendance_status") == "attendance":
                             continue
 
-                        # content_type 이 mp4, movie 가 아닌 것은 스킵 (pdf, file 등 가짜 강의 필터링)
+                        # content_type 이 mp4, movie, readystream 이 아닌 것은 스킵 (pdf, file 등 가짜 강의 필터링)
                         content_data = item.get("content_data") or {}
                         item_content_data = content_data.get("item_content_data") or {}
-                        file_type = item_content_data.get("content_type")
-                        if file_type not in ("mp4", "movie"):
+                        file_type = str(item_content_data.get("content_type") or "").lower()
+                        if file_type not in ("mp4", "movie", "readystream"):
                             continue
 
                         item_id = item.get("module_item_id")
@@ -732,8 +738,8 @@ def main() -> int:
             )
         course_count = _sync_courses(student_id, courses)
         _sync_favorite_courses(request, student_id)
-        planner_count = _sync_planner_items(request, student_id, courses, args.days)
         todo_count = _sync_todo_items(request, student_id, courses)
+        planner_count = _sync_planner_items(request, student_id, courses, args.days)
         announcement_count = _sync_announcements(
             request,
             student_id,

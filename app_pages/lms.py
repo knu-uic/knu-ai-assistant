@@ -123,8 +123,21 @@ student_id = user["student_id"]
 favorite_courses = set(user.get("favorite_courses") or [])
 today = date.today()
 
-st.title("LMS")
-st.caption("공주대학교 LMS를 열고, 수강·과제·알림을 한곳에서 확인해요.")
+col_title, col_btn = st.columns([5, 2])
+with col_title:
+    st.title("LMS")
+    st.caption("공주대학교 LMS를 열고, 수강·과제·알림을 한곳에서 확인해요.")
+with col_btn:
+    st.write("")  # Vertical spacing to align with title
+    st.write("")
+    if st.button("🔄 LMS 동기화", use_container_width=True):
+        with st.spinner("LMS 동기화 중..."):
+            result = _sync_lms_tasks(student_id)
+            if result.returncode == 0:
+                st.success("동기화 완료!")
+                st.rerun()
+            else:
+                st.error("동기화 실패")
 
 if LMS_STATE_PATH.exists() and not st.session_state.get("lms_synced_this_session"):
     with st.spinner("LMS 세션을 확인하고 할 일을 자동 동기화하는 중이에요."):

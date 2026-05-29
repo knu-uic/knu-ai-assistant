@@ -18,11 +18,14 @@ if "chat_history" not in st.session_state:
 # 빈 대화일 때 환영 메시지 + 제안 프롬프트.
 if not st.session_state.chat_history:
     with st.chat_message("assistant"):
-        st.markdown(f"안녕하세요 {user.get('name', '학생')}님 👋")
-        st.markdown(
-            f"{major or '학과 미설정'} · {user.get('year') or '-'}학년에 맞춰 답변해드릴게요. "
-            "공지사항·장학·취업·수업자료 무엇이든 물어보세요."
-        )
+        if user.get("student_id"):
+            st.markdown(f"안녕하세요 {user.get('name', '학생')}님 👋")
+            st.markdown(
+                f"{major or '학과 미설정'} · {user.get('year') or '-'}학년에 맞춰 답변해드릴게요. "
+                "공지사항·장학·취업·수업자료 무엇이든 물어보세요."
+            )
+        else:
+            st.markdown("공지사항·장학·취업·수업자료 무엇이든 물어보세요.")
         suggestions = [
             "이번 학기 장학금 신청 일정 알려줘",
             "5월에 마감되는 인턴 공고 정리해줘",
