@@ -65,133 +65,71 @@ def open_menu(page, menu_id, timeout_sec=120) -> bool:
     return False
 
 
+# 졸업 G4 86컬럼 → grad_json 22슬롯 매핑.
+# (grad_json 경로, 기준 컬럼(SUST_*), 취득 컬럼). 컬럼=None이면 "0".
+# arrData 컬럼명이 명시적이라 DOM 위치파싱에서 어긋났던 교직/융합탐색 정렬 문제가 바로잡힌다.
+# ※ 교직 자과/타과, 콜라주 기초/필수 4슬롯은 컬럼 식별이 불확실 → 검증 단계에서 DOM 대조 후 확정.
+GRAD_G4_MAP = [
+    (("교양", "기초교양", "필수"), "SUST_BASIC_CUL_ESSEN", "BASIC_CUL_ESSEN"),
+    (("교양", "기초교양", "선택"), "SUST_BASIC_CUL_CHOOSE", "BASIC_CUL_CHOOSE"),
+    (("교양", "균형교양", "선택"), "SUST_BAL_CUL_CHOOSE", "BAL_CUL_CHOOSE"),
+    (("교양", "소양교양", "필수"), "SUST_ACCOM_CUL_ESSEN", "ACCOM_CUL_ESSEN"),
+    (("교양", "소양교양", "선택"), "SUST_ACCOM_CUL_CHOOSE", "ACCOM_CUL_CHOOSE"),
+    (("교양", "계"), "SUST_CUL_SUM", "CUL_SUM"),
+    (("전공", "최소전공인정학점", "전공기초"), "SUST_SUB_BGN", "SUB_BGN"),
+    (("전공", "최소전공인정학점", "콜라주"), "SUST_COL", "COL"),
+    (("전공", "최소전공인정학점", "전공핵심"), "SUST_SUB_KEY", "SUB_KEY"),
+    (("전공", "최소전공인정학점", "소계"), "SUST_SUB_SUM1", "SUB_SUM1"),
+    (("전공", "전공심화"), "SUST_SUB_DEEP", "SUB_DEEP"),
+    (("전공", "계"), "SUST_SUB_SUM2", "SUB_SUM2"),
+    (("교직", "자과"), "SUST_PRO", "PRO"),          # 검증필요: 교직 컬럼 식별 불확실
+    (("교직", "타과"), None, None),                  # 검증필요: 대응 컬럼 미상(0 추정)
+    (("융합탐색",), "SUST_FUSION_RESER", "FUSION_RESER"),
+    (("복수전공", "필수"), "DOU_ESSEN_LCTPT", "DOU_SUB_ESSEN"),
+    (("복수전공", "선택"), "DOU_CHOOSE_LCTPT", "DOU_SUB_CHOOSE"),
+    (("부전공", "필수"), "MIN_ESSEN_LCTPT", "MIN_SUB_ESSEN"),
+    (("부전공", "선택"), "MIN_CHOOSE_LCTPT", "MIN_SUB_CHOOSE"),
+    (("졸업학점계",), "SUST_TOT_SUM", "TOT_SUM"),
+    (("콜라주", "기초"), None, "COL_SELF"),          # 검증필요: 취득값(COL_SELF) 매칭, 기준 미상
+    (("콜라주", "필수"), None, "COL_OTHER"),          # 검증필요
+]
+
+
+def _set_nested(d, path, value):
+    """중첩 dict의 path 경로에 value 설정. 중간 노드 없으면 생성."""
+    for key in path[:-1]:
+        d = d.setdefault(key, {})
+    d[path[-1]] = value
+
+
 def parse_graduation_data(data_frame) -> tuple[str, str, int, dict]:
-    """졸업사전예고 프레임에서 학적 마스터 정보와 취득학점 상세 정보를 파싱하여 반환합니다."""
-    # 1. 학적 기본정보(#F_SRCH) — 콘솔 후킹으로 확인한 학적 영역 ID를 직접 타겟.
-    #    구버전 호환을 위해 ID 미발견 시 키워드(소속학과+적용학과) 표 탐색으로 fallback.
-    info_table = data_frame.query_selector("#F_SRCH")
-    if info_table is None:
-        for table in data_frame.query_selector_all("table"):
-            text = table.inner_text()
-            if "소속학과" in text and "적용학과" in text:
-                info_table = table
-                break
-    if not info_table:
-        raise RuntimeError("학적 기본 정보(#F_SRCH)를 찾지 못했습니다.")
-        
-    rows_data = info_table.evaluate(r"""
-        table => {
-            const trs = Array.from(table.querySelectorAll('tr'));
-            return trs.map(tr => {
-                const cells = Array.from(tr.querySelectorAll('td, th'));
-                return cells.map(cell => {
-                    const input = cell.querySelector('input, select');
-                    if (input) {
-                        return input.value.trim();
-                    }
-                    return cell.innerText.trim().replace(/\xa0/g, ' ').replace(/\n/g, ' ');
-                });
-            });
-        }
-    """)
-    
-    # 키-값 쌍 매핑
-    info_dict = {}
-    for row_data in rows_data:
-        if len(row_data) >= 2:
-            for i in range(0, len(row_data) - 1, 2):
-                label = row_data[i].strip().replace(" ", "")
-                val = row_data[i+1].strip() if i+1 < len(row_data) else ""
-                if label:
-                    info_dict[label] = val
-                    
-    student_name = info_dict.get("성명") or "이름 미설정"
-    student_major = info_dict.get("소속학과") or "학과 미설정"
-    year_str = info_dict.get("학년") or "1"
-    
-    # "3학년" -> 3 변환
+    """졸업사전예고 프레임에서 학적(F_SRCH)·취득학점(G4)을 arrData에서 직접 파싱.
+    grad_json 중첩 구조는 기존과 동일하게 유지(portal.py cols_def 호환)."""
+    # 1. 학적 기본정보 — F_SRCH arrData (NM/SUST_NM/SYEAR)
+    f = get_arrdata(data_frame, "F_SRCH")
+    if not f:
+        raise RuntimeError("학적 기본 정보(F_SRCH arrData)를 찾지 못했습니다.")
+    student_name = _av(f, "NM", 0) or "이름 미설정"
+    student_major = _av(f, "SUST_NM", 0) or "학과 미설정"
+    year_str = _av(f, "SYEAR", 0) or "1"
     match = re.search(r"(\d+)", year_str)
     student_year = int(match.group(1)) if match else 1
-    
-    # 2. 취득학점 요약(#G4) — 콘솔 후킹으로 확인한 졸업학점 표 ID를 직접 타겟.
-    #    G4는 .Data 가상 그리드가 아닌 정적 표이므로 collect_webcrea_grid 대신 직접 파싱.
-    grad_table = data_frame.query_selector("#G4")
-    if grad_table is None:
-        for table in data_frame.query_selector_all("table"):
-            text = table.inner_text()
-            if "기준학점" in text and "취득학점" in text and "최소전공인정학점" in text:
-                grad_table = table
-                break
-    if not grad_table:
-        raise RuntimeError("졸업 취득 학점 요약(#G4)을 찾지 못했습니다.")
-        
-    grad_rows = grad_table.query_selector_all("tr")
-    standards = None
-    taken = None
-    
-    for row in grad_rows:
-        cells = row.query_selector_all("td, th")
-        row_data = [c.inner_text().strip().replace('\xa0', ' ').replace('\n', ' ') for c in cells]
-        if len(row_data) > 0:
-            if "기준학점" in row_data[0]:
-                standards = row_data
-            elif "취득학점" in row_data[0]:
-                taken = row_data
-                
-    if not standards or not taken:
-        raise RuntimeError("기준학점 또는 취득학점 행을 파싱하지 못했습니다.")
-        
-    def get_val(arr, idx):
-        if idx < len(arr):
-            val = arr[idx].strip()
-            return val if val else "0"
-        return "0"
-        
-    grad_json = {
-        "교양": {
-            "기초교양": {
-                "필수": {"기준": get_val(standards, 1), "취득": get_val(taken, 1)},
-                "선택": {"기준": get_val(standards, 2), "취득": get_val(taken, 2)}
-            },
-            "균형교양": {
-                "선택": {"기준": get_val(standards, 3), "취득": get_val(taken, 3)}
-            },
-            "소양교양": {
-                "필수": {"기준": get_val(standards, 4), "취득": get_val(taken, 4)},
-                "선택": {"기준": get_val(standards, 5), "취득": get_val(taken, 5)}
-            },
-            "계": {"기준": get_val(standards, 6), "취득": get_val(taken, 6)}
-        },
-        "전공": {
-            "최소전공인정학점": {
-                "전공기초": {"기준": get_val(standards, 7), "취득": get_val(taken, 7)},
-                "콜라주": {"기준": get_val(standards, 8), "취득": get_val(taken, 8)},
-                "전공핵심": {"기준": get_val(standards, 9), "취득": get_val(taken, 9)},
-                "소계": {"기준": get_val(standards, 10), "취득": get_val(taken, 10)}
-            },
-            "전공심화": {"기준": get_val(standards, 11), "취득": get_val(taken, 11)},
-            "계": {"기준": get_val(standards, 12), "취득": get_val(taken, 12)}
-        },
-        "교직": {
-            "자과": {"기준": get_val(standards, 13), "취득": get_val(taken, 13)},
-            "타과": {"기준": get_val(standards, 14), "취득": get_val(taken, 14)}
-        },
-        "융합탐색": {"기준": get_val(standards, 15), "취득": get_val(taken, 15)},
-        "복수전공": {
-            "필수": {"기준": get_val(standards, 16), "취득": get_val(taken, 16)},
-            "선택": {"기준": get_val(standards, 17), "취득": get_val(taken, 17)}
-        },
-        "부전공": {
-            "필수": {"기준": get_val(standards, 18), "취득": get_val(taken, 18)},
-            "선택": {"기준": get_val(standards, 19), "취득": get_val(taken, 19)}
-        },
-        "졸업학점계": {"기준": get_val(standards, 20), "취득": get_val(taken, 20)},
-        "콜라주": {
-            "기초": {"기준": get_val(standards, 21), "취득": get_val(taken, 21)},
-            "필수": {"기준": get_val(standards, 22), "취득": get_val(taken, 22)}
-        }
-    }
-    
+
+    # 2. 취득학점 요약 — G4 arrData(1행). SUST_*=기준, 접두사 없음=취득.
+    g4 = get_arrdata(data_frame, "G4")
+    if not g4:
+        raise RuntimeError("졸업 취득 학점 요약(G4 arrData)을 찾지 못했습니다.")
+
+    def cell(col):
+        if col is None:
+            return "0"
+        v = _av(g4, col, 0)
+        return v if v else "0"
+
+    grad_json = {}
+    for path, std_col, taken_col in GRAD_G4_MAP:
+        _set_nested(grad_json, path, {"기준": cell(std_col), "취득": cell(taken_col)})
+
     return student_name, student_major, student_year, grad_json
 
 def click_menu_by_value(page, menu_value, timeout_sec=10) -> bool:
@@ -383,6 +321,59 @@ def find_frame_by_url_substr(context, substr):
     return None
 
 
+def get_arrdata(frame, grid_id) -> dict | None:
+    """Webcrea 런타임 객체의 arrData(컬럼지향 {COL:[v0,v1,...]})를 직접 반환.
+    렌더된 DOM 대신 데이터셋을 직접 읽어 가상화로 인한 행 누락 없이 전체 행을 가져온다.
+    Webcrea/객체/arrData 없으면 None(진입 실패·미지원 화면 가드)."""
+    try:
+        return frame.evaluate("""(gid) => {
+            if (!window.Webcrea) return null;
+            let o;
+            try { o = Webcrea.GetObjectById(gid); } catch (e) { return null; }
+            if (!o || !o.arrData) return null;
+            const out = {};
+            for (const k of Object.keys(o.arrData)) {
+                if (k === '_my_data_seq_') continue;
+                out[k] = o.arrData[k];
+            }
+            return out;
+        }""", grid_id)
+    except Exception:
+        return None
+
+
+def _av(arr, col, i) -> str:
+    """arrData의 col 컬럼 i번째 값을 문자열로. 없으면 빈 문자열."""
+    seq = arr.get(col)
+    if seq is None or i >= len(seq):
+        return ""
+    v = seq[i]
+    return "" if v is None else str(v)
+
+
+def _arr_len(arr, cols) -> int:
+    """주어진 컬럼들 중 최대 길이 = 행 수."""
+    return max((len(arr[c]) for c in cols if arr.get(c) is not None), default=0)
+
+
+def _build_grid(arr, specs, code_map, title) -> dict:
+    """arrData를 {title, columns, rows} 그리드로 변환.
+    specs: list[(표시라벨, arrData_컬럼, is_code)]. is_code면 _NM 짝이 없는 코드라
+    code_map으로 디코딩(예: 등급 GRD_CD)."""
+    columns = [label for label, _, _ in specs]
+    n = _arr_len(arr, [src for _, src, _ in specs])
+    rows = []
+    for i in range(n):
+        row = []
+        for _, src, is_code in specs:
+            v = _av(arr, src, i)
+            if is_code and v:
+                v = code_map.get(v, v)
+            row.append(v)
+        rows.append(row)
+    return {"title": title, "columns": columns, "rows": rows}
+
+
 def _build_code_map(frame) -> dict:
     """Webcrea 셀렉트박스(_my_selectbox)의 모든 항목에서 code→라벨 맵을 추출.
     등급(GRD_CD)·이수구분(POBT_FG_CD) 등 Combo Box 셀은 화면값이 code 속성에만 있어
@@ -398,140 +389,6 @@ def _build_code_map(frame) -> dict:
         }""")
     except Exception:
         return {}
-
-
-def parse_webcrea_grid(frame, grid_id, code_map) -> dict | None:
-    """Webcrea 그리드(div#<grid_id>)를 {columns, rows} 구조로 파싱.
-    - columns: 헤더 행 td의 span[title](화면 표시 라벨)
-    - rows: tr[id^="<grid_id>.Data"] 각 td. Combo Box 셀은 input[code]→code_map 변환,
-      일반 셀은 value 속성(없으면 innerText)."""
-    try:
-        return frame.evaluate("""([gid, codeMap]) => {
-            const container = document.getElementById(gid);
-            if (!container) return null;
-            // 헤더 행이 여러 개일 수 있어(예: G2는 '<학기성적>' 버튼 행 + 컬럼 행)
-            // 라벨(span title)이 가장 많은 행을 컬럼 헤더로 선택.
-            let columns = [];
-            container.querySelectorAll('tr[id="' + gid + '.Header"]').forEach(tr => {
-                const cols = Array.from(tr.querySelectorAll('td')).map(td => {
-                    const sp = td.querySelector('span');
-                    return sp ? (sp.getAttribute('title') || sp.innerText || '').trim() : '';
-                });
-                if (cols.filter(c => c).length > columns.filter(c => c).length) columns = cols;
-            });
-            const rows = [];
-            container.querySelectorAll('tr[id^="' + gid + '.Data"]').forEach(tr => {
-                const cells = Array.from(tr.querySelectorAll('td')).map(td => {
-                    const combo = td.querySelector('input[codeobj="code"]');
-                    if (combo) return codeMap[combo.getAttribute('code')] || '';
-                    const v = td.getAttribute('value');
-                    return (v != null ? v : td.innerText).trim();
-                });
-                rows.push(cells);
-            });
-            return { columns, rows };
-        }""", [grid_id, code_map])
-    except Exception:
-        return None
-
-
-def collect_webcrea_grid(frame, grid_id, code_map, max_loops=40) -> dict | None:
-    """가상화 그리드 대응: 세로 스크롤(휠 + 스크롤바 down arrow)을 반복하며
-    보이는 행을 rowno 기준으로 누적 수집. 더 이상 새 행이 안 나오면 종료.
-    Webcrea 그리드는 화면에 보이는 행만 DOM에 렌더하므로 단발 파싱은 일부만 긁힘."""
-    snap_js = """([gid, codeMap]) => {
-        const container = document.getElementById(gid);
-        if (!container) return null;
-        let columns = [];
-        container.querySelectorAll('tr[id="' + gid + '.Header"]').forEach(tr => {
-            const cols = Array.from(tr.querySelectorAll('td')).map(td => {
-                const sp = td.querySelector('span');
-                return sp ? (sp.getAttribute('title') || sp.innerText || '').trim() : '';
-            });
-            if (cols.filter(c => c).length > columns.filter(c => c).length) columns = cols;
-        });
-        const rows = [];
-        container.querySelectorAll('tr[id^="' + gid + '.Data"]').forEach(tr => {
-            const rno = tr.getAttribute('rowno');
-            const cells = Array.from(tr.querySelectorAll('td')).map(td => {
-                const combo = td.querySelector('input[codeobj="code"]');
-                if (combo) return codeMap[combo.getAttribute('code')] || '';
-                const v = td.getAttribute('value');
-                return (v != null ? v : td.innerText).trim();
-            });
-            rows.push([rno, cells]);
-        });
-        return { columns, rows };
-    }"""
-    page = frame.page
-    seen = {}
-    columns = []
-    try:
-        for _ in range(max_loops):
-            snap = frame.evaluate(snap_js, [grid_id, code_map])
-            if not snap:
-                return None
-            if snap["columns"]:
-                columns = snap["columns"]
-            new = 0
-            for rno, cells in snap["rows"]:
-                key = rno if rno is not None else str(len(seen))
-                filled = sum(1 for c in cells if c.strip())
-                prev = seen.get(key)
-                if prev is None:
-                    seen[key] = cells
-                    new += 1
-                elif filled > sum(1 for c in prev if c.strip()):
-                    # 부분 렌더된 스냅샷을 더 채워진 것으로 갱신.
-                    seen[key] = cells
-            # 그리드 위에서 실제 마우스 휠을 굴려 가상화 다음 행을 렌더(synthetic 이벤트는 Webcrea가 무시).
-            try:
-                box = frame.locator(f'[id="{grid_id}"]').first.bounding_box()
-                if box:
-                    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-                    page.mouse.wheel(0, 400)
-            except Exception:
-                pass
-            time.sleep(0.3)
-            if new == 0:
-                break
-    except Exception:
-        if not seen:
-            return None
-
-    def _k(x):
-        try:
-            return int(x)
-        except (TypeError, ValueError):
-            return 1 << 30
-    # 가상화 끝까지 스크롤 시 딸려오는 완전 빈 행(placeholder) 제외.
-    ordered = [seen[k] for k in sorted(seen, key=_k) if any(c.strip() for c in seen[k])]
-    return {"columns": columns, "rows": ordered}
-
-
-def parse_webcrea_keyvalue(frame, container_id) -> list[list[str]] | None:
-    """라벨/값 쌍으로 배치된 Webcrea 표(성적분포 F1 총괄)를 [[라벨, 값], ...]로 파싱."""
-    try:
-        return frame.evaluate("""(cid) => {
-            const c = document.getElementById(cid);
-            if (!c) return null;
-            const tds = Array.from(c.querySelectorAll('td'));
-            const pairs = [];
-            for (let i = 0; i < tds.length; i++) {
-                const td = tds[i];
-                const sp = td.querySelector('span');
-                const v = td.getAttribute('value');
-                if (sp && v == null) {
-                    const next = tds[i + 1];
-                    const val = next ? ((next.getAttribute('value') != null ? next.getAttribute('value') : next.innerText) || '').trim() : '';
-                    pairs.push([sp.innerText.trim().replace(/\\s+/g, ' '), val]);
-                    i++;
-                }
-            }
-            return pairs;
-        }""", container_id)
-    except Exception:
-        return None
 
 
 def wait_for_grid_rows(context, frame_substr, grid_id, timeout_sec=20):
@@ -550,23 +407,47 @@ def wait_for_grid_rows(context, frame_substr, grid_id, timeout_sec=20):
     return find_frame_by_url_substr(context, frame_substr)
 
 
-GRADE_DIST_GRIDS = {"G1": "학기별 성적"}
+# 성적분포 G1: arrData 컬럼은 이미 한글. (표시라벨, arrData컬럼, is_code)
+GRADE_DIST_G1_SPEC = [
+    ("년도", "년도", False),
+    ("학기", "학기명", False),
+    ("신청", "신청학점", False),
+    ("취득", "취득학점", False),
+    ("평균평점", "평점평균", False),
+    ("환산점수", "백분위평균점수", False),
+    ("학과평균", "학과평균", False),
+    ("학과등수", "학과등수", False),
+    ("대학평균", "대학평균", False),
+    ("대학등수", "대학등수", False),
+    ("학사경고", "학사경고", False),
+]
+# 성적분포 F1 요약: (표시라벨, arrData컬럼). 기존 DOM summary 라벨과 동일.
+GRADE_DIST_F1_SPEC = [
+    ("총신청 학점", "APLY_LCTPT"),
+    ("총 취득학점", "ACQ_LCTPT"),
+    ("평점계", "SUM_AVRP"),
+    ("평점평균", "F_INC_AVRP_AVG"),
+    ("환산점수", "PCNT_AVG_SCR"),
+]
 
 
 def parse_grade_distribution(context) -> dict | None:
-    """WHHSJV0275(나의성적분포): G1(학기별 성적) 그리드 + F1(전체 요약)을 구조화 파싱."""
+    """WHHSJV0275(나의성적분포): G1(학기별 성적) + F1(전체 요약)을 arrData에서 직접 파싱."""
     frame = find_frame_by_url_substr(context, "WHHSJV0275")
     if frame is None:
         print("[grade_distribution] WHHSJV0275 프레임을 찾지 못했습니다.", file=sys.stderr, flush=True)
         return None
     code_map = _build_code_map(frame)
     grids = {}
-    for gid, title in GRADE_DIST_GRIDS.items():
-        g = collect_webcrea_grid(frame, gid, code_map)
-        if g and g.get("rows"):
-            g["title"] = title
-            grids[gid] = g
-    summary = parse_webcrea_keyvalue(frame, "F1")
+    g1 = get_arrdata(frame, "G1")
+    if g1:
+        grid = _build_grid(g1, GRADE_DIST_G1_SPEC, code_map, "학기별 성적")
+        if grid["rows"]:
+            grids["G1"] = grid
+    f1 = get_arrdata(frame, "F1")
+    summary = None
+    if f1:
+        summary = [[label, _av(f1, src, 0)] for label, src in GRADE_DIST_F1_SPEC]
     if not grids and not summary:
         print("[grade_distribution] 파싱 결과가 비어 있습니다.", file=sys.stderr, flush=True)
         return None
@@ -601,58 +482,101 @@ def select_semester_all(page) -> bool:
     return False
 
 
-CUMULATIVE_GRIDS = {"G1": "과목별 성적", "G2": "학기별 성적", "G3": "이수구분별 학점"}
+# 누적성적 그리드 스펙: (표시라벨, arrData컬럼, is_code).
+# 이수구분·과목명 등은 _NM 한글짝을 직접 사용, 등급(GRD_CD)·이수구분코드는 _NM 없어 code_map 디코딩.
+CUMULATIVE_G1_SPEC = [
+    ("년도", "TLSN_YYYY", False),
+    ("학기", "TLSN_SHTM_NM", False),
+    ("학년", "SYEAR", False),
+    ("이수구분", "POBT_FG_NM", False),
+    ("과목코드", "SUBJ_CD", False),
+    ("과목명", "SUBJ_NM", False),
+    ("학점", "LCTPT", False),
+    ("등급", "GRD_CD", True),
+    ("평점", "AVRP", False),
+    # 결석(ABSN_FRQ): 포털 화면엔 숨겨진 컬럼이지만 arrData엔 있어 우리 앱에서 추가 노출.
+    ("결석", "ABSN_FRQ", False),
+    ("교양교육과정", "APLY_POBT_SFG_CD_NM", False),
+    ("재수강", "RETLSN_YN", True),
+    ("재수강과목명", "RETLSN_SUBJ_NM", False),
+]
+CUMULATIVE_G2_SPEC = [
+    ("년도", "YYYY", False),
+    ("학기", "SHTM_NM", False),
+    ("신청", "APLY_LCTPT", False),
+    ("취득", "ACQ_LCTPT", False),
+    ("평점", "F_INC_AVRP_AVG", False),
+    ("환산점수", "PCNT_AVG_SCR", False),
+    ("학사경고", "BCH_WARN_YN", True),
+]
+CUMULATIVE_G3_SPEC = [
+    ("이수구분", "POBT_FG_CD", True),
+    ("졸업소요", "POBT_LCTPT", False),
+    ("인정", "APPROVAL_LCTPT", False),
+    ("신청", "VIEW_APLY_LCTPT", False),
+    ("취득", "VIEW_ACQ_LCTPT", False),
+    ("과부족", "LCK_LCTPT", False),
+    ("평점", "AVG_AVRP", False),
+]
+CUMULATIVE_GRIDS = [
+    ("G1", "과목별 성적", CUMULATIVE_G1_SPEC),
+    ("G2", "학기별 성적", CUMULATIVE_G2_SPEC),
+    ("G3", "이수구분별 학점", CUMULATIVE_G3_SPEC),
+]
 
 
 def parse_cumulative_grades(context) -> dict | None:
-    """WHHSJV0270(누적성적조회): G1(과목별)·G2(학기별)·G3(이수구분별) 그리드를 구조화 파싱.
-    등급(GRD_CD)·이수구분(POBT_FG_CD)·재수강(RETLSN_YN)·학사경고(BCH_WARN_YN)는 Combo이라 code_map으로 디코딩됨."""
+    """WHHSJV0270(누적성적조회): G1(과목별)·G2(학기별)·G3(이수구분별)을 arrData에서 직접 파싱."""
     frame = find_frame_by_url_substr(context, "WHHSJV0270")
     if frame is None:
         print("[cumulative_grades] WHHSJV0270 프레임을 찾지 못했습니다.", file=sys.stderr, flush=True)
         return None
     code_map = _build_code_map(frame)
     grids = {}
-    for gid, title in CUMULATIVE_GRIDS.items():
-        g = collect_webcrea_grid(frame, gid, code_map)
-        if g and g.get("rows"):
-            g["title"] = title
-            grids[gid] = g
+    for gid, title, spec in CUMULATIVE_GRIDS:
+        arr = get_arrdata(frame, gid)
+        if not arr:
+            continue
+        grid = _build_grid(arr, spec, code_map, title)
+        if grid["rows"]:
+            grids[gid] = grid
     if not grids:
         print("[cumulative_grades] 파싱 결과가 비어 있습니다.", file=sys.stderr, flush=True)
         return None
     return {"frame_url": frame.url, "grids": grids}
 
 
+# 시간표 G1 arrData: LTTM_CD(교시) + MON~SAT(요일별 셀). MON 값에 '과목(분반 교수) 강의실'이
+# 모두 들어있고 *_SUST 컬럼은 강의코드(C4T010 등)라 표시에 불필요해 무시한다.
+TIMETABLE_DAYS = [("MON", "월요일"), ("TUE", "화요일"), ("WED", "수요일"),
+                  ("THU", "목요일"), ("FRI", "금요일"), ("SAT", "토요일")]
+
+
+def _tt_clean(s: str) -> str:
+    # home.py가 교시 셀을 split(" ")[0]로 자르고 요일 셀은 정규식(\s* 허용)으로 파싱하므로
+    # <br>·개행·\xa0를 모두 단일 공백으로 정규화한다(기존 DOM의 \s+→space와 동일).
+    return re.sub(r"\s+", " ", s.replace("<br>", " ").replace("\xa0", " ")).strip()
+
+
 def parse_timetable_data(context) -> list[dict] | None:
-    """시간표 WHHSKV 프레임의 #G1 그리드만 타겟해 행을 추출.
-    전 프레임/테이블 브루트포스 대신 확정 프레임+그리드 ID를 직접 지정한다.
-    출력 shape은 기존과 동일(list[{frame_url, frame_name, rows}], rows는 \\s+→space 정규화)
-    이어야 home.py 시간표 렌더(rows[0]에 '월요일' 등 매칭, 셀 split(' '))가 그대로 동작한다."""
+    """시간표 WHHSKV 프레임의 G1 arrData를 직접 읽어 행 추출.
+    출력 shape은 기존과 동일(list[{frame_url, frame_name, rows}], rows[0]은 헤더)이어야
+    home.py 시간표 렌더(rows[0]에 '월요일/교시' 매칭, 셀 정규식 파싱)가 그대로 동작한다."""
     frame = find_frame_by_url_substr(context, "WHHSKV")
     if frame is None:
         print("[timetable] WHHSKV 프레임을 찾지 못했습니다.", file=sys.stderr, flush=True)
         return None
-    try:
-        rows = frame.evaluate("""() => {
-            const g = document.getElementById('G1');
-            if (!g) return null;
-            return Array.from(g.querySelectorAll('tr')).map(tr =>
-                Array.from(tr.querySelectorAll('td, th')).map(cell => {
-                    const v = cell.getAttribute('value');
-                    return (v != null ? v : cell.innerText).trim().replace(/\\s+/g, ' ');
-                })
-            );
-        }""")
-    except Exception as e:
-        print(f"[timetable] #G1 파싱 중 오류: {e}", file=sys.stderr, flush=True)
+    arr = get_arrdata(frame, "G1")
+    if not arr or not arr.get("LTTM_CD"):
+        print("[timetable] G1 arrData를 얻지 못했습니다.", file=sys.stderr, flush=True)
         return None
-    if not rows:
-        print("[timetable] #G1에서 행을 얻지 못했습니다.", file=sys.stderr, flush=True)
-        return None
-    rows = [r for r in rows if any(c.strip() for c in r)]
-    if not rows:
-        return None
+    n = len(arr["LTTM_CD"])
+    header = ["교시"] + [label for _, label in TIMETABLE_DAYS]
+    rows = [header]
+    for i in range(n):
+        period = _tt_clean(_av(arr, "LTTM_CD", i))
+        row = [period] + [_tt_clean(_av(arr, day, i)) for day, _ in TIMETABLE_DAYS]
+        rows.append(row)
     return [{"frame_url": frame.url, "frame_name": frame.name or "", "rows": rows}]
 
 def main() -> int:
@@ -788,14 +712,16 @@ def main() -> int:
                 # 안내문 팝업 '확인' 닫기 시도(실패해도 무시 — DOM 읽기에 영향 없음).
                 wait_and_click_in_any_frame(knuis_page, 'input[value*="확인"]', timeout_sec=3)
 
-                # #G4를 실제로 가진 WHHJUV 데이터 프레임 선택(안내문 팝업 프레임과 구분).
+                # G4 arrData를 실제로 가진 WHHJUV 프레임 선택. #G4 DOM은 shell 프레임에도 있을 수
+                # 있어, Webcrea 런타임+arrData 적재가 모두 끝난 프레임을 직접 검증해야 한다
+                # (안내문 팝업 프레임 구분 + 데이터 로드 대기 동시 처리).
                 data_frame = None
                 deadline = time.time() + 20
                 while time.time() < deadline and data_frame is None:
                     for p_item in context.pages:
                         for frame in p_item.frames:
                             try:
-                                if "WHHJUV" in frame.url and frame.query_selector("#G4") is not None:
+                                if "WHHJUV" in frame.url and get_arrdata(frame, "G4"):
                                     data_frame = frame
                                     break
                             except Exception:
@@ -806,7 +732,7 @@ def main() -> int:
                         time.sleep(0.5)
 
                 if not data_frame:
-                    raise RuntimeError("졸업 데이터 프레임(#G4 보유 WHHJUV)을 식별하지 못했습니다.")
+                    raise RuntimeError("졸업 데이터 프레임(G4 arrData 보유 WHHJUV)을 식별하지 못했습니다.")
 
                 name, major, year, grad_json = parse_graduation_data(data_frame)
                 print(f"[6/8] 학적/졸업 정보 파싱 완료: {name} ({major}, {year}학년)")
