@@ -34,20 +34,50 @@ def wait_and_click_in_any_frame(page, selector, timeout_sec=15) -> bool:
         time.sleep(0.5)
     return False
 
+def open_menu(page, menu_id, timeout_sec=120) -> bool:
+    """좌측 LeftFrame의 Page00.funcLeft.fn_runFileMDI를 직접 호출해 화면에 진입.
+    가상화 메뉴 트리 스크롤/라이브값 매칭(click_left_menu) 대신, 콘솔 후킹으로 역추적한
+    menuId로 곧장 MDI 페이지를 연다. 메뉴 항목이 다 채워질 때까지 기다릴 필요 없이
+    fn_runFileMDI 함수가 정의되는 즉시 호출 가능하므로 진입이 빠르고 안정적이다.
+
+    프레임 접근은 Playwright page.frame(name=...) 대신 top 컨텍스트에서
+    #LeftFrame 엘리먼트의 contentWindow로 직접 진입한다. 통합정보시스템 진입 직후
+    LeftFrame이 여러 번 리로드되는 동안 page.frame 핸들은 'execution context destroyed'로
+    불안정하지만, top에서 매번 querySelector로 새로 잡으면 첫 진입도 안정적으로 호출된다."""
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        try:
+            ok = page.evaluate("""(id) => {
+                const w = document.querySelector('#LeftFrame')?.contentWindow;
+                if (w && w.Page00 && w.Page00.funcLeft && w.Page00.funcLeft.fn_runFileMDI) {
+                    w.Page00.funcLeft.fn_runFileMDI(id, 0);
+                    return true;
+                }
+                return false;
+            }""", menu_id)
+            if ok:
+                print(f"[open_menu] fn_runFileMDI('{menu_id}', 0) 호출 완료", flush=True)
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    print(f"[open_menu] LeftFrame.fn_runFileMDI를 {timeout_sec}초 안에 준비하지 못함 (menuId={menu_id})", file=sys.stderr, flush=True)
+    return False
+
+
 def parse_graduation_data(data_frame) -> tuple[str, str, int, dict]:
     """졸업사전예고 프레임에서 학적 마스터 정보와 취득학점 상세 정보를 파싱하여 반환합니다."""
-    tables = data_frame.query_selector_all("table")
-    
-    # 1. 학적 기본정보 표 찾기 (소속학과와 적용학과가 들어있는 표)
-    info_table = None
-    for table in tables:
-        text = table.inner_text()
-        if "소속학과" in text and "적용학과" in text:
-            info_table = table
-            break
-            
+    # 1. 학적 기본정보(#F_SRCH) — 콘솔 후킹으로 확인한 학적 영역 ID를 직접 타겟.
+    #    구버전 호환을 위해 ID 미발견 시 키워드(소속학과+적용학과) 표 탐색으로 fallback.
+    info_table = data_frame.query_selector("#F_SRCH")
+    if info_table is None:
+        for table in data_frame.query_selector_all("table"):
+            text = table.inner_text()
+            if "소속학과" in text and "적용학과" in text:
+                info_table = table
+                break
     if not info_table:
-        raise RuntimeError("학적 기본 정보 테이블을 찾지 못했습니다.")
+        raise RuntimeError("학적 기본 정보(#F_SRCH)를 찾지 못했습니다.")
         
     rows_data = info_table.evaluate(r"""
         table => {
@@ -83,16 +113,17 @@ def parse_graduation_data(data_frame) -> tuple[str, str, int, dict]:
     match = re.search(r"(\d+)", year_str)
     student_year = int(match.group(1)) if match else 1
     
-    # 2. 취득학점 요약 표 찾기 (최소전공인정학점이 들어있는 메인 표)
-    grad_table = None
-    for table in tables:
-        text = table.inner_text()
-        if "기준학점" in text and "취득학점" in text and "최소전공인정학점" in text:
-            grad_table = table
-            break
-            
+    # 2. 취득학점 요약(#G4) — 콘솔 후킹으로 확인한 졸업학점 표 ID를 직접 타겟.
+    #    G4는 .Data 가상 그리드가 아닌 정적 표이므로 collect_webcrea_grid 대신 직접 파싱.
+    grad_table = data_frame.query_selector("#G4")
+    if grad_table is None:
+        for table in data_frame.query_selector_all("table"):
+            text = table.inner_text()
+            if "기준학점" in text and "취득학점" in text and "최소전공인정학점" in text:
+                grad_table = table
+                break
     if not grad_table:
-        raise RuntimeError("졸업 취득 학점 요약 테이블을 찾지 못했습니다.")
+        raise RuntimeError("졸업 취득 학점 요약(#G4)을 찾지 못했습니다.")
         
     grad_rows = grad_table.query_selector_all("tr")
     standards = None
@@ -240,134 +271,6 @@ def wait_for_frame_by_url(page, substr, timeout_sec=30):
             return f
         time.sleep(0.5)
     return None
-
-
-def wait_for_menu_ready(page, timeout_sec=60):
-    """LeftFrame 프레임이 등장하고 '메뉴 항목(라이브값)이 채워질 때까지' 대기.
-    통합정보시스템 진입 직후엔 프레임은 떠도 메뉴 데이터 로드가 늦어, URL 등장만 보고
-    클릭하면 빈 메뉴를 눌러 실패한다. 실제 항목이 생길 때까지 polling."""
-    try:
-        page.screenshot(timeout=3000)
-    except Exception:
-        pass
-    start = time.time()
-    deadline = start + timeout_sec
-    while time.time() < deadline:
-        frame = page.frame(name="LeftFrame")
-        if frame is not None:
-            try:
-                inputs = frame.locator('#listMenu input[id^="listMenu.menu_nm"]')
-                if inputs.count() > 0:
-                    val = inputs.first.evaluate("el => el.value || el.title || el.getAttribute('orgtitle') || ''")
-                    if val.strip():
-                        return frame
-            except Exception:
-                pass
-        time.sleep(1)
-    return None
-
-
-def click_left_menu(page, name, timeout_ms=1500, wait_frame_sec=30) -> bool:
-    """좌측 메뉴 트리(가상화 DOM)에서 다양한 scroll 위치를 훑으며 매칭+클릭.
-    카테고리별 selector 다층: role=textbox+name → input[title=] → input[orgtitle=] → input[title*=]."""
-    try:
-        page.screenshot(timeout=3000)
-    except Exception:
-        pass
-    menu_frame = None
-    deadline = time.time() + wait_frame_sec
-    while time.time() < deadline:
-        menu_frame = page.frame(name="LeftFrame")
-        if menu_frame is not None:
-            break
-        time.sleep(0.5)
-    if menu_frame is None:
-        print(f"[click_left_menu] LeftFrame을 {wait_frame_sec}초 안에 찾지 못함 (요청: '{name}')", file=sys.stderr, flush=True)
-        return False
-
-    def selectors():
-        return [
-            ("role:textbox", lambda: menu_frame.get_by_role("textbox", name=name).first),
-            ("input[title=]", lambda: menu_frame.locator(f'input[title="{name}"]').first),
-            ("input[orgtitle=]", lambda: menu_frame.locator(f'input[orgtitle="{name}"]').first),
-            ("input[title*=]", lambda: menu_frame.locator(f'input[title*="{name}"]').first),
-        ]
-
-    def _click_by_live_value():
-        """Webcrea 메뉴는 라벨 텍스트를 title/value '속성'이 아니라 라이브 JS property(.value)에
-        바인딩한다(특히 자식 메뉴는 속성이 빈 문자열). 라이브값으로 매칭해 element id로 클릭."""
-        try:
-            el_id = menu_frame.evaluate("""(name) => {
-                const norm = s => (s || '').replace(/\\s+/g, '').trim();
-                const target = norm(name);
-                const inputs = Array.from(document.querySelectorAll('#listMenu input[id^="listMenu.menu_nm"]'));
-                const liveOf = inp => norm(inp.value) || norm(inp.title) || norm(inp.getAttribute('orgtitle'));
-                for (const inp of inputs) if (liveOf(inp) === target) return inp.id;
-                for (const inp of inputs) { const v = liveOf(inp); if (v && v.indexOf(target) !== -1) return inp.id; }
-                return null;
-            }""", name)
-        except Exception:
-            el_id = None
-        if not el_id:
-            return False
-        try:
-            # 자식 행은 <div>와 <input>이 같은 id를 공유하므로 input으로 한정.
-            menu_frame.locator(f'input[id="{el_id}"]').click(timeout=timeout_ms)
-            print(f"[click_left_menu] '{name}' 클릭 성공 (live-value @ {el_id})", flush=True)
-            return True
-        except Exception:
-            return False
-
-    def _try_click(scroll_label):
-        if _click_by_live_value():
-            return True
-        for label, fn in selectors():
-            try:
-                loc = fn()
-                loc.click(timeout=timeout_ms)
-                print(f"[click_left_menu] '{name}' 클릭 성공 ({label} @ {scroll_label})", flush=True)
-                return True
-            except Exception:
-                continue
-        return False
-
-    dims = None
-    try:
-        dims = menu_frame.evaluate("""() => {
-            const el = document.getElementById('listMenu');
-            if (!el) return null;
-            return { sh: el.scrollHeight, ch: el.clientHeight };
-        }""")
-    except Exception:
-        pass
-
-    if dims and dims.get("sh") and dims.get("ch"):
-        step = max(int(dims["ch"] * 0.5), 50)
-        positions = list(range(0, int(dims["sh"]) + step, step))
-    else:
-        positions = [0, 100, 300, 600, 900, 1200, 1500]
-    positions = [0] + positions + [0]
-
-    seen = set()
-    for pos in positions:
-        if pos in seen:
-            continue
-        seen.add(pos)
-        try:
-            menu_frame.evaluate(f"() => {{ const el = document.getElementById('listMenu'); if (el) el.scrollTop = {pos}; }}")
-        except Exception:
-            pass
-        time.sleep(0.3)
-        if _try_click(f"scrollTop={pos}"):
-            return True
-
-    titles = []
-    try:
-        titles = menu_frame.locator('input[title]:not([title=""])').evaluate_all("els => els.map(e => e.getAttribute('title'))")
-    except Exception:
-        pass
-    print(f"[click_left_menu] '{name}' 모든 fallback/scroll 실패. 마지막 dump title: {titles[:40]}", file=sys.stderr, flush=True)
-    return False
 
 
 def find_menu_tree_frame(page, timeout_sec=10):
@@ -722,44 +625,35 @@ def parse_cumulative_grades(context) -> dict | None:
 
 
 def parse_timetable_data(context) -> list[dict] | None:
-    """모든 페이지와 프레임을 탐색하여 시간표 데이터를 리스트 구조로 반환합니다."""
-    saved_data = []
-    found_timetable = False
-
-    for page in context.pages:
-        for frame in page.frames:
-            try:
-                tables = frame.query_selector_all("table")
-                for table in tables:
-                    text = table.inner_text()
-                    # 시간표 데이터 식별 키워드
-                    if any(kw in text for kw in ["교시", "요일", "교과목", "시간표", "월요일"]):
-                        rows = table.evaluate("""
-                            table => {
-                                const trs = Array.from(table.querySelectorAll('tr'));
-                                return trs.map(tr => {
-                                    const cells = Array.from(tr.querySelectorAll('td, th'));
-                                    return cells.map(cell => cell.innerText.trim().replace(/\\s+/g, ' '));
-                                });
-                            }
-                        """)
-
-                        table_data = []
-                        for row in rows:
-                            cleaned_cells = [cell for cell in row if cell != ""]
-                            if cleaned_cells:
-                                table_data.append(row)
-
-                        saved_data.append({
-                            "frame_url": frame.url,
-                            "frame_name": frame.name or "",
-                            "rows": table_data
-                        })
-                        found_timetable = True
-            except Exception:
-                continue
-
-    return saved_data if found_timetable else None
+    """시간표 WHHSKV 프레임의 #G1 그리드만 타겟해 행을 추출.
+    전 프레임/테이블 브루트포스 대신 확정 프레임+그리드 ID를 직접 지정한다.
+    출력 shape은 기존과 동일(list[{frame_url, frame_name, rows}], rows는 \\s+→space 정규화)
+    이어야 home.py 시간표 렌더(rows[0]에 '월요일' 등 매칭, 셀 split(' '))가 그대로 동작한다."""
+    frame = find_frame_by_url_substr(context, "WHHSKV")
+    if frame is None:
+        print("[timetable] WHHSKV 프레임을 찾지 못했습니다.", file=sys.stderr, flush=True)
+        return None
+    try:
+        rows = frame.evaluate("""() => {
+            const g = document.getElementById('G1');
+            if (!g) return null;
+            return Array.from(g.querySelectorAll('tr')).map(tr =>
+                Array.from(tr.querySelectorAll('td, th')).map(cell => {
+                    const v = cell.getAttribute('value');
+                    return (v != null ? v : cell.innerText).trim().replace(/\\s+/g, ' ');
+                })
+            );
+        }""")
+    except Exception as e:
+        print(f"[timetable] #G1 파싱 중 오류: {e}", file=sys.stderr, flush=True)
+        return None
+    if not rows:
+        print("[timetable] #G1에서 행을 얻지 못했습니다.", file=sys.stderr, flush=True)
+        return None
+    rows = [r for r in rows if any(c.strip() for c in r)]
+    if not rows:
+        return None
+    return [{"frame_url": frame.url, "frame_name": frame.name or "", "rows": rows}]
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="KNUIS 포털 졸업자가진단 연동")
@@ -844,37 +738,23 @@ def main() -> int:
             knuis_page.bring_to_front()
             knuis_page.wait_for_load_state("load")
             
-            # 3. 시간표 (LeftFrame role textbox 기반)
-            #    졸업 메뉴 진입 시 트리가 program path만 남도록 좁혀지므로 시간표/성적/누적 먼저 처리.
-            #    먼저 leftMenu frame이 로드될 때까지 대기 (loginS.jsp → 메뉴+MDI 페이지 전환 후).
-            print("[3/8] leftMenu 메뉴 항목 로드 대기 중 (최대 120초)...", flush=True)
-            menu_frame_ready = wait_for_menu_ready(knuis_page, timeout_sec=120)
-            if menu_frame_ready is None:
-                print("[3/8] leftMenu 메뉴 항목이 180초 안에 채워지지 않음.", file=sys.stderr, flush=True)
-            else:
-                print(f"[3/8] leftMenu 메뉴 로드 확인: {menu_frame_ready.url}", flush=True)
+            # 3. 시간표(menuId 1000000062) — fn_runFileMDI 직접 호출로 진입.
             timetable_json = None
             try:
-                print("[3/8] 시간표 조회 시작 (LeftFrame role 경유)...", flush=True)
-                click_left_menu(knuis_page, "수업 · 수강")
-                knuis_page.wait_for_timeout(1500)
-                click_left_menu(knuis_page, "시간표조회")
+                print("[3/8] 시간표 진입 (fn_runFileMDI)...", flush=True)
+                open_menu(knuis_page, "1000000062")
                 knuis_page.wait_for_timeout(3000)
+                wait_for_grid_rows(context, "WHHSKV", "G1", timeout_sec=30)
                 timetable_json = parse_timetable_data(context)
                 print(f"[3/8] 시간표 파싱 완료 (테이블 수: {len(timetable_json) if timetable_json else 0})", flush=True)
             except Exception as te:
                 print(f"시간표 연동 중 오류 발생: {te}", file=sys.stderr, flush=True)
 
-            # 4. 나의 성적분포
+            # 4. 나의 성적분포(menuId 1000000103) — 조회 버튼 없이 진입 즉시 crossurl 로드.
             grade_distribution_json = None
             try:
-                print("[4/8] 나의 성적분포 조회 시작...", flush=True)
-                click_left_menu(knuis_page, "성적")
-                knuis_page.wait_for_timeout(1500)
-                # 누적성적조회와 동일하게 '성적' 직속 자식인 '나의성적분포'를 바로 클릭.
-                # 클릭 시 WHHSKV 상위 shell이 먼저 뜨고 그 안 HtmlAddrFrame에 WHHSJV0275가 늦게
-                # 로드되므로 settle 대기 후 더 길게(30s) 폴링.
-                click_left_menu(knuis_page, "나의성적분포")
+                print("[4/8] 나의 성적분포 진입 (fn_runFileMDI)...", flush=True)
+                open_menu(knuis_page, "1000000103")
                 knuis_page.wait_for_timeout(3000)
                 wait_for_grid_rows(context, "WHHSJV0275", "G1", timeout_sec=30)
                 grade_distribution_json = parse_grade_distribution(context)
@@ -882,11 +762,11 @@ def main() -> int:
             except Exception as ge:
                 print(f"나의 성적분포 연동 중 오류 발생: {ge}", file=sys.stderr, flush=True)
 
-            # 5. 누적성적조회(학부생) ('전체' 학기 강제 선택)
+            # 5. 누적성적조회(menuId 1000000102) ('전체' 학기 강제 선택)
             cumulative_grades_json = None
             try:
-                print("[5/8] 누적성적조회 시작...", flush=True)
-                click_left_menu(knuis_page, "누적성적조회(학부생)")
+                print("[5/8] 누적성적조회 진입 (fn_runFileMDI)...", flush=True)
+                open_menu(knuis_page, "1000000102")
                 knuis_page.wait_for_timeout(3000)
                 select_semester_all(knuis_page)
                 knuis_page.wait_for_timeout(500)
@@ -896,42 +776,37 @@ def main() -> int:
             except Exception as ce:
                 print(f"누적성적조회 연동 중 오류 발생: {ce}", file=sys.stderr, flush=True)
 
-            # 6. 졸업사전예고: 학적(이름/학과/학년) + 졸업 취득학점.
-            #    이 단계가 메뉴 트리를 좁히므로 가장 마지막에 수행.
-            # 졸업사전예고 실패가 시간표·성적 결과 출력/저장을 막지 않도록 비치명적 처리.
+            # 6. 졸업사전예고(menuId 1000000111): 학적(#F_SRCH) + 졸업 취득학점(#G4).
+            #    진입 시 WHHJUV0942 안내문 팝업이 뜨지만 모달 오버레이일 뿐, 데이터는 뒤 프레임
+            #    DOM에 이미 렌더되므로 팝업을 닫지 않고 evaluate로 직접 읽는다(안내문 닫기는 best-effort).
+            #    졸업사전예고 실패가 시간표·성적 저장을 막지 않도록 비치명적 처리.
             name, major, year, grad_json = None, None, None, None
             try:
-                print("[6/8] 졸업사전예고 메뉴 탐색 중...", flush=True)
-                # 시간표·성적과 동일하게 live-value 매칭으로 클릭(하드코딩 id 폐기).
-                # 자식 라벨 정확값('졸업사전예고(학생)')을 몰라도 contains 매칭으로 잡히게 짧게 전달.
-                click_left_menu(knuis_page, "졸업")
-                knuis_page.wait_for_timeout(1500)
-                clicked = click_left_menu(knuis_page, "졸업사전예고")
-                if not clicked:
-                    raise RuntimeError("졸업사전예고(학생) 메뉴를 찾지 못했습니다.")
+                print("[6/8] 졸업사전예고 진입 (fn_runFileMDI)...", flush=True)
+                open_menu(knuis_page, "1000000111")
                 knuis_page.wait_for_timeout(3000)
+                # 안내문 팝업 '확인' 닫기 시도(실패해도 무시 — DOM 읽기에 영향 없음).
+                wait_and_click_in_any_frame(knuis_page, 'input[value*="확인"]', timeout_sec=3)
 
-                confirm_selector = 'input[id="Form2.pb1"]'
-                clicked = wait_and_click_in_any_frame(knuis_page, confirm_selector, timeout_sec=20)
-                if clicked:
-                    knuis_page.wait_for_timeout(5000)
-                else:
-                    raise RuntimeError("확인 조회 버튼을 찾지 못했습니다.")
-
+                # #G4를 실제로 가진 WHHJUV 데이터 프레임 선택(안내문 팝업 프레임과 구분).
                 data_frame = None
-                for p_item in context.pages:
-                    for frame in p_item.frames:
-                        try:
-                            if "WHHJUV" in frame.url:
-                                data_frame = frame
-                                break
-                        except Exception:
-                            continue
-                    if data_frame:
-                        break
+                deadline = time.time() + 20
+                while time.time() < deadline and data_frame is None:
+                    for p_item in context.pages:
+                        for frame in p_item.frames:
+                            try:
+                                if "WHHJUV" in frame.url and frame.query_selector("#G4") is not None:
+                                    data_frame = frame
+                                    break
+                            except Exception:
+                                continue
+                        if data_frame:
+                            break
+                    if data_frame is None:
+                        time.sleep(0.5)
 
                 if not data_frame:
-                    raise RuntimeError("졸업 상세 데이터 프레임(WHHJUV)을 식별하지 못했습니다.")
+                    raise RuntimeError("졸업 데이터 프레임(#G4 보유 WHHJUV)을 식별하지 못했습니다.")
 
                 name, major, year, grad_json = parse_graduation_data(data_frame)
                 print(f"[6/8] 학적/졸업 정보 파싱 완료: {name} ({major}, {year}학년)")
