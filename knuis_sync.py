@@ -65,10 +65,10 @@ def open_menu(page, menu_id, timeout_sec=120) -> bool:
     return False
 
 
-# 졸업 G4 86컬럼 → grad_json 22슬롯 매핑.
+# 졸업 G4 86컬럼 → grad_json 슬롯 매핑.
 # (grad_json 경로, 기준 컬럼(SUST_*), 취득 컬럼). 컬럼=None이면 "0".
 # arrData 컬럼명이 명시적이라 DOM 위치파싱에서 어긋났던 교직/융합탐색 정렬 문제가 바로잡힌다.
-# ※ 교직 자과/타과, 콜라주 기초/필수 4슬롯은 컬럼 식별이 불확실 → 검증 단계에서 DOM 대조 후 확정.
+# 실제 포털 레이아웃 대조로 확정: 교직=단일(PRO), 콜라주=자과/타과(기준 A_COL_*, 취득 COL_*).
 GRAD_G4_MAP = [
     (("교양", "기초교양", "필수"), "SUST_BASIC_CUL_ESSEN", "BASIC_CUL_ESSEN"),
     (("교양", "기초교양", "선택"), "SUST_BASIC_CUL_CHOOSE", "BASIC_CUL_CHOOSE"),
@@ -82,16 +82,16 @@ GRAD_G4_MAP = [
     (("전공", "최소전공인정학점", "소계"), "SUST_SUB_SUM1", "SUB_SUM1"),
     (("전공", "전공심화"), "SUST_SUB_DEEP", "SUB_DEEP"),
     (("전공", "계"), "SUST_SUB_SUM2", "SUB_SUM2"),
-    (("교직", "자과"), "SUST_PRO", "PRO"),          # 검증필요: 교직 컬럼 식별 불확실
-    (("교직", "타과"), None, None),                  # 검증필요: 대응 컬럼 미상(0 추정)
+    (("교직",), "SUST_PRO", "PRO"),
     (("융합탐색",), "SUST_FUSION_RESER", "FUSION_RESER"),
+    (("복수전공", "기초"), "DOU_BGN_LCTPT", "DOU_SUB_BGN"),
     (("복수전공", "필수"), "DOU_ESSEN_LCTPT", "DOU_SUB_ESSEN"),
     (("복수전공", "선택"), "DOU_CHOOSE_LCTPT", "DOU_SUB_CHOOSE"),
     (("부전공", "필수"), "MIN_ESSEN_LCTPT", "MIN_SUB_ESSEN"),
     (("부전공", "선택"), "MIN_CHOOSE_LCTPT", "MIN_SUB_CHOOSE"),
     (("졸업학점계",), "SUST_TOT_SUM", "TOT_SUM"),
-    (("콜라주", "기초"), None, "COL_SELF"),          # 검증필요: 취득값(COL_SELF) 매칭, 기준 미상
-    (("콜라주", "필수"), None, "COL_OTHER"),          # 검증필요
+    (("콜라주", "자과"), "A_COL_SELF", "COL_SELF"),
+    (("콜라주", "타과"), "A_COL_OTHER", "COL_OTHER"),
 ]
 
 
