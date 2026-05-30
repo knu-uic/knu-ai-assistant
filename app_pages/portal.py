@@ -104,9 +104,9 @@ if credits:
                 <th rowspan="3">구 분</th>
                 <th colspan="6">교 양</th>
                 <th colspan="6">전 공</th>
-                <th colspan="2">교직</th>
+                <th rowspan="3">교직</th>
                 <th rowspan="3">융합<br>탐색</th>
-                <th colspan="2">복수전공</th>
+                <th colspan="3">복수전공</th>
                 <th colspan="2">부전공</th>
                 <th rowspan="3">졸업<br>학점<br>계</th>
                 <th colspan="2">콜라주</th>
@@ -120,14 +120,13 @@ if credits:
                 <th colspan="4">최소전공인정학점</th>
                 <th rowspan="2">전공<br>심화</th>
                 <th rowspan="2">계</th>
-                <th rowspan="2">자과</th>
-                <th rowspan="2">타과</th>
-                <th rowspan="2">필수</th>
-                <th rowspan="2">선택</th>
-                <th rowspan="2">필수</th>
-                <th rowspan="2">선택</th>
                 <th rowspan="2">기초</th>
                 <th rowspan="2">필수</th>
+                <th rowspan="2">선택</th>
+                <th rowspan="2">필수</th>
+                <th rowspan="2">선택</th>
+                <th rowspan="2">자과</th>
+                <th rowspan="2">타과</th>
             </tr>
             <!-- Row 3 -->
             <tr>
@@ -168,16 +167,16 @@ if credits:
         ("전공", "최소전공인정학점", "소계"),
         ("전공", "전공심화", None),
         ("전공", "계", None),
-        ("교직", "자과", None),
-        ("교직", "타과", None),
+        ("교직", None, None),
         ("융합탐색", None, None),
+        ("복수전공", "기초", None),
         ("복수전공", "필수", None),
         ("복수전공", "선택", None),
         ("부전공", "필수", None),
         ("부전공", "선택", None),
         ("졸업학점계", None, None),
-        ("콜라주", "기초", None),
-        ("콜라주", "필수", None)
+        ("콜라주", "자과", None),
+        ("콜라주", "타과", None)
     ]
 
     standards_list = []
