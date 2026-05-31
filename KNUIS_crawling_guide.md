@@ -64,12 +64,15 @@ KNUIS 좌측 메뉴 클릭은 내부적으로 `fn_runFileMDI(menuId, 0)`를 호�
 
 확정된 menuId(공주대 학부생 기준):
 
-| 화면 | menuId | 데이터 프레임 URL 키 |
+| 화면 | menuId | 데이터 프레임 식별키 |
 |------|--------|---------------------|
-| 시간표조회 | `1000000062` | `WHHSKV` |
-| 나의성적분포 | `1000000103` | `WHHSJV0275` |
-| 누적성적조회 | `1000000102` | `WHHSJV0270` |
-| 졸업사전예고 | `1000000111` | `WHHJUV` (+ 안내문 팝업 `WHHJUV0942`) |
+| 시간표조회 | `1000000062` | iframe id `WHHSKV0580` / URL substr `WHHSKV` |
+| 나의성적분포 | `1000000103` | iframe id·URL substr `WHHSJV0275` |
+| 누적성적조회 | `1000000102` | iframe id·URL substr `WHHSJV0270` |
+| 졸업사전예고 | `1000000111` | arrData 지문 `F_SRCH`+`G4` (URL/id 무관, §4.2) |
+
+> 프레임 식별키가 화면마다 다른 전략인 이유는 §4 참고. 그리드 화면은 **화면 id(iframe id
+> 우선 + URL substr 폴백)**로, 졸업은 **고유 arrData 조합**으로 고른다.
 
 ### 2.2 프레임 핸들 함정 — 매 시도 top에서 재진입
 
@@ -153,22 +156,47 @@ def get_arrdata(frame, grid_id) -> dict | None:
 
 ## 4. 다중 프레임 식별 + 비동기 대기(폴링)
 
-### 4.1 문제: URL만으로 프레임을 고르면 안 된다
+### 4.1 문제: URL substr만으로 프레임을 고르면 안 된다
 
-졸업사전예고는 프레임이 여러 겹이다:
-- **shell 프레임** — `#G4` HTML 칸은 있으나 Webcrea 런타임 없음
-- **데이터 프레임**(HtmlAddrFrame) — Webcrea + arrData 실제 보유
-- **안내문 팝업**(`WHHJUV0942`) — 모달, 데이터 무관
+두 가지 함정이 겹친다.
 
-`"WHHJUV" in url and frame.query_selector("#G4")`로 고르면 **shell을 집어** `get_arrdata`가
-None을 반환한다(`학적 정보를 찾지 못했습니다` 에러의 실제 원인).
+1. **URL이 화면 id를 안 담을 수 있다.** 일부 환경(외부망 등)에서 iframe URL이 공통 실행주소
+   (`run.jsp`/`crossurl.jsp`)로만 떠 `"WHHSJV0275" in url` 매칭이 실패 → 프레임 못 잡고
+   수집 스킵.
+2. **MDI는 연 화면이 닫히지 않고 프레임으로 누적된다.** 졸업 단계쯤엔 시간표·성적분포·누적성적·
+   졸업 프레임이 전부 공존. 게다가 졸업은 한 화면 안에서도 여러 겹이다 — shell 프레임(`#G4`
+   HTML 칸만, Webcrea 런타임 없음) + 데이터 프레임(arrData 실제 보유) + 안내문 팝업(`WHHJUV0942`).
 
-### 4.2 해결: "데이터 적재됨"을 판정 기준으로
+### 4.2 해결: 화면별로 식별 전략을 나눈다
 
-DOM 존재 여부 대신 **`get_arrdata(frame, "G4")`가 truthy인지**로 프레임을 고른다.
-이 한 조건이 두 문제를 동시 해결:
-- `get_arrdata`는 Webcrea 런타임이 있어야 값 반환 → shell 프레임 자동 탈락
-- arrData가 채워졌을 때만 truthy → 데이터 로드 전 통과 안 함(비동기 대기 겸용)
+**전략 A — 화면 id 매칭 (그리드 화면: 시간표·성적분포·누적성적).**
+iframe DOM의 `id`/`name`으로 프레임을 고른다(URL이 generic으로 떠도 안전). URL substr은 폴백.
+
+```python
+def find_frame_by_iframe_id(context, iframe_id):
+    """iframe DOM 엘리먼트의 id/name으로 Frame을 찾아 반환. 못 찾으면 None."""
+    for p_item in context.pages:
+        for frame in p_item.frames:
+            try:
+                element = frame.frame_element()
+                if element.get_attribute("id") == iframe_id or element.get_attribute("name") == iframe_id:
+                    return frame
+            except Exception:
+                continue
+    return None
+
+# 호출부: iframe-id 우선, 실패 시 기존 URL substr 폴백
+frame = find_frame_by_iframe_id(context, "WHHSJV0275") or find_frame_by_url_substr(context, "WHHSJV0275")
+```
+
+> **왜 그리드 화면은 arrData 지문(전략 B)을 못 쓰나?** 그리드 id `G1`은 시간표·성적분포·
+> 누적성적이 **전부 공유**한다. MDI에 그 화면들이 다 떠 있으므로 `get_arrdata(frame,"G1")`
+> truthy로 고르면 먼저 걸리는 엉뚱한 화면을 집는다. `G1`이 식별자가 못 되니 화면 id로 골라야 한다.
+
+**전략 B — 고유 arrData 지문 (졸업사전예고).**
+졸업 데이터는 `F_SRCH`(학적)+`G4`(취득학점)를 함께 가진다. 이 조합은 다른 열린 화면 어디에도
+없는 **고유 지문**이라 URL/id 없이 정확하다. `get_arrdata` 자체가 Webcrea 런타임+적재 검증을
+겸하므로 shell 프레임 배제·비동기 대기까지 한 조건으로 해결.
 
 ```python
 data_frame = None
@@ -177,7 +205,9 @@ while time.time() < deadline and data_frame is None:
     for p_item in context.pages:
         for frame in p_item.frames:
             try:
-                if "WHHJUV" in frame.url and get_arrdata(frame, "G4"):
+                # F_SRCH+G4 동시 보유만 데이터 프레임으로 확정.
+                # G4만 가진 shell 프레임 오매칭 배제(아래 주의 참고).
+                if get_arrdata(frame, "F_SRCH") and get_arrdata(frame, "G4"):
                     data_frame = frame
                     break
             except Exception:
@@ -188,6 +218,10 @@ while time.time() < deadline and data_frame is None:
         time.sleep(0.5)
 ```
 
+> **주의: `G4` 단독 truthy로는 부족하다.** `#G4`만 가진 프레임이 따로 있어 `G4`만 검사하면
+> 학적(`F_SRCH`)이 없는 프레임을 집고 이후 `parse_graduation_data`가 `F_SRCH arrData를
+> 찾지 못함`으로 실패한다. 화면이 요구하는 **모든** 데이터셋을 지문에 포함시켜라(§7 Case 2).
+
 ### 4.3 그리드 로드 대기 패턴
 
 진입 직후 crossurl.jsp 응답 전에 파싱하면 빈 데이터를 긁는다. `wait_for_grid_rows`로
@@ -196,6 +230,30 @@ while time.time() < deadline and data_frame is None:
 
 > 폴링 일반 원칙: **"무엇이 준비되면 진행할지"를 명확한 조건으로 표현**하고, deadline까지
 > 짧은 간격(0.5s)으로 재확인. 고정 sleep은 느리고 불안정.
+
+### 4.4 조회 버튼 직접 실행(필터 변경 후 갱신)
+
+누적성적처럼 **필터(학기='전체')를 바꾼 뒤 조회해야 갱신**되는 화면은, 진입만으로는 그리드가
+비거나 디폴트 학기만 보일 수 있다. 화면의 조회 버튼을 DOM 클릭하는 대신 Webcrea 런타임의
+버튼 객체 `OnCLICK`을 직접 실행하면 확실하다.
+
+```python
+cg_frame = find_frame_by_iframe_id(context, "WHHSJV0270") or find_frame_by_url_substr(context, "WHHSJV0270")
+if cg_frame is not None:
+    cg_frame.evaluate("""() => {
+        const b = window.Page00?.F_TOPMENU?.BTN_SRCH;
+        if (b && b.OnCLICK) b.OnCLICK();
+    }""")
+```
+
+> 조회 버튼 객체 경로(`F_TOPMENU.BTN_SRCH`)는 §9.3 [C1]로 발견한다.
+
+### 4.5 진입 직후 LeftFrame 런타임 준비 대기
+
+`open_menu`는 `fn_runFileMDI`가 정의되는 즉시 호출하므로 보통 별도 대기가 필요 없다(§2.2).
+다만 느린 환경에서 **첫** 메뉴 진입이 런타임 미초기화로 빈손이 되는 것을 막기 위해, 통합정보시스템
+진입 후 첫 `open_menu` 전에 `#LeftFrame.contentWindow.Page00.funcLeft.fn_runFileMDI` 준비를
+한 번 폴링한다(준비되면 즉시 통과, 최대 120초).
 
 ---
 
@@ -267,8 +325,12 @@ CUMULATIVE_G1_SPEC = [
 
 ### Case 2 — 졸업 `학적 정보(F_SRCH arrData)를 찾지 못함`
 - **증상**: 졸업만 실패, name/major=None.
-- **원인**: `#G4` DOM이 shell 프레임에도 있어 런타임 없는 프레임을 집음 + 데이터 적재 전 읽음.
-- **해결**: 프레임 판정 기준을 `get_arrdata(frame,"G4")` truthy로 변경(§4.2).
+- **원인**: `G4`만 가진 프레임이 따로 존재. 프레임을 `"WHHJUV" in url and get_arrdata(frame,"G4")`
+  또는 `get_arrdata(frame,"G4")` 단독으로 고르면 학적(`F_SRCH`)이 없는 프레임을 집어
+  `parse_graduation_data`가 F_SRCH 단계에서 실패. (URL substr까지 쓰면 generic URL 환경에선
+  아예 못 잡기도 함.)
+- **해결**: 판정 지문을 `get_arrdata(frame,"F_SRCH") and get_arrdata(frame,"G4")`로 강화 —
+  화면이 요구하는 모든 데이터셋 보유를 확정 신호로(§4.2 전략 B). URL 의존 제거.
 
 ### Case 3 — 누적성적에 '결석' 컬럼이 포털엔 없음
 - **판단**: arrData `ABSN_FRQ`는 포털 화면엔 숨겨졌지만 유용 → **의도적으로 추가 노출**(이점).
@@ -299,7 +361,8 @@ CUMULATIVE_G1_SPEC = [
 4. 컬럼별로 **_NM 한글짝 유무** 확인 → 디코딩 전략 결정(§5)
 5. 코드명이 모호한 컬럼은 **실제 포털 화면 값과 대조**해 의미 확정(§7 Case4)
 6. 파서를 `(표시라벨, arrData컬럼, is_code)` 스펙으로 선언, 출력 shape은 소비처 계약에 맞춤(§6)
-7. 프레임 선택은 `get_arrdata` truthy 기준 + 폴링 대기(§4)
+7. 프레임 선택: 그리드 id가 화면 간 겹치면 화면 id 매칭(iframe-id 우선 + URL substr 폴백),
+   화면 고유 데이터셋이 있으면 그 arrData 지문으로. 둘 다 폴링 대기 겸용(§4)
 
 ### arrData 컬럼 덤프 스크립트(콘솔, 해당 WHH 프레임)
 ```javascript
@@ -462,6 +525,8 @@ arrData를 알기 전 단계의 1차 정찰용.
 ## 부록 — 주의/금지
 
 - `page.frame(name=...)` 핸들을 장기 보관 금지(리로드 시 context destroyed). 매 시도 재획득.
+- 프레임을 URL substr **단독**으로 고르지 말 것(generic URL·화면 누적 시 오매칭). 화면 id
+  매칭(iframe-id 우선 + URL 폴백) 또는 화면 고유 arrData 지문을 쓴다(§4.2).
 - DOM `<table>` 브루트포스 금지(가상화 누락·오매칭). arrData 직접.
 - 고정 `sleep`로 로드 대기 금지. "데이터 적재됨" 조건 폴링.
 - 코드 컬럼을 _NM 무시하고 무조건 code_map 디코딩 금지(셀렉트박스 로드 타이밍 의존). _NM 우선.
