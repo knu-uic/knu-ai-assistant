@@ -89,138 +89,26 @@ def _image_to_text(image_bytes: bytes, mime: str) -> str:
     return resp.content if isinstance(resp.content, str) else str(resp.content)
 
 
-def _download(
-    url: str,
-    context,
-    referer: str | None = None,
-    detail_page=None,
-    attachment_selector: str | None = None,
-    attachment_index: int | None = None,
-) -> bytes:
-    """실제 Chromium 다운로드 경로를 사용해 첨부파일을 가져온다."""
-    created_page = detail_page is None
-    page = detail_page or context.new_page()
+def _download(url: str, context) -> bytes:
+    """첨부 파일을 HTTP로 직접 받는다(브라우저 context의 쿠키/세션 공유). 실패 시 빈 바이트.
 
-    lower_url = url.lower()
-
-    direct_extensions = (
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".gif",
-        ".webp",
-        ".bmp",
-        ".svg",
-        ".pdf",
-        ".txt",
-        ".csv",
-    )
-
+    download.do처럼 Content-Disposition: attachment 응답도 browser navigation 없이
+    바이트로 받는다. page.goto는 그런 응답에서 navigation을 abort하며 예외를 던져
+    받은 파일까지 버리므로 쓰지 않는다.
+    """
     try:
-        # 이미지/JPG/PDF 같은 직접 파일 URL은 browser download 이벤트 대신
-        # HTTP request로 바로 가져오는 편이 훨씬 안정적이다.
-        if any(lower_url.endswith(ext) for ext in direct_extensions):
-            try:
-                response = context.request.get(
-                    url,
-                    timeout=int(
-                        os.getenv("ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", "120000")
-                    ),
-                    fail_on_status_code=False,
-                )
-
-                if response.ok:
-                    return response.body()
-
-            except Exception as e:
-                print(f"[direct request failed] {url} -> {e}")
-        # 일부 학교 사이트는 Referer 세션이 없으면 download.do 연결 자체를 끊는다.
-        if detail_page and attachment_selector is not None and attachment_index is not None:
-            attachments = page.locator(attachment_selector)
-
-            target = attachments.nth(attachment_index)
-
-            timeout_ms = int(
-                os.getenv("ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", "120000")
-            )
-
-            with page.expect_download(timeout=timeout_ms) as download_info:
-                target.locator('a[href*="download.do"]').first.click(
-                    timeout=5000,
-                    no_wait_after=True,
-                )
-
-        elif referer:
-            timeout_ms = int(
-                os.getenv("ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", "120000")
-            )
-            download_selectors = [
-                f'a[href="{url}"]',
-                f'a[href*="download.do"]',
-                'a[download]',
-                'button[onclick*="download"]',
-                'a[onclick*="download"]',
-            ]
-
-            clicked = False
-
-            for selector in download_selectors:
-                try:
-                    target = page.locator(selector).first
-
-                    if target.count() == 0:
-                        continue
-
-                    with page.expect_download(timeout=timeout_ms) as download_info:
-                        target.click(
-                            timeout=5000,
-                            no_wait_after=True,
-                        )
-
-                    clicked = True
-                    break
-
-                except Exception:
-                    continue
-
-            if not clicked:
-                raise RuntimeError(
-                    f"다운로드 버튼을 찾지 못했습니다: {url}"
-                )
-
-        else:
-            timeout_ms = int(
-                os.getenv("ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", "120000")
-            )
-            with page.expect_download(timeout=timeout_ms) as download_info:
-                page.goto(url, wait_until="commit", timeout=timeout_ms)
-
-        download = download_info.value
-
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            temp_path = tmp.name
-
-        download.save_as(temp_path)
-
-        data = Path(temp_path).read_bytes()
-
-        try:
-            os.remove(temp_path)
-        except Exception:
-            pass
-
-        return data
-
+        response = context.request.get(
+            url,
+            timeout=int(os.getenv("ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", "120000")),
+            fail_on_status_code=False,
+        )
+        if response.ok and response.body():
+            return response.body()
+        print(f"[download failed] {url} -> status={response.status}")
+        return b""
     except Exception as e:
         print(f"[download failed] {url} -> {e}")
         return b""
-
-    finally:
-        if created_page:
-            try:
-                page.close()
-            except Exception:
-                pass
 
 
 def pdf_to_text(data: bytes) -> str:
@@ -891,28 +779,14 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                 # HWP: synap 미리보기 → 실패 → 다운로드 → LibreOffice→PDF(→OLE)
                 body = _office_preview_fallback(att, context)
                 if not body or not body.strip():
-                    file_data = _download(
-                        source_url,
-                        context,
-                        referer=att.get("preview_url") or source_url,
-                        detail_page=att.get("detail_page"),
-                        attachment_selector=att.get("attachment_selector"),
-                        attachment_index=att.get("attachment_index"),
-                    )
+                    file_data = _download(source_url, context)
                     if not file_data:
                         body = "(원본 HWP 다운로드 실패)"
                     else:
                         body = hwp_bytes_to_text(file_data, name)
             else:
                 # HWPX: synap 미리보기 미지원 → ZIP 내부 XML 직추출 → 비면 LibreOffice→PDF 폴백.
-                file_data = _download(
-                    source_url,
-                    context,
-                    referer=att.get("preview_url") or source_url,
-                    detail_page=att.get("detail_page"),
-                    attachment_selector=att.get("attachment_selector"),
-                    attachment_index=att.get("attachment_index"),
-                )
+                file_data = _download(source_url, context)
                 if not file_data:
                     body = "(원본 HWPX 다운로드 실패)"
                 else:
