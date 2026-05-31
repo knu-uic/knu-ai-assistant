@@ -764,20 +764,34 @@ def verifier_node(state: ChatState) -> dict:
     }
 
 
-def build_graph():
-    """LangGraph RAG 파이프라인을 구성하고 실행 가능한 그래프로 컴파일한다.
+def _route_by_mode(state: ChatState) -> str:
+    """query_mode로 retriever 경로를 고른다. 기본 precise."""
+    return "broad" if state.get("query_mode") == "broad" else "precise"
 
-    router -> retriever -> answerer -> verifier(optional) 순서로 노드를 연결한다.
-    ENABLE_VERIFIER=true 환경변수일 때만 verifier를 활성화한다.
+
+def build_graph():
+    """router → (precise|broad) → answerer 이중 RAG 파이프라인을 컴파일한다.
+
+    query_mode에 따라 precise(retriever→answerer) 또는
+    broad(broad_retriever→broad_answerer)로 분기한다.
+    ENABLE_VERIFIER=true면 precise answerer 뒤에만 verifier를 연결한다.
     """
     g = StateGraph(ChatState)
     g.add_node("router", router_node)
     g.add_node("retriever", retriever_node)
     g.add_node("answerer", answerer_node)
+    g.add_node("broad_retriever", broad_retriever_node)
+    g.add_node("broad_answerer", broad_answerer_node)
 
     g.set_entry_point("router")
-    g.add_edge("router", "retriever")
+    g.add_conditional_edges(
+        "router",
+        _route_by_mode,
+        {"precise": "retriever", "broad": "broad_retriever"},
+    )
     g.add_edge("retriever", "answerer")
+    g.add_edge("broad_retriever", "broad_answerer")
+    g.add_edge("broad_answerer", END)
 
     if ENABLE_VERIFIER:
         g.add_node("verifier", verifier_node)
