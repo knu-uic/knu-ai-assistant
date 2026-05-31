@@ -16,7 +16,7 @@ from playwright.sync_api import sync_playwright
 
 from db import upsert_user
 
-KNUIS_URL = "https://knuis-s.kongju.ac.kr/index.jsp"
+KNUIS_URL = "https://portal.kongju.ac.kr/index.jsp"
 
 def wait_and_click_in_any_frame(page, selector, timeout_sec=15) -> bool:
     """모든 iframe을 탐색하며 지정된 요소를 찾아 화면에 나타나면 클릭합니다."""
@@ -321,6 +321,23 @@ def find_frame_by_url_substr(context, substr):
     return None
 
 
+def find_frame_by_iframe_id(context, iframe_id):
+    """iframe DOM 엘리먼트의 id/name으로 Frame을 찾아 반환. 못 찾으면 None.
+    MDI 화면 iframe URL이 공통 실행주소(run.jsp 등)로만 떠 url-substr 매칭이 실패하는
+    환경 대비. 화면 id가 iframe id 속성에 박혀 있으면 이 방식이 안정적이다."""
+    for p_item in context.pages:
+        for frame in p_item.frames:
+            try:
+                element = frame.frame_element()
+                fid = element.get_attribute("id")
+                fname = element.get_attribute("name")
+                if fid == iframe_id or fname == iframe_id:
+                    return frame
+            except Exception:
+                continue
+    return None
+
+
 def get_arrdata(frame, grid_id) -> dict | None:
     """Webcrea 런타임 객체의 arrData(컬럼지향 {COL:[v0,v1,...]})를 직접 반환.
     렌더된 DOM 대신 데이터셋을 직접 읽어 가상화로 인한 행 누락 없이 전체 행을 가져온다.
@@ -433,7 +450,7 @@ GRADE_DIST_F1_SPEC = [
 
 def parse_grade_distribution(context) -> dict | None:
     """WHHSJV0275(나의성적분포): G1(학기별 성적) + F1(전체 요약)을 arrData에서 직접 파싱."""
-    frame = find_frame_by_url_substr(context, "WHHSJV0275")
+    frame = find_frame_by_iframe_id(context, "WHHSJV0275") or find_frame_by_url_substr(context, "WHHSJV0275")
     if frame is None:
         print("[grade_distribution] WHHSJV0275 프레임을 찾지 못했습니다.", file=sys.stderr, flush=True)
         return None
@@ -527,7 +544,7 @@ CUMULATIVE_GRIDS = [
 
 def parse_cumulative_grades(context) -> dict | None:
     """WHHSJV0270(누적성적조회): G1(과목별)·G2(학기별)·G3(이수구분별)을 arrData에서 직접 파싱."""
-    frame = find_frame_by_url_substr(context, "WHHSJV0270")
+    frame = find_frame_by_iframe_id(context, "WHHSJV0270") or find_frame_by_url_substr(context, "WHHSJV0270")
     if frame is None:
         print("[cumulative_grades] WHHSJV0270 프레임을 찾지 못했습니다.", file=sys.stderr, flush=True)
         return None
@@ -562,7 +579,7 @@ def parse_timetable_data(context) -> list[dict] | None:
     """시간표 WHHSKV 프레임의 G1 arrData를 직접 읽어 행 추출.
     출력 shape은 기존과 동일(list[{frame_url, frame_name, rows}], rows[0]은 헤더)이어야
     home.py 시간표 렌더(rows[0]에 '월요일/교시' 매칭, 셀 정규식 파싱)가 그대로 동작한다."""
-    frame = find_frame_by_url_substr(context, "WHHSKV")
+    frame = find_frame_by_iframe_id(context, "WHHSKV0580") or find_frame_by_url_substr(context, "WHHSKV")
     if frame is None:
         print("[timetable] WHHSKV 프레임을 찾지 못했습니다.", file=sys.stderr, flush=True)
         return None
@@ -661,7 +678,24 @@ def main() -> int:
             knuis_page = new_page_info.value
             knuis_page.bring_to_front()
             knuis_page.wait_for_load_state("load")
-            
+
+            # LeftFrame의 fn_runFileMDI 런타임이 준비될 때까지 대기(최대 120초, 준비 즉시 통과).
+            # 느린 환경에서 첫 메뉴 진입이 런타임 미초기화로 빈손이 되는 것을 막는다.
+            print("[2/7] LeftFrame 런타임 준비 대기 중...", flush=True)
+            for _ in range(120):
+                try:
+                    if knuis_page.evaluate("""() => {
+                        const w = document.querySelector('#LeftFrame')?.contentWindow;
+                        return !!(w && w.Page00 && w.Page00.funcLeft && w.Page00.funcLeft.fn_runFileMDI);
+                    }"""):
+                        print("[2/7] LeftFrame 런타임 준비 완료", flush=True)
+                        break
+                except Exception:
+                    pass
+                knuis_page.wait_for_timeout(1000)
+            else:
+                print("[2/7] LeftFrame 런타임 준비 타임아웃(계속 진행).", file=sys.stderr, flush=True)
+
             # 3. 시간표(menuId 1000000062) — fn_runFileMDI 직접 호출로 진입.
             timetable_json = None
             try:
@@ -694,6 +728,17 @@ def main() -> int:
                 knuis_page.wait_for_timeout(3000)
                 select_semester_all(knuis_page)
                 knuis_page.wait_for_timeout(500)
+                # 조회 버튼(F_TOPMENU.BTN_SRCH)을 직접 실행해 '전체' 학기 그리드 갱신을 확실히 트리거.
+                # 진입만으로 그리드가 비어 있는 경우(조회 미발생) 빈손 파싱을 막는다.
+                cg_frame = find_frame_by_iframe_id(context, "WHHSJV0270") or find_frame_by_url_substr(context, "WHHSJV0270")
+                if cg_frame is not None:
+                    try:
+                        cg_frame.evaluate("""() => {
+                            const b = window.Page00?.F_TOPMENU?.BTN_SRCH;
+                            if (b && b.OnCLICK) b.OnCLICK();
+                        }""")
+                    except Exception:
+                        pass
                 wait_for_grid_rows(context, "WHHSJV0270", "G1", timeout_sec=20)
                 cumulative_grades_json = parse_cumulative_grades(context)
                 print(f"[5/8] 누적성적조회 파싱 완료 (그리드 수: {len(cumulative_grades_json['grids']) if cumulative_grades_json else 0})", flush=True)
@@ -721,7 +766,10 @@ def main() -> int:
                     for p_item in context.pages:
                         for frame in p_item.frames:
                             try:
-                                if "WHHJUV" in frame.url and get_arrdata(frame, "G4"):
+                                # URL이 공통 실행주소(run.jsp 등)로 떠도 잡히도록 URL 프리필터 제거.
+                                # 단 #G4만 가진 shell 프레임이 있어, 학적(F_SRCH)+취득학점(G4)을
+                                # 모두 보유한 프레임만 데이터 프레임으로 확정한다.
+                                if get_arrdata(frame, "F_SRCH") and get_arrdata(frame, "G4"):
                                     data_frame = frame
                                     break
                             except Exception:
