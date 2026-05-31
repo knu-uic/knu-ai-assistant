@@ -653,11 +653,11 @@ def insert_chunks(
         print(f"  ↳ chunk {len(chunks)}건 저장 완료 (→ document_{slug}_chunk)")
 
 
-def _search_subquery(slug: str, major_filter: bool) -> tuple[sql.Composable, list]:
+def _search_subquery(slug: str, major_filter: bool, distinct_by_doc: bool = False) -> tuple[sql.Composable, list]:
     """카테고리 하나에 대한 chunk-level similarity search 서브쿼리.
 
-    문서별 대표 chunk collapse를 하지 않고,
-    모든 chunk를 유사도 기준으로 경쟁시킨다.
+    distinct_by_doc=False: 모든 chunk를 유사도 기준으로 경쟁(precise).
+    distinct_by_doc=True: 공지(d.url)당 best chunk 1행만(broad). DISTINCT ON 사용.
 
     placeholder 순서: [vec, major?]
     """
@@ -668,8 +668,17 @@ def _search_subquery(slug: str, major_filter: bool) -> tuple[sql.Composable, lis
         if major_filter else sql.SQL(" ")
     )
 
+    select_prefix = (
+        sql.SQL("SELECT DISTINCT ON (d.url)") if distinct_by_doc
+        else sql.SQL("SELECT")
+    )
+    order_by = (
+        sql.SQL(" ORDER BY d.url, c.embedding <=> %s::vector ") if distinct_by_doc
+        else sql.SQL(" ORDER BY c.embedding <=> %s::vector ")
+    )
+
     sub = sql.SQL("""
-        SELECT
+        {select_prefix}
                d.url,
                d.title,
                c.content,
@@ -691,12 +700,14 @@ def _search_subquery(slug: str, major_filter: bool) -> tuple[sql.Composable, lis
         JOIN {doc} d ON d.id = c.document_id
         JOIN source s ON s.id = d.source_id
         {where}
-        ORDER BY c.embedding <=> %s::vector
+        {order_by}
     """).format(
+        select_prefix=select_prefix,
         cat_lit=sql.Literal(category_literal),
         chunk=_chunk_ident(slug),
         doc=_doc_ident(slug),
         where=where_clause,
+        order_by=order_by,
     )
 
     return sub, [category_literal]
@@ -707,6 +718,7 @@ def search_chunks(
     major: str | None = None,
     categories: list[str] | None = None,
     limit: int = 10,
+    distinct_by_doc: bool = False,
 ):
     """HNSW 코사인 유사도 기반 chunk-level 검색.
 
@@ -722,7 +734,7 @@ def search_chunks(
     subs: list[sql.Composable] = []
     params: list = []
     for slug in target_slugs:
-        sub, _ = _search_subquery(slug, major_filter=bool(major))
+        sub, _ = _search_subquery(slug, major_filter=bool(major), distinct_by_doc=distinct_by_doc)
         subs.append(sql.SQL("(") + sub + sql.SQL(")"))
         # subquery placeholder 순서: 1st vec(score 계산), major?, 2nd vec(order by)
         params.append(query_embedding)
