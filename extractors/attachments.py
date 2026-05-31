@@ -322,27 +322,12 @@ def _hwp_ole_strings_to_text(data: bytes) -> str:
     return extracted
 
 
-def _hwp_bytes_to_markdown(data: bytes, filename: str) -> str:
-    """pyhwp2md로 HWP/HWPX를 Markdown 텍스트로 변환한다."""
+def _office_pdf_text(data: bytes, filename: str) -> str:
+    """오피스 문서(HWP/HWPX 등)를 LibreOffice로 PDF 변환 후 텍스트 추출. 실패 시 "".
+    전체 변환 → 실패하면 페이지 단위 프로빙. hwp·hwpx 폴백 경로에서 공유한다.
+    스캔본은 _pdf_bytes_full 내부에서 pdf2image+VLM로 처리된다."""
     suffix = Path(filename).suffix or ".hwp"
-    with tempfile.TemporaryDirectory(prefix="hwp-md-") as tmp:
-        input_path = Path(tmp) / f"input{suffix}"
-        input_path.write_bytes(data)
-        from pyhwp2md import convert
-        return convert(input_path).strip()
-
-
-def hwp_bytes_to_text(data: bytes, filename: str = "attachment.hwp") -> str:
-    """HWP를 Markdown 변환 우선, 실패 시 LibreOffice/PDF와 내부 문자열 fallback으로 텍스트화."""
-    try:
-        markdown = _hwp_bytes_to_markdown(data, filename)
-        if markdown:
-            return markdown
-    except Exception:
-        pass
-
-    suffix = Path(filename).suffix or ".hwp"
-    with tempfile.TemporaryDirectory(prefix="hwp-convert-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="office-convert-") as tmp:
         tmp_dir = Path(tmp)
         input_path = tmp_dir / f"input{suffix}"
         input_path.write_bytes(data)
@@ -378,6 +363,16 @@ def hwp_bytes_to_text(data: bytes, filename: str = "attachment.hwp") -> str:
         if page_texts:
             return "\n\n".join(page_texts).strip()
 
+    return ""
+
+
+def hwp_bytes_to_text(data: bytes, filename: str = "attachment.hwp") -> str:
+    """HWP(5.x)를 LibreOffice→PDF로 텍스트화. 실패 시 OLE 내부 문자열 회수."""
+    text = _office_pdf_text(data, filename)
+    if text:
+        return text
+
+    # 최후수단: HWP5 OLE 바이너리 내부 UTF-16 문자열 직접 회수(hwp 전용).
     fallback = _hwp_ole_strings_to_text(data)
     if fallback:
         return fallback

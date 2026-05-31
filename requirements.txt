@@ -38,14 +38,13 @@ lxml
 # - pdfplumber: 텍스트 PDF 추출
 # - pdf2image: 스캔 PDF를 이미지로 렌더링
 # - openpyxl/xlrd: XLSX/XLS 추출
-# - pyhwp2md: HWP/HWPX를 Markdown 텍스트로 변환
+# - HWP/HWPX: LibreOffice(soffice)로 PDF 변환 후 추출 (별도 시스템 의존: soffice)
 # macOS 로컬에서 pdf2image를 쓰려면:
 #   brew install poppler
 pdfplumber
 openpyxl
 xlrd
 pdf2image
-pyhwp2md
 
 # 이미지/OCR 처리
 pillow
