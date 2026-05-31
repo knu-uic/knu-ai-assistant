@@ -128,6 +128,16 @@ SUPPORT_DOC_TOP_N = _env_int(
     3,
 )
 
+BROAD_RERANK_CANDIDATES = _env_int(
+    "BROAD_RERANK_CANDIDATES",
+    50,
+)
+
+BROAD_DOC_TOP_N = _env_int(
+    "BROAD_DOC_TOP_N",
+    12,
+)
+
 
 # -----------------------------
 # refine
