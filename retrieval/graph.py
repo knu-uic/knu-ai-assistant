@@ -26,6 +26,10 @@ Category = Literal["장학", "수강", "취업(진로)", "행사(공모전)", "�
 
 
 class RouteDecision(BaseModel):
+    query_mode: Literal["precise", "broad"] = Field(
+        description="precise=특정 공지 1건의 구체 사실을 묻는 질문. "
+                    "broad=여러 공지를 한눈에 훑는 집계/목록형 질문. 애매하면 precise."
+    )
     categories: List[Category] = Field(
         description="검색할 카테고리 리스트. 모호하면 여러 개, 명확히 무관하면 1개만."
     )
@@ -44,6 +48,7 @@ class VerificationResult(BaseModel):
 
 class ChatState(TypedDict, total=False):
     question: str
+    query_mode: str
     major: str | None
     categories: List[Category]
     expanded_query: str
@@ -57,6 +62,14 @@ class ChatState(TypedDict, total=False):
 
 
 ROUTER_SYSTEM = """너는 공주대 학생 질문을 분석해 RAG 파이프라인의 진입점을 결정하는 라우터다.
+
+## 질문 모드 (query_mode)
+질문이 둘 중 어느 쪽인지 판단한다.
+- precise — 특정 공지 1건의 구체 사실(날짜·금액·자격·장소·절차)을 묻는다.
+  예: "국가장학금 신청 언제까지야", "AWS 특강 장소 어디", "복학 신청 어떻게 해"
+- broad — 여러 공지를 한눈에 훑고 싶은 집계/목록형이다.
+  예: "이번에 올라온 장학 공지 전부 알려줘", "수강 관련 공지 뭐뭐 있어", "이번 달 행사 알려줘"
+- 애매하면 precise를 고른다(기본 동작이 안전).
 
 ## 카테고리 분류 (categories)
 다음 5개 중 질문과 관련 있는 카테고리를 모두 고른다. 
@@ -132,6 +145,7 @@ def router_node(state: ChatState) -> dict:
     ])
     # structured_output이라 decision은 RouteDecision 인스턴스.
     return {
+        "query_mode": decision.query_mode,  # type: ignore[union-attr]
         "categories": list(decision.categories),  # type: ignore[union-attr]
         "expanded_query": decision.expanded_query,  # type: ignore[union-attr]
         "route_rationale": decision.rationale,  # type: ignore[union-attr]
