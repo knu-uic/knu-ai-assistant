@@ -115,6 +115,22 @@ ANSWERER_SYSTEM = """너는 공주대학교 학생을 돕는 AI 비서다.
 """
 
 
+BROAD_ANSWERER_SYSTEM = """너는 공주대학교 학생을 돕는 AI 비서다.
+
+아래 컨텍스트는 여러 공지의 요약 카드 목록이다. 사용자는 관련 공지를 한눈에 훑고 싶어한다.
+
+규칙:
+- 컨텍스트의 공지들을 목록 형태로 정리해 답한다.
+  예: "현재 관련 공지는 다음과 같습니다:\n1) ○○장학 (접수 ~6/10)\n2) □□장학 (접수 ~6/15) ..."
+- 각 항목에 제목과 접수기간(있으면)을 함께 보여준다.
+- 컨텍스트에 없는 새로운 사실(날짜·금액·자격·연락처 등)은 만들지 마라.
+- 컨텍스트가 비어 답할 공지가 전혀 없으면 "관련 공지를 찾지 못했습니다"라고 답하라.
+- 내부 분석/추론 과정은 출력하지 마라. 최종 답변만 자연스럽게 출력하라.
+- 답변 끝에 참고한 공지 제목과 URL을 목록으로 붙인다.
+- 한국어로 간결하게 답한다.
+"""
+
+
 VERIFIER_SYSTEM = """너는 RAG 답변의 사실 충실도를 검증한다.
 
 판정 규칙:
@@ -694,6 +710,26 @@ def answerer_node(state: ChatState) -> dict:
     model = get_llm()
     resp = model.invoke([
         SystemMessage(content=ANSWERER_SYSTEM),
+        HumanMessage(content=(
+            f"# 오늘 날짜\n{today}\n\n"
+            f"# 사용자 질문\n{state['question']}\n\n"
+            f"# 컨텍스트\n{context_text}"
+        )),
+    ])
+    answer = resp.content if hasattr(resp, "content") else str(resp)
+    return {"answer": answer}
+
+
+def broad_answerer_node(state: ChatState) -> dict:
+    contexts = state.get("contexts") or []
+    if not contexts:
+        return {"answer": "관련 공지를 찾지 못했습니다."}
+
+    context_text = _format_broad_context(contexts, budget=6000)
+    today = date.today().isoformat()
+    model = get_llm()
+    resp = model.invoke([
+        SystemMessage(content=BROAD_ANSWERER_SYSTEM),
         HumanMessage(content=(
             f"# 오늘 날짜\n{today}\n\n"
             f"# 사용자 질문\n{state['question']}\n\n"
