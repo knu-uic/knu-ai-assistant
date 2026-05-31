@@ -572,6 +572,43 @@ def _format_support_context(c: Dict[str, Any], budget: int) -> str:
     )
 
 
+def _format_broad_context(
+    contexts: List[Dict[str, Any]],
+    budget: int,
+) -> str:
+    """broad 경로 packing. 공지를 얇은 메타카드(제목+기간+요약) 목록으로 렌더.
+
+    카드 1장 = 제목/URL + 접수기간 + 요약(없으면 matched_chunk 한 줄).
+    budget 안에서 카드를 가능한 한 많이 채운다.
+    """
+    if not contexts:
+        return "(컨텍스트 없음)"
+
+    parts: list[str] = []
+    remaining = budget
+
+    for c in contexts:
+        if remaining <= 0:
+            break
+
+        header = _context_header(c)
+        summary = (c.get("summary") or "").strip()
+        if not summary:
+            summary = (c.get("matched_chunk") or "").strip()
+
+        card = header
+        if summary:
+            card += f"\n요약: {summary}"
+
+        block = ("\n\n" if parts else "") + card
+        before = len("".join(parts))
+        remaining = _append_budget(parts, block, remaining)
+        if len("".join(parts)) == before:
+            break
+
+    return "".join(parts).strip()
+
+
 def _pack_evidence_chunks(
     evidence_chunks: List[Dict[str, Any]],
     budget: int,
