@@ -615,7 +615,7 @@ def _office_preview_fallback(att: dict, context) -> str:
         return ""
 
     try:
-        text = hwpx_via_preview(preview_url, context)
+        text = hwp_via_preview(preview_url, context)
 
         # viewer에서 일부 텍스트라도 확보되면 그대로 사용한다.
         # 공주대처럼 download.do는 막혀 있지만 synapView 렌더는 허용하는
@@ -627,7 +627,7 @@ def _office_preview_fallback(att: dict, context) -> str:
         return ""
 
 
-def hwpx_via_preview(preview_url: str, context) -> str:
+def hwp_via_preview(preview_url: str, context) -> str:
     """synapView 전체 스크롤 기반 텍스트 추출.
 
     synapView는 대형 HWP/HWPX를 lazy rendering 하는 경우가 많아

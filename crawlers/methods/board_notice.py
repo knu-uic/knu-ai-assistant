@@ -15,7 +15,7 @@ from urllib3.util import create_urllib3_context
 from config import MAX_CRAWL_WORKERS
 from extractors.attachments import (
     attachment_to_text,
-    hwpx_via_preview,
+    hwp_via_preview,
     inline_image_to_text,
     xlsx_relevant,
 )
@@ -400,7 +400,7 @@ class BoardNoticeCrawler:
             # download.do 대신 synap viewer 자체를 직접 스크롤 수집한다.
             if preview_url and filename_lower.endswith((".hwp", ".hwpx")):
                 try:
-                    viewer_text = hwpx_via_preview(preview_url, context)
+                    viewer_text = hwp_via_preview(preview_url, context)
 
                     if viewer_text and viewer_text.strip():
                         attachment_names.append(att["filename"])
