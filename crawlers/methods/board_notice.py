@@ -15,7 +15,7 @@ from urllib3.util import create_urllib3_context
 from config import MAX_CRAWL_WORKERS
 from extractors.attachments import (
     attachment_to_text,
-    hwpx_via_preview,
+    hwp_via_preview,
     inline_image_to_text,
     xlsx_relevant,
 )
@@ -396,11 +396,12 @@ class BoardNoticeCrawler:
             filename_lower = att["filename"].lower()
             preview_url = att.get("preview_url")
 
-            # 공주대 요람 같은 대형 HWP/HWPX는
+            # 공주대 요람 같은 대형 HWP는
             # download.do 대신 synap viewer 자체를 직접 스크롤 수집한다.
-            if preview_url and filename_lower.endswith((".hwp", ".hwpx")):
+            # (synap 미리보기는 HWP 전용 — HWPX는 attachment_to_text에서 XML 추출로 처리)
+            if preview_url and filename_lower.endswith(".hwp"):
                 try:
-                    viewer_text = hwpx_via_preview(preview_url, context)
+                    viewer_text = hwp_via_preview(preview_url, context)
 
                     if viewer_text and viewer_text.strip():
                         attachment_names.append(att["filename"])
