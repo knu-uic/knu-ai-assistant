@@ -4,9 +4,10 @@
 호출자는 결과를 본문에 그대로 이어 붙이면 된다.
 """
 from model import get_llm
+from parsers.pdf_parser import parse_pdf      # ODL 기반 PDF→마크다운 공유 헬퍼
 
 # --- 표준 라이브러리 ---
-import io           # 바이트 데이터를 "파일처럼" 다루기 위한 BytesIO 용도 (pdfplumber/openpyxl/zipfile이 파일객체를 요구함)
+import io           # 바이트 데이터를 "파일처럼" 다루기 위한 BytesIO 용도 (zipfile/이미지 버퍼가 파일객체를 요구함)
 import base64       # 이미지 바이트를 Gemini에 보낼 때 base64 문자열로 인코딩
 import zipfile      # HWPX 파일은 사실상 ZIP 컨테이너라서 직접 열어서 내부 XML을 꺼냄
 import json
@@ -20,7 +21,6 @@ from typing import Any
 from xml.etree import ElementTree as ET        # HWPX 내부 XML 파싱
 
 # --- 외부 라이브러리 ---
-import pdfplumber                              # PDF에서 텍스트 추출 (텍스트 PDF용)
 import openpyxl                                # XLSX 읽기 (현재 라우터에서는 미사용)
 import xlrd                                    # XLS 읽기
 from langchain_core.messages import HumanMessage          # LangChain 멀티모달 메시지 포맷
@@ -224,16 +224,18 @@ def _download(
 
 
 def pdf_to_text(data: bytes) -> str:
-    """텍스트 PDF용 1차 추출. 스캔 PDF는 빈 문자열을 반환한다."""
-    with pdfplumber.open(io.BytesIO(data)) as pdf:
-        # 페이지마다 텍스트를 뽑아 정리. extract_text가 None을 줄 수 있어 or ""로 방어.
-        pages = [(p.extract_text() or "").strip() for p in pdf.pages]
-    return "\n".join(pages).strip()
+    """텍스트 PDF용 1차 추출(ODL 마크다운, 표는 순수 md). 스캔 PDF는 빈 문자열을 반환한다."""
+    return parse_pdf(data, markdown_with_html=False)
 
 
 def _pdf_bytes_full(data: bytes) -> str:
-    """pdfplumber 1차 → 비어있으면 pdf2image+VLM fallback."""
-    body = pdf_to_text(data)
+    """ODL 1차(텍스트/표 마크다운) → 비어있으면 pdf2image+VLM fallback."""
+    try:
+        body = pdf_to_text(data)
+    except Exception as e:
+        # ODL(JVM) 변환 실패/타임아웃 → 빈값 취급해 아래 VLM 폴백으로 넘긴다.
+        print(f"[odl failed] {e}")
+        body = ""
     if body:
         # 텍스트 레이어가 있는 정상 PDF: 1차 결과를 그대로 사용
         return body
