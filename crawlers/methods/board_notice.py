@@ -124,7 +124,6 @@ class BoardNoticeCrawler:
         items: list[dict] = []
         lis = detail_page.locator(self.config.attachment_selector).all()
         for li in lis:
-            li_index = len(items)
             dl = li.locator('a[href*="download.do"]').first
             try:
                 filename = dl.inner_text().strip()
@@ -139,8 +138,6 @@ class BoardNoticeCrawler:
                 "filename": filename,
                 "download_url": download_url,
                 "preview_url": preview_url,
-                "attachment_index": li_index,
-                "attachment_selector": self.config.attachment_selector,
             })
         return items
 
@@ -431,8 +428,6 @@ class BoardNoticeCrawler:
 
                 except Exception as e:
                     print(f"  - synap viewer 수집 실패: {e}")
-
-            att["detail_page"] = detail_page
 
             txt, meta = attachment_to_text(
                 att,
