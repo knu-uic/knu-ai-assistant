@@ -18,6 +18,8 @@ from config import (
     RERANK_CANDIDATES,
     RERANK_TOP_N,
     SUPPORT_DOC_TOP_N,
+    BROAD_RERANK_CANDIDATES,
+    BROAD_DOC_TOP_N,
     ENABLE_VERIFIER,
 )
 
@@ -294,6 +296,57 @@ def retriever_node(state: ChatState) -> dict:
         "contexts": contexts,
         "evidence_chunks": evidence_chunks,
     }
+
+
+@traceable(run_type="retriever", name="search_chunks_broad")
+def _retrieve_broad(
+    query: str,
+    major: str | None,
+    categories: List[str] | None,
+) -> List[Dict[str, Any]]:
+    """공지당 1 chunk 후보 → rerank → 상위 문서 메타카드용 context 리스트.
+
+    precise와 달리 evidence chunk packing / full-doc fetch 없음.
+    """
+    q_vec = embed_query(query)
+    rows = search_chunks(
+        q_vec,
+        major=major,
+        categories=categories,
+        limit=BROAD_RERANK_CANDIDATES,
+        distinct_by_doc=True,
+    )
+    if not rows:
+        return []
+
+    ranked = _rerank(query, rows)
+    top = ranked[:BROAD_DOC_TOP_N]
+
+    return [
+        {
+            "url": r[0],
+            "title": r[1],
+            "matched_chunk": r[2],
+            "summary": r[14] if len(r) > 14 else None,
+            "start_date": r[5],
+            "end_date": r[6],
+            "score": s,
+        }
+        for r, s in top
+    ]
+
+
+def broad_retriever_node(state: ChatState) -> dict:
+    """broad 경로 retriever. 여러 공지를 얇게 모아 카드 목록용 context를 만든다."""
+    query = state.get("expanded_query") or state["question"]
+    categories = list(state.get("categories") or []) or None
+
+    contexts = _retrieve_broad(
+        query,
+        state.get("major"),
+        categories,
+    )
+    return {"contexts": contexts, "evidence_chunks": []}
 
 
 def _append_budget(parts: list[str], text: str, remaining: int) -> int:
