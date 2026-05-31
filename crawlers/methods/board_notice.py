@@ -396,9 +396,10 @@ class BoardNoticeCrawler:
             filename_lower = att["filename"].lower()
             preview_url = att.get("preview_url")
 
-            # 공주대 요람 같은 대형 HWP/HWPX는
+            # 공주대 요람 같은 대형 HWP는
             # download.do 대신 synap viewer 자체를 직접 스크롤 수집한다.
-            if preview_url and filename_lower.endswith((".hwp", ".hwpx")):
+            # (synap 미리보기는 HWP 전용 — HWPX는 attachment_to_text에서 XML 추출로 처리)
+            if preview_url and filename_lower.endswith(".hwp"):
                 try:
                     viewer_text = hwp_via_preview(preview_url, context)
 

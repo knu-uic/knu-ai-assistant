@@ -887,15 +887,10 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             meta["mime_type"] = (
                 "application/vnd.hancom.hwpx" if ext == ".hwpx" else "application/x-hwp"
             )
-            body = ""
-
-            # 1차 시도: synapView 미리보기 페이지에서 텍스트 긁기
-            body = _office_preview_fallback(att, context)
-
-            # preview가 완전히 비어있을 때만 원본 다운로드 fallback 수행
-            if not body or not body.strip():
-                if ext == ".hwpx":
-                    # .hwpx는 ZIP 구조라 직접 까서 XML 텍스트 노드를 뽑을 수 있다
+            if ext == ".hwp":
+                # HWP: synap 미리보기 → 실패 → 다운로드 → LibreOffice→PDF(→OLE)
+                body = _office_preview_fallback(att, context)
+                if not body or not body.strip():
                     file_data = _download(
                         source_url,
                         context,
@@ -904,26 +899,26 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                         attachment_selector=att.get("attachment_selector"),
                         attachment_index=att.get("attachment_index"),
                     )
-
                     if not file_data:
-                        body = body or "(원본 HWPX 다운로드 실패)"
-                    else:
-                        body = hwpx_bytes_to_text(file_data)
-                else:
-                    # .hwp는 LibreOffice headless로 PDF 변환 후 기존 PDF 텍스트/OCR 파이프라인에 태운다.
-                    file_data = _download(
-                        source_url,
-                        context,
-                        referer=att.get("preview_url") or source_url,
-                        detail_page=att.get("detail_page"),
-                        attachment_selector=att.get("attachment_selector"),
-                        attachment_index=att.get("attachment_index"),
-                    )
-
-                    if not file_data:
-                        body = body or "(원본 HWP 다운로드 실패)"
+                        body = "(원본 HWP 다운로드 실패)"
                     else:
                         body = hwp_bytes_to_text(file_data, name)
+            else:
+                # HWPX: synap 미리보기 미지원 → ZIP 내부 XML 직추출 → 비면 LibreOffice→PDF 폴백.
+                file_data = _download(
+                    source_url,
+                    context,
+                    referer=att.get("preview_url") or source_url,
+                    detail_page=att.get("detail_page"),
+                    attachment_selector=att.get("attachment_selector"),
+                    attachment_index=att.get("attachment_index"),
+                )
+                if not file_data:
+                    body = "(원본 HWPX 다운로드 실패)"
+                else:
+                    body = hwpx_bytes_to_text(file_data)
+                    if not body or not body.strip():
+                        body = _office_pdf_text(file_data, name)
 
         # ───────── 분기 4: 이미지 첨부 ─────────
         elif ext in _IMAGE_EXTS:
