@@ -35,13 +35,13 @@ beautifulsoup4
 lxml
 
 # 첨부파일 처리
-# - pdfplumber: 텍스트 PDF 추출
-# - pdf2image: 스캔 PDF를 이미지로 렌더링
+# - opendataloader-pdf: PDF → 마크다운/표 추출 (ODL, Java 11+ 필요 — Dockerfile에 JRE 설치)
+# - pdf2image: 스캔 PDF를 이미지로 렌더링 (VLM OCR 폴백)
 # - openpyxl/xlrd: XLSX/XLS 추출
 # - HWP/HWPX: LibreOffice(soffice)로 PDF 변환 후 추출 (별도 시스템 의존: soffice)
 # macOS 로컬에서 pdf2image를 쓰려면:
 #   brew install poppler
-pdfplumber
+opendataloader-pdf
 openpyxl
 xlrd
 pdf2image
