@@ -1,0 +1,48 @@
+# docker-compose.yml
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: knu-uic-db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-knu-uic}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-knu-uic}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-knu-uic} -d ${DB_NAME:-knu-uic}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - bot_network
+
+  app:
+    build: .
+    container_name: knu-uic-app
+    restart: always
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env  # .env의 모든 변수들을 자동으로 컨테이너 환경변수로 로드
+    volumes:
+      - .:/app
+      - hf_cache:/root/.cache/huggingface
+    depends_on:
+      db:
+        condition: service_healthy   # pg_isready 통과 후에만 app 기동
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - bot_network
+
+volumes:
+  pgdata:
+  hf_cache:
+
+networks:
+  bot_network:
+    driver: bridge

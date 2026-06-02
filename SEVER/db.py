@@ -1,0 +1,1161 @@
+import json
+import os
+from datetime import date
+import psycopg
+from psycopg import sql
+from pgvector.psycopg import register_vector
+from dotenv import load_dotenv
+from model import EMBEDDING_DIM
+from config import DB_HOST
+
+
+
+load_dotenv()
+#DB_URL 결정 로직: 먼저 DATABASE_URL 확인 -> 있으면 그대로 사용 -> 없으면 개별 환경변수 조합
+DB_URL = os.getenv("DATABASE_URL") or (
+    f"postgresql://{os.getenv('DB_USER', 'knu-uic')}:"
+    f"{os.getenv('DB_PASSWORD')}@{DB_HOST}:"
+    f"{os.getenv('DB_PORT', '5432')}/{os.getenv('DB_NAME', 'knu-uic')}" )
+
+
+
+
+# schema.py의 category Literal과 1:1 매핑 — SQL 식별자에 한글/슬래시 못 쓰므로 영문 슬러그로 변환.
+CATEGORY_SLUGS: dict[str, str] = {
+    "장학": "scholarship",
+    "수강": "academic",
+    "취업(진로)": "career",
+    "행사(공모전)": "event",
+    "일반(기타)": "etc",
+}
+SLUG_TO_CATEGORY: dict[str, str] = {v: k for k, v in CATEGORY_SLUGS.items()}
+SLUGS: list[str] = list(CATEGORY_SLUGS.values())
+
+
+def _slug(category: str) -> str:
+    s = CATEGORY_SLUGS.get(category)
+    if not s:
+        raise ValueError(f"Unknown category: {category!r}")
+    return s
+
+
+def _doc_ident(slug: str) -> sql.Identifier:
+    return sql.Identifier(f"document_{slug}")
+
+
+def _chunk_ident(slug: str) -> sql.Identifier:
+    return sql.Identifier(f"document_{slug}_chunk")
+
+
+def _connect_with_vector():
+    """pgvector 어댑터가 등록된 커넥션을 돌려준다 (vector 컬럼 쓰는 쿼리 전용)."""
+    conn = psycopg.connect(DB_URL)
+    register_vector(conn)
+    return conn
+
+
+def _months_ago(today: date, months: int) -> date:
+    month_index = today.month - 1 - months
+    year = today.year + month_index // 12
+    month = month_index % 12 + 1
+    days_in_month = [
+        31,
+        29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
+        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+    ][month - 1]
+    return date(year, month, min(today.day, days_in_month))
+
+
+def reset_db():
+    """개발용 전체 초기화. 모든 문서/청크/자산 테이블을 DROP한다."""
+    with psycopg.connect(DB_URL) as conn:
+        for legacy in ("notice_asset", "notice", "document_chunk", "document_asset", "document"):
+            conn.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE;").format(sql.Identifier(legacy)))
+        for slug in SLUGS:
+            conn.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE;").format(_chunk_ident(slug)))
+            conn.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE;").format(_doc_ident(slug)))
+        conn.commit()
+    init_db()
+
+
+def init_db():
+    """category별 document/chunk 스키마를 비파괴적으로 준비한다."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS source (
+                id BIGSERIAL PRIMARY KEY,
+                code VARCHAR(50) UNIQUE NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                kind VARCHAR(20) NOT NULL CHECK (kind IN ('notice', 'academic')),
+                department VARCHAR(100),
+                base_url VARCHAR(500),
+                created_at TIMESTAMPTZ DEFAULT now()
+            );
+        """)
+
+        for slug in SLUGS:
+            conn.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {doc} (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_id BIGINT NOT NULL REFERENCES source(id) ON DELETE CASCADE,
+                    url VARCHAR(500) UNIQUE NOT NULL,
+                    title VARCHAR(255) NOT NULL,
+                    content TEXT NOT NULL,
+                    body_content TEXT,
+                    attachment_names JSONB,
+                    attachment_contents JSONB,
+                    summary TEXT,
+                    posted_at DATE,
+                    start_date DATE,
+                    end_date DATE,
+                    is_pinned BOOLEAN NOT NULL DEFAULT false,
+                    target VARCHAR(100)[],
+                    keywords VARCHAR(50)[],
+                    extra JSONB,
+                    crawled_at TIMESTAMPTZ DEFAULT now(),
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                );
+            """).format(doc=_doc_ident(slug)))
+            conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {doc}(source_id);").format(
+                idx=sql.Identifier(f"idx_document_{slug}_source"),
+                doc=_doc_ident(slug),
+            ))
+            conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {doc}(end_date);").format(
+                idx=sql.Identifier(f"idx_document_{slug}_end_date"),
+                doc=_doc_ident(slug),
+            ))
+            conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {doc}(posted_at);").format(
+                idx=sql.Identifier(f"idx_document_{slug}_posted_at"),
+                doc=_doc_ident(slug),
+            ))
+            conn.execute(sql.SQL("ALTER TABLE {doc} ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN NOT NULL DEFAULT false;").format(
+                doc=_doc_ident(slug),
+            ))
+            conn.execute(sql.SQL("ALTER TABLE {doc} ADD COLUMN IF NOT EXISTS summary TEXT;").format(
+                doc=_doc_ident(slug),
+            ))
+            conn.execute(sql.SQL("ALTER TABLE {doc} ADD COLUMN IF NOT EXISTS body_content TEXT;").format(
+                doc=_doc_ident(slug),
+            ))
+
+            conn.execute(sql.SQL("ALTER TABLE {doc} ADD COLUMN IF NOT EXISTS attachment_names JSONB;").format(
+                doc=_doc_ident(slug),
+            ))
+
+            conn.execute(sql.SQL("ALTER TABLE {doc} ADD COLUMN IF NOT EXISTS attachment_contents JSONB;").format(
+                doc=_doc_ident(slug),
+            ))
+            conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {doc}(is_pinned);").format(
+                idx=sql.Identifier(f"idx_document_{slug}_is_pinned"),
+                doc=_doc_ident(slug),
+            ))
+
+            conn.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {chunk} (
+                    id BIGSERIAL PRIMARY KEY,
+                    document_id BIGINT NOT NULL REFERENCES {doc}(id) ON DELETE CASCADE,
+                    chunk_idx INT NOT NULL,
+                    content TEXT NOT NULL,
+                    chunk_type VARCHAR(20) NOT NULL DEFAULT 'body',
+                    attachment_name VARCHAR(300),
+                    embedding vector({embedding_dim}) NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT now(),
+                    UNIQUE(document_id, chunk_idx)
+                );
+            """).format(
+                chunk=_chunk_ident(slug),
+                doc=_doc_ident(slug),
+                embedding_dim=sql.SQL(str(EMBEDDING_DIM)),
+            ))
+            conn.execute(sql.SQL("ALTER TABLE {chunk} DROP COLUMN IF EXISTS source_asset_id;").format(
+                chunk=_chunk_ident(slug),
+            ))
+            conn.execute(sql.SQL("ALTER TABLE {chunk} ADD COLUMN IF NOT EXISTS chunk_type VARCHAR(20) NOT NULL DEFAULT 'body';").format(
+                chunk=_chunk_ident(slug),
+            ))
+
+            conn.execute(sql.SQL("ALTER TABLE {chunk} ADD COLUMN IF NOT EXISTS attachment_name VARCHAR(300);").format(
+                chunk=_chunk_ident(slug),
+            ))
+            conn.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {idx} ON {chunk}(document_id);").format(
+                idx=sql.Identifier(f"idx_document_{slug}_chunk_document"),
+                chunk=_chunk_ident(slug),
+            ))
+            conn.execute(sql.SQL(
+                "CREATE INDEX IF NOT EXISTS {idx} ON {chunk} USING hnsw (embedding vector_cosine_ops);"
+            ).format(
+                idx=sql.Identifier(f"idx_document_{slug}_chunk_embedding"),
+                chunk=_chunk_ident(slug),
+            ))
+
+        # asset은 검색 경로가 아니라 부속 데이터 — 통합 유지하되 (category, document_id)로 식별.
+        # FK는 5개 테이블에 걸 수 없어 application-level cascade.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS document_asset (
+                id BIGSERIAL PRIMARY KEY,
+                category VARCHAR(20) NOT NULL,
+                document_id BIGINT NOT NULL,
+                kind VARCHAR(30) NOT NULL,
+                filename VARCHAR(300),
+                source_url VARCHAR(800) NOT NULL,
+                storage_path VARCHAR(800),
+                mime_type VARCHAR(80),
+                extracted_text TEXT,
+                order_idx INT NOT NULL DEFAULT 0,
+                created_at TIMESTAMPTZ DEFAULT now()
+            );
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_document_asset_doc  ON document_asset(category, document_id);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_document_asset_kind ON document_asset(kind);")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                student_id VARCHAR(20) PRIMARY KEY,
+                major VARCHAR(50),
+                name VARCHAR(50),
+                year INT,
+                interests TEXT,
+                courses TEXT
+            );
+        """)
+        # year 컬럼이 없는 기존 dev DB도 흡수.
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS favorite_courses TEXT;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS graduation_credits JSONB;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS timetable JSONB;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS grade_distribution_json JSONB;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS cumulative_grades_json JSONB;")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lms_tasks (
+                id BIGSERIAL PRIMARY KEY,
+                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
+                task_type VARCHAR(20) NOT NULL CHECK (task_type IN ('lecture', 'assignment', 'notice')),
+                title VARCHAR(255) NOT NULL,
+                course_name VARCHAR(120),
+                due_date DATE,
+                progress INT CHECK (progress IS NULL OR (progress >= 0 AND progress <= 100)),
+                url VARCHAR(800),
+                is_done BOOLEAN NOT NULL DEFAULT false,
+                source VARCHAR(30) NOT NULL DEFAULT 'manual',
+                external_id VARCHAR(160),
+                synced_at TIMESTAMPTZ,
+                raw JSONB,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                updated_at TIMESTAMPTZ DEFAULT now()
+            );
+        """)
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS source VARCHAR(30) NOT NULL DEFAULT 'manual';")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS external_id VARCHAR(160);")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ;")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS raw JSONB;")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lms_tasks_student_done_due ON lms_tasks(student_id, is_done, due_date);")
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_lms_tasks_external
+            ON lms_tasks(student_id, source, external_id)
+            WHERE external_id IS NOT NULL;
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lms_courses (
+                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
+                course_id BIGINT NOT NULL,
+                course_name VARCHAR(200) NOT NULL,
+                synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (student_id, course_id)
+            );
+        """)
+        conn.commit()
+        print(f"✅ source + {len(SLUGS)}개 category 테이블({', '.join(SLUGS)}) + asset/users 생성 완료")
+
+
+def prune_documents(
+    retention_months: int = 6,
+    delete_expired: bool = True,
+    protected_urls: set[str] | None = None,
+) -> int:
+    """오래되었거나 마감된 문서만 삭제한다.
+
+    삭제 조건:
+    - delete_expired=True이면 end_date가 오늘보다 과거인 문서
+    - posted_at이 있으면 posted_at, 없으면 crawled_at 기준 retention_months개월 이전 문서
+    - is_pinned=true 또는 protected_urls에 포함된 문서는 보존
+
+    chunk 테이블은 FK ON DELETE CASCADE로 지워지고, document_asset은 FK가 없어
+    category/document_id 기준으로 직접 삭제한다.
+    """
+    today = date.today()
+    cutoff = _months_ago(today, retention_months)
+    protected_urls = protected_urls or set()
+    total = 0
+
+    with psycopg.connect(DB_URL) as conn:
+        for slug in SLUGS:
+            category = SLUG_TO_CATEGORY[slug]
+            expired_clause = (
+                sql.SQL(" OR (end_date IS NOT NULL AND end_date < %s)")
+                if delete_expired else sql.SQL("")
+            )
+            query = sql.SQL("""
+                DELETE FROM {doc}
+                WHERE NOT is_pinned
+                  AND NOT (url = ANY(%s))
+                  AND (
+                    COALESCE(posted_at, crawled_at::date) < %s
+                    {expired}
+                  )
+                RETURNING id;
+            """).format(
+                doc=_doc_ident(slug),
+                expired=expired_clause,
+            )
+            params = [list(protected_urls), cutoff]
+            if delete_expired:
+                params.append(today)
+
+            deleted_ids = [row[0] for row in conn.execute(query, params).fetchall()]
+            if not deleted_ids:
+                continue
+
+            conn.execute(
+                "DELETE FROM document_asset WHERE category = %s AND document_id = ANY(%s);",
+                (category, deleted_ids),
+            )
+            total += len(deleted_ids)
+            print(f"  ↳ 오래된/마감 문서 정리: {category} {len(deleted_ids)}건")
+
+        conn.commit()
+
+    if total:
+        print(f"🧹 문서 정리 완료: {total}건 삭제 (보존 {retention_months}개월, 마감문서 삭제={delete_expired}, 보호 URL {len(protected_urls)}건)")
+    else:
+        print(f"🧹 문서 정리 대상 없음 (보존 {retention_months}개월, 마감문서 삭제={delete_expired}, 보호 URL {len(protected_urls)}건)")
+    return total
+
+
+def sync_pinned_urls(pinned_urls: set[str]) -> None:
+    """현재 게시판에서 고정으로 확인된 URL만 is_pinned=true로 동기화."""
+    with psycopg.connect(DB_URL) as conn:
+        for slug in SLUGS:
+            conn.execute(
+                sql.SQL("UPDATE {doc} SET is_pinned = false WHERE is_pinned = true;").format(
+                    doc=_doc_ident(slug),
+                )
+            )
+            if pinned_urls:
+                conn.execute(
+                    sql.SQL("UPDATE {doc} SET is_pinned = true WHERE url = ANY(%s);").format(
+                        doc=_doc_ident(slug),
+                    ),
+                    (list(pinned_urls),),
+                )
+        conn.commit()
+    print(f"📌 고정 공지 동기화 완료: 현재 고정 URL {len(pinned_urls)}건")
+
+
+def upsert_source(code: str, name: str, kind: str, department: str | None, base_url: str | None) -> int:
+    """source 테이블에 UPSERT 후 id 반환."""
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute("""
+            INSERT INTO source (code, name, kind, department, base_url)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (code) DO UPDATE SET
+                name = EXCLUDED.name,
+                kind = EXCLUDED.kind,
+                department = EXCLUDED.department,
+                base_url = EXCLUDED.base_url
+            RETURNING id;
+        """, (code, name, kind, department, base_url))
+        row = cur.fetchone()
+        assert row is not None
+        source_id = row[0]
+        conn.commit()
+        return source_id
+
+
+
+def document_exists(url: str) -> bool:
+    """5개 category 테이블 중 어디든 url이 있으면 True. 카테고리 간 url 중복은 application level에서 차단."""
+    # EXISTS가 첫 행에서 short-circuit하므로 LIMIT 불필요. LIMIT을 넣으면 UNION ALL 문법 충돌.
+    sub = sql.SQL(" UNION ALL ").join(
+        sql.SQL("SELECT 1 FROM {} WHERE url = %s").format(_doc_ident(s)) for s in SLUGS
+    )
+    query = sql.SQL("SELECT EXISTS({sub});").format(sub=sub)
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute(query, tuple([url] * len(SLUGS)))
+        row = cur.fetchone()
+        return bool(row and row[0])
+
+
+# === 새로 추가: 특정 source의 기존 문서를 전부 삭제 ===
+def delete_documents_by_source(source_id: int) -> int:
+    """특정 source의 기존 문서를 전부 삭제.
+
+    curriculum/static 성격의 문서에서
+    같은 URL에 파일만 교체되는 경우 사용.
+
+    document_chunk는 FK cascade로 삭제되고,
+    document_asset는 직접 삭제한다.
+    """
+
+    deleted_total = 0
+
+    with psycopg.connect(DB_URL) as conn:
+        for slug in SLUGS:
+            category = SLUG_TO_CATEGORY[slug]
+
+            rows = conn.execute(
+                sql.SQL(
+                    """
+                    DELETE FROM {doc}
+                    WHERE source_id = %s
+                    RETURNING id;
+                    """
+                ).format(doc=_doc_ident(slug)),
+                (source_id,),
+            ).fetchall()
+
+            if not rows:
+                continue
+
+            deleted_ids = [row[0] for row in rows]
+
+            conn.execute(
+                """
+                DELETE FROM document_asset
+                WHERE category = %s
+                  AND document_id = ANY(%s);
+                """,
+                (category, deleted_ids),
+            )
+
+            deleted_total += len(deleted_ids)
+
+        conn.commit()
+
+    return deleted_total
+
+
+def insert_document(
+    source_id: int,
+    url: str,
+    title: str,
+    content: str,
+    start_date,
+    end_date,
+    category: str,
+    target,
+    keywords,
+    summary: str | None = None,
+    extra: dict | None = None,
+    posted_at=None,
+    is_pinned: bool = False,
+    body_content: str | None = None,
+    attachment_names: list[str] | None = None,
+    attachment_contents: list[dict] | None = None,
+) -> int:
+    """category에 해당하는 document_{slug} 테이블에 UPSERT 후 id 반환."""
+    slug = _slug(category)
+
+    if not start_date or str(start_date).strip() == "":
+        start_date = None
+    if not end_date or str(end_date).strip() == "":
+        end_date = None
+    if not posted_at or str(posted_at).strip() == "":
+        posted_at = None
+
+    extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
+
+    attachment_names_json = json.dumps(
+        attachment_names or [],
+        ensure_ascii=False,
+    )
+
+    attachment_contents_json = json.dumps(
+        attachment_contents or [],
+        ensure_ascii=False,
+    )
+
+    query = sql.SQL("""
+        INSERT INTO {doc}
+            (
+                source_id,
+                url,
+                title,
+                content,
+                body_content,
+                attachment_names,
+                attachment_contents,
+                summary,
+                posted_at,
+                start_date,
+                end_date,
+                is_pinned,
+                target,
+                keywords,
+                extra,
+                updated_at
+            )
+        VALUES (
+            %s, %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s, %s,
+            now()
+        )
+        ON CONFLICT (url) DO UPDATE SET
+            source_id = EXCLUDED.source_id,
+            title = EXCLUDED.title,
+            content = EXCLUDED.content,
+            body_content = EXCLUDED.body_content,
+            attachment_names = EXCLUDED.attachment_names,
+            attachment_contents = EXCLUDED.attachment_contents,
+            summary = EXCLUDED.summary,
+            posted_at = EXCLUDED.posted_at,
+            start_date = EXCLUDED.start_date,
+            end_date = EXCLUDED.end_date,
+            is_pinned = EXCLUDED.is_pinned,
+            target = EXCLUDED.target,
+            keywords = EXCLUDED.keywords,
+            extra = EXCLUDED.extra,
+            updated_at = now()
+        RETURNING id;
+    """).format(doc=_doc_ident(slug))
+
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute(
+            query,
+            (
+                source_id,
+                url,
+                title,
+                content,
+                body_content or content,
+                attachment_names_json,
+                attachment_contents_json,
+                summary,
+                posted_at,
+                start_date,
+                end_date,
+                is_pinned,
+                target,
+                keywords,
+                extra_json,
+            ),
+        )
+
+        row = cur.fetchone()
+        assert row is not None
+
+        document_id = row[0]
+
+        conn.commit()
+
+        print(f"✅ [{title}] document_{slug} 저장 완료 (id={document_id})")
+
+        return document_id
+
+
+def insert_assets(category: str, document_id: int, assets: list[dict]):
+    """document_asset(통합)에 일괄 저장. (category, document_id) 키로 기존 자산 삭제 후 재삽입."""
+    if not assets:
+        return
+    _slug(category)  # 유효성 검증만
+
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute(
+            "DELETE FROM document_asset WHERE category = %s AND document_id = %s;",
+            (category, document_id),
+        )
+        for a in assets:
+            conn.execute("""
+                INSERT INTO document_asset
+                    (category, document_id, kind, filename, source_url, storage_path,
+                     mime_type, extracted_text, order_idx)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                category,
+                document_id,
+                a["kind"],
+                a.get("filename"),
+                a["source_url"],
+                a.get("storage_path"),
+                a.get("mime_type"),
+                a.get("extracted_text", ""),
+                a.get("order_idx", 0),
+            ))
+        conn.commit()
+        print(f"  ↳ asset {len(assets)}건 저장 완료")
+
+
+def insert_chunks(
+    category: str,
+    document_id: int,
+    chunks: list[tuple],
+):
+    """category에 해당하는 document_{slug}_chunk에 일괄 저장.
+
+    chunks:
+    - legacy: (chunk_idx, content, embedding)
+    - new:    (chunk_idx, content, embedding, chunk_type, attachment_name)
+    """
+
+    if not chunks:
+        return
+
+    slug = _slug(category)
+
+    del_q = sql.SQL(
+        "DELETE FROM {} WHERE document_id = %s;"
+    ).format(_chunk_ident(slug))
+
+    ins_q = sql.SQL(
+        """
+        INSERT INTO {}
+        (
+            document_id,
+            chunk_idx,
+            content,
+            chunk_type,
+            attachment_name,
+            embedding
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """
+    ).format(_chunk_ident(slug))
+
+    with _connect_with_vector() as conn:
+        conn.execute(del_q, (document_id,))
+
+        for chunk in chunks:
+            if len(chunk) == 3:
+                idx, content, vector = chunk
+                chunk_type = "body"
+                attachment_name = None
+            else:
+                idx, content, vector, chunk_type, attachment_name = chunk
+
+            conn.execute(
+                ins_q,
+                (
+                    document_id,
+                    idx,
+                    content,
+                    chunk_type,
+                    attachment_name,
+                    vector,
+                ),
+            )
+
+        conn.commit()
+
+        print(f"  ↳ chunk {len(chunks)}건 저장 완료 (→ document_{slug}_chunk)")
+
+
+def _search_subquery(slug: str, major_filter: bool, distinct_by_doc: bool = False) -> tuple[sql.Composable, list]:
+    """카테고리 하나에 대한 chunk-level similarity search 서브쿼리.
+
+    distinct_by_doc=False: 모든 chunk를 유사도 기준으로 경쟁(precise).
+    distinct_by_doc=True: 공지(d.url)당 best chunk 1행만(broad). DISTINCT ON 사용.
+
+    placeholder 순서: [vec, major?]
+    """
+    category_literal = SLUG_TO_CATEGORY[slug]
+
+    where_clause = (
+        sql.SQL(" WHERE (s.department = %s OR s.department = '공통' OR s.department IS NULL) ")
+        if major_filter else sql.SQL(" ")
+    )
+
+    select_prefix = (
+        sql.SQL("SELECT DISTINCT ON (d.url)") if distinct_by_doc
+        else sql.SQL("SELECT")
+    )
+    order_by = (
+        sql.SQL(" ORDER BY d.url, c.embedding <=> %s::vector ") if distinct_by_doc
+        else sql.SQL(" ORDER BY c.embedding <=> %s::vector ")
+    )
+
+    sub = sql.SQL("""
+        {select_prefix}
+               d.url,
+               d.title,
+               c.content,
+               1 - (c.embedding <=> %s::vector) AS score,
+               d.posted_at,
+               d.start_date,
+               d.end_date,
+               {cat_lit}::text AS category,
+               d.target,
+               d.keywords,
+               s.code,
+               s.name,
+               s.kind,
+               s.department,
+               d.summary,
+               d.body_content,
+               d.attachment_names
+        FROM {chunk} c
+        JOIN {doc} d ON d.id = c.document_id
+        JOIN source s ON s.id = d.source_id
+        {where}
+        {order_by}
+    """).format(
+        select_prefix=select_prefix,
+        cat_lit=sql.Literal(category_literal),
+        chunk=_chunk_ident(slug),
+        doc=_doc_ident(slug),
+        where=where_clause,
+        order_by=order_by,
+    )
+
+    return sub, [category_literal]
+
+
+def search_chunks(
+    query_embedding: list[float],
+    major: str | None = None,
+    categories: list[str] | None = None,
+    limit: int = 10,
+    distinct_by_doc: bool = False,
+):
+    """HNSW 코사인 유사도 기반 chunk-level 검색.
+
+    categories: 검색 대상 카테고리 리스트(한글). None 또는 빈 리스트면 5개 전부 검색.
+
+    반환 튜플:
+     (url, title, snippet, score, posted_at, start_date, end_date, category, target, keywords,
+      source_code, source_name, source_kind, source_department,
+      summary, body_content, attachment_names)
+    """
+    target_slugs = [_slug(c) for c in categories] if categories else list(SLUGS)
+
+    subs: list[sql.Composable] = []
+    params: list = []
+    for slug in target_slugs:
+        sub, _ = _search_subquery(slug, major_filter=bool(major), distinct_by_doc=distinct_by_doc)
+        subs.append(sql.SQL("(") + sub + sql.SQL(")"))
+        # subquery placeholder 순서: 1st vec(score 계산), major?, 2nd vec(order by)
+        params.append(query_embedding)
+        if major:
+            params.append(major)
+        params.append(query_embedding)
+
+    union = sql.SQL(" UNION ALL ").join(subs)
+    final_q = sql.SQL("""
+        SELECT url, title, content, score, posted_at, start_date, end_date,
+               category, target, keywords,
+               code, name, kind, department,
+               summary,
+               body_content,
+               attachment_names
+        FROM ({union}) merged
+        ORDER BY score DESC
+        LIMIT %s
+    """).format(union=union)
+    params.append(limit)
+
+    with _connect_with_vector() as conn:
+        cursor = conn.execute(final_q, params)
+        return cursor.fetchall()
+
+
+# === [seungwon/bge-reranker] 시작 ===
+def get_document_content(category: str, url: str) -> str | None:
+    """url로 document 전체 content 조회. small-to-big — reranker 통과한 top-N에 풀 문서 전달용."""
+    slug = _slug(category)
+    q = sql.SQL("SELECT content FROM {doc} WHERE url = %s").format(doc=_doc_ident(slug))
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute(q, (url,))
+        row = cur.fetchone()
+        return row[0] if row else None
+# === [seungwon/bge-reranker] 끝 ===
+
+
+def _list_subquery(slug: str, where: sql.Composable) -> sql.Composable:
+    """get_documents용 카테고리 단위 서브쿼리."""
+    return sql.SQL("""
+        SELECT d.url, d.title, d.content, d.posted_at, d.start_date, d.end_date,
+               {cat_lit}::text AS category,
+               d.target, d.keywords,
+               s.code, s.name, s.kind, s.department,
+               d.crawled_at,
+               d.summary
+        FROM {doc} d
+        JOIN source s ON s.id = d.source_id
+        {where}
+    """).format(
+        cat_lit=sql.Literal(SLUG_TO_CATEGORY[slug]),
+        doc=_doc_ident(slug),
+        where=where,
+    )
+
+
+def get_documents(
+    category: str | None = None,
+    major: str | None = None,
+    kind: str | None = None,
+    department: str | None = None,
+    limit: int = 30,
+):
+    """document_{slug} + source join. category None이면 5개 UNION ALL.
+
+    반환 튜플:
+    (url, title, content, posted_at, start_date, end_date, category, target, keywords,
+     source_code, source_name, source_kind, source_department, summary)
+
+    정렬: posted_at(원본 등록일) 내림차순. NULL은 crawled_at(크롤링 시각)으로 fallback.
+    """
+    target_slugs = [_slug(category)] if category else list(SLUGS)
+
+    conditions: list[sql.Composable] = []
+    base_params: list = []
+    if major:
+        conditions.append(sql.SQL("(s.department = %s OR s.department = '공통' OR s.department IS NULL)"))
+        base_params.append(major)
+    if kind:
+        conditions.append(sql.SQL("s.kind = %s"))
+        base_params.append(kind)
+    if department:
+        conditions.append(sql.SQL("s.department = %s"))
+        base_params.append(department)
+    where = (
+        sql.SQL(" WHERE ") + sql.SQL(" AND ").join(conditions)
+        if conditions else sql.SQL("")
+    )
+
+    subs = [sql.SQL("(") + _list_subquery(slug, where) + sql.SQL(")") for slug in target_slugs]
+    params: list = []
+    for _ in target_slugs:
+        params.extend(base_params)
+
+    union = sql.SQL(" UNION ALL ").join(subs)
+    # crawled_at은 정렬 보조용으로만 쓰고 최종 SELECT에서는 제외 (반환 튜플 안정성 유지).
+    final_q = sql.SQL("""
+        SELECT url, title, content, posted_at, start_date, end_date,
+               category, target, keywords,
+               code, name, kind, department, summary
+        FROM ({union}) merged
+        ORDER BY COALESCE(posted_at::timestamp, crawled_at) DESC NULLS LAST
+        LIMIT %s
+    """).format(union=union)
+    params.append(limit)
+
+    with psycopg.connect(DB_URL) as conn:
+        cursor = conn.execute(final_q, params)
+        return cursor.fetchall()
+
+
+# ── user profile ────────────────────────────────────────────────
+
+def ensure_users_schema():
+    """init_db를 거치지 않고 app만 띄운 환경도 흡수. 멱등하므로 매 호출 안전."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                student_id VARCHAR(20) PRIMARY KEY,
+                major VARCHAR(50),
+                name VARCHAR(50),
+                year INT,
+                interests TEXT,
+                courses TEXT
+            );
+        """)
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS favorite_courses TEXT;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS graduation_credits JSONB;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS timetable JSONB;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS grade_distribution_json JSONB;")
+        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS cumulative_grades_json JSONB;")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lms_tasks (
+                id BIGSERIAL PRIMARY KEY,
+                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
+                task_type VARCHAR(20) NOT NULL CHECK (task_type IN ('lecture', 'assignment', 'notice')),
+                title VARCHAR(255) NOT NULL,
+                course_name VARCHAR(120),
+                due_date DATE,
+                progress INT CHECK (progress IS NULL OR (progress >= 0 AND progress <= 100)),
+                url VARCHAR(800),
+                is_done BOOLEAN NOT NULL DEFAULT false,
+                source VARCHAR(30) NOT NULL DEFAULT 'manual',
+                external_id VARCHAR(160),
+                synced_at TIMESTAMPTZ,
+                raw JSONB,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                updated_at TIMESTAMPTZ DEFAULT now()
+            );
+        """)
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS source VARCHAR(30) NOT NULL DEFAULT 'manual';")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS external_id VARCHAR(160);")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ;")
+        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS raw JSONB;")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_lms_tasks_student_done_due ON lms_tasks(student_id, is_done, due_date);")
+        conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_lms_tasks_external
+            ON lms_tasks(student_id, source, external_id)
+            WHERE external_id IS NOT NULL;
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS lms_courses (
+                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
+                course_id BIGINT NOT NULL,
+                course_name VARCHAR(200) NOT NULL,
+                synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (student_id, course_id)
+            );
+        """)
+        conn.commit()
+
+
+def get_user(student_id: str) -> dict | None:
+    """users 테이블에서 student_id 조회. interests/favorite_courses는 콤마문자열을 list로 풀어서 돌려준다."""
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute(
+            "SELECT student_id, name, major, year, interests, favorite_courses, graduation_credits, timetable, grade_distribution_json, cumulative_grades_json FROM users WHERE student_id = %s;",
+            (student_id,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    sid, name, major, year, interests, favorite_courses, graduation_credits, timetable, grade_distribution, cumulative_grades = row
+    if isinstance(graduation_credits, str):
+        try:
+            graduation_credits = json.loads(graduation_credits)
+        except Exception:
+            graduation_credits = None
+    if isinstance(timetable, str):
+        try:
+            timetable = json.loads(timetable)
+        except Exception:
+            timetable = None
+    if isinstance(grade_distribution, str):
+        try:
+            grade_distribution = json.loads(grade_distribution)
+        except Exception:
+            grade_distribution = None
+    if isinstance(cumulative_grades, str):
+        try:
+            cumulative_grades = json.loads(cumulative_grades)
+        except Exception:
+            cumulative_grades = None
+    return {
+        "student_id": sid,
+        "name": name,
+        "major": major,
+        "year": year,
+        "interests": [s.strip() for s in (interests or "").split(",") if s.strip()],
+        "favorite_courses": [s.strip() for s in (favorite_courses or "").split(",") if s.strip()],
+        "graduation_credits": graduation_credits,
+        "timetable": timetable,
+        "grade_distribution": grade_distribution,
+        "cumulative_grades": cumulative_grades,
+    }
+
+
+def upsert_user(
+    student_id: str,
+    name: str,
+    major: str,
+    year: int | None,
+    interests: list[str] | None = None,
+    favorite_courses: list[str] | None = None,
+    graduation_credits: dict | None = None,
+    timetable: list | None = None,
+    grade_distribution: dict | None = None,
+    cumulative_grades: dict | None = None,
+):
+    """profile UPSERT. interests/favorite_courses는 콤마 문자열로 저장."""
+    interests_csv = ",".join(interests) if interests is not None else None
+    favorites_csv = ",".join(favorite_courses) if favorite_courses is not None else None
+    credits_json = json.dumps(graduation_credits, ensure_ascii=False) if graduation_credits is not None else None
+    timetable_json = json.dumps(timetable, ensure_ascii=False) if timetable is not None else None
+    grade_distribution_json = json.dumps(grade_distribution, ensure_ascii=False) if grade_distribution is not None else None
+    cumulative_grades_json = json.dumps(cumulative_grades, ensure_ascii=False) if cumulative_grades is not None else None
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("""
+            INSERT INTO users (student_id, name, major, year, interests, favorite_courses, graduation_credits, timetable, grade_distribution_json, cumulative_grades_json)
+            VALUES (%s, %s, %s, %s, COALESCE(%s, ''), COALESCE(%s, ''), %s, %s, %s, %s)
+            ON CONFLICT (student_id) DO UPDATE SET
+                name = EXCLUDED.name,
+                major = EXCLUDED.major,
+                year = EXCLUDED.year,
+                interests = CASE WHEN EXCLUDED.interests IS NOT NULL AND EXCLUDED.interests <> '' THEN EXCLUDED.interests ELSE users.interests END,
+                favorite_courses = CASE WHEN EXCLUDED.favorite_courses IS NOT NULL AND EXCLUDED.favorite_courses <> '' THEN EXCLUDED.favorite_courses ELSE users.favorite_courses END,
+                graduation_credits = COALESCE(EXCLUDED.graduation_credits, users.graduation_credits),
+                timetable = COALESCE(EXCLUDED.timetable, users.timetable),
+                grade_distribution_json = COALESCE(EXCLUDED.grade_distribution_json, users.grade_distribution_json),
+                cumulative_grades_json = COALESCE(EXCLUDED.cumulative_grades_json, users.cumulative_grades_json);
+        """, (student_id, name, major, year, interests_csv, favorites_csv, credits_json, timetable_json, grade_distribution_json, cumulative_grades_json))
+        conn.commit()
+
+
+def set_favorite_courses(student_id: str, courses: list[str]) -> None:
+    """학생의 즐겨찾기 과목 목록만 좁게 갱신. user 행이 없으면 동작 없음."""
+    favorites_csv = ",".join(courses or [])
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute(
+            "UPDATE users SET favorite_courses = %s WHERE student_id = %s;",
+            (favorites_csv, student_id),
+        )
+        conn.commit()
+
+
+def upsert_lms_course(student_id: str, course_id: int, course_name: str) -> None:
+    """학생-과목 매핑 upsert. sync 시 _course_map 결과로 호출."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("""
+            INSERT INTO lms_courses (student_id, course_id, course_name, synced_at)
+            VALUES (%s, %s, %s, now())
+            ON CONFLICT (student_id, course_id) DO UPDATE SET
+                course_name = EXCLUDED.course_name,
+                synced_at = now();
+        """, (student_id, course_id, course_name))
+        conn.commit()
+
+
+def get_lms_courses(student_id: str) -> list[dict]:
+    """학생의 LMS 과목 목록. course_name asc."""
+    with psycopg.connect(DB_URL) as conn:
+        rows = conn.execute(
+            "SELECT course_id, course_name FROM lms_courses WHERE student_id = %s ORDER BY course_name ASC;",
+            (student_id,),
+        ).fetchall()
+    return [{"course_id": r[0], "course_name": r[1]} for r in rows]
+
+
+def delete_canvas_lecture_tasks(student_id: str) -> int:
+    """학생의 canvas 출처 lecture task 전체 삭제. sync 시작 시 선제 cleanup 용도."""
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute(
+            "DELETE FROM lms_tasks WHERE student_id = %s AND task_type = 'lecture' AND source = 'canvas';",
+            (student_id,),
+        )
+        deleted = cur.rowcount
+        conn.commit()
+    return deleted
+
+
+def delete_canvas_notice_tasks(student_id: str) -> int:
+    """학생의 canvas 출처 notice task(알림) 전체 삭제. sync 시작 시 선제 cleanup 용도."""
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute(
+            "DELETE FROM lms_tasks WHERE student_id = %s AND task_type = 'notice' AND source = 'canvas';",
+            (student_id,),
+        )
+        deleted = cur.rowcount
+        conn.commit()
+    return deleted
+
+
+# ── LMS tasks ──────────────────────────────────────────────────
+
+def get_lms_tasks(student_id: str, include_done: bool = False) -> list[dict]:
+    """학생별 LMS 할 일 목록."""
+    done_clause = "" if include_done else "AND is_done = false"
+    query = f"""
+        SELECT id, task_type, title, course_name, due_date, progress, url, is_done
+        FROM lms_tasks
+        WHERE student_id = %s
+          {done_clause}
+        ORDER BY
+          is_done ASC,
+          due_date ASC NULLS LAST,
+          created_at DESC;
+    """
+    with psycopg.connect(DB_URL) as conn:
+        rows = conn.execute(query, (student_id,)).fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "task_type": row[1],
+            "title": row[2],
+            "course_name": row[3],
+            "due_date": row[4],
+            "progress": row[5],
+            "url": row[6],
+            "is_done": row[7],
+        }
+        for row in rows
+    ]
+
+
+def upsert_lms_task(
+    student_id: str,
+    task_type: str,
+    title: str,
+    source: str,
+    external_id: str,
+    course_name: str | None = None,
+    due_date=None,
+    progress: int | None = None,
+    url: str | None = None,
+    is_done: bool = False,
+    raw: dict | None = None,
+) -> int:
+    """Canvas API 등 외부 원천에서 받은 LMS 할 일을 멱등하게 반영."""
+    raw_json = json.dumps(raw or {}, ensure_ascii=False)
+    with psycopg.connect(DB_URL) as conn:
+        cur = conn.execute("""
+            INSERT INTO lms_tasks
+                (
+                    student_id, task_type, title, course_name, due_date, progress,
+                    url, is_done, source, external_id, synced_at, raw
+                )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s)
+            ON CONFLICT (student_id, source, external_id)
+            WHERE external_id IS NOT NULL
+            DO UPDATE SET
+                task_type = EXCLUDED.task_type,
+                title = EXCLUDED.title,
+                course_name = EXCLUDED.course_name,
+                due_date = EXCLUDED.due_date,
+                progress = EXCLUDED.progress,
+                url = EXCLUDED.url,
+                is_done = EXCLUDED.is_done,
+                synced_at = now(),
+                raw = EXCLUDED.raw,
+                updated_at = now()
+            RETURNING id;
+        """, (
+            student_id,
+            task_type,
+            title,
+            course_name,
+            due_date,
+            progress,
+            url,
+            is_done,
+            source,
+            external_id,
+            raw_json,
+        ))
+        row = cur.fetchone()
+        conn.commit()
+    assert row is not None
+    return row[0]
+
+
+def set_lms_task_done(task_id: int, student_id: str, is_done: bool) -> None:
+    """소유 학생의 LMS 할 일 완료 상태 변경."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("""
+            UPDATE lms_tasks
+            SET is_done = %s,
+                updated_at = now()
+            WHERE id = %s
+              AND student_id = %s;
+        """, (is_done, task_id, student_id))
+        conn.commit()
+
+
+def delete_lms_task(task_id: int, student_id: str) -> None:
+    """소유 학생의 LMS 할 일 삭제."""
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute(
+            "DELETE FROM lms_tasks WHERE id = %s AND student_id = %s;",
+            (task_id, student_id),
+        )
+        conn.commit()
