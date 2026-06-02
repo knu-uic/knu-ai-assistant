@@ -1,0 +1,74 @@
+KNUIS Debugger 실행 전 필요한 항목 정리
+
+1. Flutter 설치
+- Flutter SDK 설치 필요
+- flutter doctor 정상 통과 필요
+
+2. webview_flutter 패키지 설치
+프로젝트 루트에서 실행:
+
+flutter pub add webview_flutter
+
+또는 pubspec.yaml 직접 추가:
+
+dependencies:
+  webview_flutter: ^4.13.0
+
+그 후:
+
+flutter pub get
+
+3. import 필요
+main.dart 상단:
+
+import 'package:webview_flutter/webview_flutter.dart';
+
+4. macOS 권한 설정 (macOS 실행 시 필수)
+
+파일:
+macos/Runner/DebugProfile.entitlements
+macos/Runner/Release.entitlements
+
+추가:
+
+<key>com.apple.security.network.client</key>
+<true/>
+
+5. 실행 방법
+
+프로젝트 루트에서:
+
+flutter run
+
+또는 VSCode Run 버튼 실행
+
+6. 현재 버튼 기능
+
+메뉴 인덱스 출력
+- KNUIS 전체 메뉴 목록 출력
+
+시간표 메뉴 열기
+- menuId 1000000062 실행
+
+시간표 데이터 출력
+- G1.arrData 출력
+
+7. 주의사항
+
+반드시:
+- KNUIS 로그인 완료 상태
+- 메인 프레임 로딩 완료 상태
+
+여야 정상 동작함.
+
+8. 현재 프로젝트 목적
+
+이 프로젝트는:
+- KNUIS reverse engineering
+- 메뉴 분석
+- dataset(arrData) 확인
+- Query 함수 분석
+
+용도의 디버거 프로젝트임.
+
+실서비스 앱과 분리해서 사용하는 것을 권장.

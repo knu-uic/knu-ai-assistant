@@ -1,0 +1,66 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+.pycache/
+*.py[codz]
+*$py.class
+
+
+# Environments
+.env
+.envrc
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+
+# Visual Studio Code
+tempCodeRunnerFile.py
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Project local/generated files
+.secrets/
+AGENTS.md
+data/
+tests/
+CLAUDE.md
+.DS_store
+state.json
+crawl_result
+.hf_cache/
+.idea/
+graphify-out/
+
+# ========================================
+# Flutter / Dart
+# ========================================
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/coverage/
+
+# Flutter build outputs
+/build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android build outputs
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Flutter IDE files
+*.iml
