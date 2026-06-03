@@ -5,6 +5,24 @@ import requests
 from bs4 import BeautifulSoup
 
 
+from urllib3.util import create_urllib3_context
+
+
+class CustomSSLContextAdapter(requests.adapters.HTTPAdapter):
+    """구버전 TLS/SSL(SECLEVEL=1)을 허용하도록 urllib3의 SSLContext를 커스텀하는 어댑터."""
+    def init_poolmanager(self, *args, **kwargs):
+        context = create_urllib3_context()
+        context.set_ciphers("DEFAULT@SECLEVEL=1")
+        kwargs['ssl_context'] = context
+        return super().init_poolmanager(*args, **kwargs)
+
+    def proxy_manager_for(self, *args, **kwargs):
+        context = create_urllib3_context()
+        context.set_ciphers("DEFAULT@SECLEVEL=1")
+        kwargs['ssl_context'] = context
+        return super().proxy_manager_for(*args, **kwargs)
+
+
 @dataclass(frozen=True)
 class StaticPageConfig:
     source_code: str
@@ -27,10 +45,20 @@ class StaticPageCrawler:
         self.KIND = config.kind
         self.BASE_URL = config.base_url
 
+        self.session = requests.Session()
+        self.session.mount("https://", CustomSSLContextAdapter())
+        self.session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/148.0.0.0 Safari/537.36"
+            )
+        })
+
     def crawling(self, should_skip: Optional[Callable[[str], bool]] = None) -> List[dict]:
         print(f"\n=== {self.SOURCE_NAME} 수집: {self.config.page_url} ===")
 
-        response = requests.get(self.config.page_url, timeout=30)
+        response = self.session.get(self.config.page_url, timeout=30)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
