@@ -21,6 +21,7 @@ BUSINESS_CRAWLERS = {
         department="경영학과",
         base_url="https://business.kongju.ac.kr",
         list_url="https://business.kongju.ac.kr/ZB0431/2177/subview.do",
+        list_url_template="https://business.kongju.ac.kr/ZB0431/2177/subview.do?page={page}",
         page_title_template="{page}페이지",
         pages=5,
         row_selector=".board-table tbody tr:has(.td-subject a)",
