@@ -622,6 +622,11 @@ def insert_chunks(
             embedding
         )
         VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (document_id, chunk_idx) DO UPDATE SET
+            content = EXCLUDED.content,
+            chunk_type = EXCLUDED.chunk_type,
+            attachment_name = EXCLUDED.attachment_name,
+            embedding = EXCLUDED.embedding
         """
     ).format(_chunk_ident(slug))
 
