@@ -29,7 +29,7 @@ from langchain_core.messages import HumanMessage          # LangChain 멀티모�
 # HWPX 본문(paragraph)의 XML 네임스페이스.
 # 이 prefix를 붙여야 ElementTree가 <hp:t> 같은 텍스트 노드를 찾을 수 있다.
 _HWPX_PARA_NS = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
-_SUPPORTED_ZIP_EXTS = {".zip", ".pdf", ".hwpx", ".hwp", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".gif"}
+_SUPPORTED_ZIP_EXTS = {".zip", ".pdf", ".hwpx", ".hwp", ".xlsx", ".xls", ".ppt", ".pptx", ".jpg", ".jpeg", ".png", ".gif"}
 _MAX_ZIP_MEMBERS = 30
 _MAX_ZIP_DEPTH = 2
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
@@ -301,6 +301,9 @@ def _zip_member_text(
 
     if ext == ".pdf":
         return f"{label}\n{_pdf_bytes_full(data)}"
+
+    if ext in (".ppt", ".pptx"):
+        return f"{label}\n{_office_pdf_text(data, member_name)}"
 
     if ext == ".hwpx":
         return f"{label}\n{hwpx_bytes_to_text(data)}"
@@ -743,6 +746,16 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             data = _download(source_url, context)
             body = _pdf_bytes_full(data)   # 텍스트 1차 → 실패 시 이미지 OCR 폴백 (위 함수 참고)
 
+        # ───────── 분기 1.5: PPT / PPTX ─────────
+        elif ext in (".ppt", ".pptx"):
+            meta["kind"] = "attachment_ppt"
+            meta["mime_type"] = (
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                if ext == ".pptx" else "application/vnd.ms-powerpoint"
+            )
+            data = _download(source_url, context)
+            body = _office_pdf_text(data, name)   # LibreOffice→PDF→텍스트(+스캔본 VLM 폴백). HWP와 공유.
+
         # ───────── 분기 2: 엑셀 ─────────
         elif ext in (".xlsx", ".xls"):
             meta["kind"] = "attachment_xlsx"
@@ -844,6 +857,9 @@ def extract_attachment_text(path: str | Path) -> str:
 
     if ext == ".pdf":
         return _pdf_bytes_full(data)
+
+    if ext in (".ppt", ".pptx"):
+        return _office_pdf_text(data, file_path.name)
 
     if ext == ".hwpx":
         return hwpx_bytes_to_text(data)
