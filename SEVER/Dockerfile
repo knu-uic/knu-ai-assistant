@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         poppler-utils \
         fonts-noto-cjk \
         libreoffice \
+        libreoffice-h2orestart \
         default-jre-headless \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
