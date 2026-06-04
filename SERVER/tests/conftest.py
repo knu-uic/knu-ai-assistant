@@ -19,6 +19,7 @@ os.environ.setdefault("VLM_PROVIDER", "local")
 def mock_pool_lifecycle():
     """AsyncConnectionPool은 open/close 후 재사용 불가.
     테스트마다 lifespan이 pool.open/close를 호출하므로 noop으로 대체한다."""
-    with patch("db.pool.pool.open", new_callable=lambda: lambda *a, **kw: AsyncMock(return_value=None)()), \
-         patch("db.pool.pool.close", new_callable=lambda: lambda *a, **kw: AsyncMock(return_value=None)()):
+    from db.pool import pool
+    with patch.object(pool, "open", AsyncMock()), \
+         patch.object(pool, "close", AsyncMock()):
         yield
