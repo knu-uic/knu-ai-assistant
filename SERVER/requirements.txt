@@ -1,6 +1,8 @@
 streamlit
 psycopg[binary,pool]
 pgvector
+fastapi
+uvicorn[standard]
 python-dotenv
 pydantic
 
