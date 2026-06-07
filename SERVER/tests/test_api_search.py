@@ -26,6 +26,22 @@ def test_search_maps_rows(monkeypatch):
     assert s["summary"] == "요약문"
 
 
+def test_search_nan_score_coerced_to_zero(monkeypatch):
+    # 임베딩 없는 청크는 NaN 점수 → null 직렬화로 dart 깨짐. 0.0으로 강등돼야.
+    fake_rows = [(
+        "https://x/nan", "NaN 점수 공지", "스니펫", float("nan"),
+        None, None, None, "기타", None, None,
+        "KNU", "기타과", "notice", None, None, None, None,
+    )]
+    import api.routers.search as m
+    monkeypatch.setattr(m, "embed_query", lambda q: [0.0])
+    monkeypatch.setattr(m, "search_chunks", lambda vec, **kw: fake_rows)
+    with TestClient(app) as client:
+        r = client.get("/api/search?q=x")
+    assert r.status_code == 200
+    assert r.json()["results"][0]["score"] == 0.0
+
+
 def test_search_empty(monkeypatch):
     import api.routers.search as m
     monkeypatch.setattr(m, "embed_query", lambda q: [0.0])
