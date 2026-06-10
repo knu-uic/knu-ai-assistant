@@ -45,6 +45,16 @@ def get_account(username: str) -> dict | None:
     }
 
 
+def link_student_id(username: str, student_id: str) -> None:
+    """포털 동기화 성공 시 우리 계정에 학번을 연결한다 (추후 IDOR 가드·개인화용)."""
+    with sync_pool.connection() as conn:
+        conn.execute(
+            "UPDATE accounts SET student_id = %s WHERE username = %s;",
+            (student_id, username),
+        )
+        conn.commit()
+
+
 def last_verification_at(email: str) -> datetime | None:
     """해당 메일의 마지막 인증 코드 발송 시각. 재발송 쿨다운 판정용."""
     with sync_pool.connection() as conn:

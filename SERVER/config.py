@@ -276,10 +276,19 @@ REDIS_URL = os.getenv("REDIS_URL")
 # 공지 증분 수집 주기(분). 60의 약수로 설정 (cron minute 집합으로 변환됨).
 NOTICE_POLL_MINUTES = _env_int("NOTICE_POLL_MINUTES", 20)
 
+# 포털 비밀번호 잡 전달용 Fernet 키. 생성:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+PORTAL_SYNC_ENC_KEY = os.getenv("PORTAL_SYNC_ENC_KEY")
+
+# 포털 동기화 잡 제한 시간(초). Playwright 로그인+파싱 전체.
+PORTAL_SYNC_TIMEOUT_SECONDS = _env_int("PORTAL_SYNC_TIMEOUT_SECONDS", 180)
+
 RATE_LIMIT_SIGNUP_REQUEST = os.getenv("RATE_LIMIT_SIGNUP_REQUEST", "3/minute")
 RATE_LIMIT_AUTH = os.getenv("RATE_LIMIT_AUTH", "10/minute")
 RATE_LIMIT_CHAT = os.getenv("RATE_LIMIT_CHAT", "5/minute;150/day")
 RATE_LIMIT_READ = os.getenv("RATE_LIMIT_READ", "30/minute")
+# 잡 상태 폴링(2초 간격 폴링 허용 여유)
+RATE_LIMIT_POLL = os.getenv("RATE_LIMIT_POLL", "120/minute")
 
 # -----------------------------
 # validation
