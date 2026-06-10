@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import psycopg
-
-from db.schema import DB_URL
+from db.pool import sync_pool
 
 
 def create_account(username: str, password_hash: str) -> bool:
     """계정 생성. username 중복이면 False를 반환한다."""
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         cur = conn.execute(
             """
             INSERT INTO accounts (username, password_hash)
@@ -23,7 +21,7 @@ def create_account(username: str, password_hash: str) -> bool:
 
 
 def get_account(username: str) -> dict | None:
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         cur = conn.execute(
             "SELECT id, username, password_hash, student_id FROM accounts WHERE username = %s;",
             (username,),
