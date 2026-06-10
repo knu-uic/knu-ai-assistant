@@ -18,3 +18,5 @@ class NoticeItem(BaseModel):
 
 class NoticeListResponse(BaseModel):
     notices: List[NoticeItem] = []
+    # 다음 페이지 커서. 마지막 페이지면 null. 기존 앱은 이 키를 몰라도 동작.
+    next_cursor: Optional[str] = None

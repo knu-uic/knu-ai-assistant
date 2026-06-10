@@ -459,7 +459,11 @@ def get_documents(
     kind: str | None = None,
     department: str | None = None,
     limit: int = 30,
+    cursor_ts=None,
+    cursor_url: str | None = None,
 ):
+    """cursor_ts/cursor_url이 주어지면 그 지점보다 정렬상 뒤(더 오래된) 행만 반환.
+    정렬 키 = (COALESCE(posted_at, crawled_at) DESC, url DESC) — url은 동점 처리용."""
     target_slugs = [_slug(category)] if category else list(SLUGS)
 
     conditions: list[sql.Composable] = []
@@ -481,14 +485,25 @@ def get_documents(
         params.extend(base_params)
 
     union = sql.SQL(" UNION ALL ").join(subs)
+    if cursor_ts is not None and cursor_url is not None:
+        # (DESC, DESC) 정렬에서 "커서 다음"은 행값 비교로 (sort_ts, url) < (커서값)
+        cursor_where = sql.SQL(
+            "WHERE (COALESCE(posted_at::timestamp, crawled_at), url) < (%s, %s)"
+        )
+    else:
+        cursor_where = sql.SQL("")
     final_q = sql.SQL("""
         SELECT url, title, content, posted_at, start_date, end_date,
                category, target, keywords,
-               code, name, kind, department, summary
+               code, name, kind, department, summary,
+               COALESCE(posted_at::timestamp, crawled_at) AS sort_ts
         FROM ({union}) merged
-        ORDER BY COALESCE(posted_at::timestamp, crawled_at) DESC NULLS LAST
+        {cursor_where}
+        ORDER BY sort_ts DESC NULLS LAST, url DESC
         LIMIT %s
-    """).format(union=union)
+    """).format(union=union, cursor_where=cursor_where)
+    if cursor_ts is not None and cursor_url is not None:
+        params.extend([cursor_ts, cursor_url])
     params.append(limit)
 
     with sync_pool.connection() as conn:
