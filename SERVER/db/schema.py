@@ -257,6 +257,17 @@ def init_db():
             ON lms_tasks(student_id, source, external_id)
             WHERE external_id IS NOT NULL;
         """)
+        # 자체 웹 로그인 계정. student_id는 추후 포털 연동 시 users와 링크용(현재 미사용).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id BIGSERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                student_id VARCHAR(20),
+                created_at TIMESTAMPTZ DEFAULT now()
+            );
+        """)
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS lms_courses (
                 student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,

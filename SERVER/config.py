@@ -220,6 +220,18 @@ ATTACHMENT_NAME_RESERVE_RATIO = _env_float(
     "ATTACHMENT_NAME_RESERVE_RATIO",
     0.13,
 )
+
+# -----------------------------
+# auth
+# -----------------------------
+
+AUTH_JWT_SECRET = os.getenv("AUTH_JWT_SECRET")
+
+AUTH_TOKEN_TTL_DAYS = _env_int(
+    "AUTH_TOKEN_TTL_DAYS",
+    30,
+)
+
 # -----------------------------
 # validation
 # -----------------------------

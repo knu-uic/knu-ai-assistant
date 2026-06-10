@@ -24,7 +24,14 @@ from config import (
 load_dotenv()
 
 # 임베딩 벡터 차원 수(pgvector schema와 반드시 동일해야 하며, embedding model 변경 시 함께 수정)
-EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM"))
+_embedding_dim_raw = os.getenv("EMBEDDING_DIM")
+if not _embedding_dim_raw or not _embedding_dim_raw.strip().isdigit():
+    raise RuntimeError(
+        "EMBEDDING_DIM 환경변수가 없거나 정수가 아닙니다 "
+        f"(현재 값: {_embedding_dim_raw!r}). "
+        "pgvector 스키마의 벡터 차원과 동일한 정수로 .env에 설정하세요."
+    )
+EMBEDDING_DIM = int(_embedding_dim_raw)
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)

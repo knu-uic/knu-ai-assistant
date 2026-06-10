@@ -1,10 +1,16 @@
 streamlit
 psycopg[binary,pool]
 pgvector
+fastapi
+uvicorn[standard]
 python-dotenv
 pydantic
 
 httpx
+
+# 인증 (자체 계정 JWT + 비밀번호 해시)
+pyjwt
+bcrypt
 
 # LangChain / LangGraph
 # - langchain-openai: LM Studio가 OpenAI 호환 API라서 필요
