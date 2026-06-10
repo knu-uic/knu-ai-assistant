@@ -15,6 +15,10 @@ bcrypt
 # 레이트리밋 (auth IP 기반 + chat 유저 기반)
 slowapi
 
+# 백그라운드 워커 (공지 폴링 cron, 추후 포털 동기화 잡)
+arq
+redis
+
 # LangChain / LangGraph
 # - langchain-openai: LM Studio가 OpenAI 호환 API라서 필요
 # - langchain-google-genai: provider를 google로 바꿀 때 사용

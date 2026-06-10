@@ -269,6 +269,13 @@ MIN_APP_VERSION = os.getenv("MIN_APP_VERSION", "1.0.0").strip()
 # 있으면 slowapi 저장소로 Redis 사용(다중 프로세스 대응). 없으면 in-memory.
 REDIS_URL = os.getenv("REDIS_URL")
 
+# -----------------------------
+# worker (백그라운드 잡)
+# -----------------------------
+
+# 공지 증분 수집 주기(분). 60의 약수로 설정 (cron minute 집합으로 변환됨).
+NOTICE_POLL_MINUTES = _env_int("NOTICE_POLL_MINUTES", 20)
+
 RATE_LIMIT_SIGNUP_REQUEST = os.getenv("RATE_LIMIT_SIGNUP_REQUEST", "3/minute")
 RATE_LIMIT_AUTH = os.getenv("RATE_LIMIT_AUTH", "10/minute")
 RATE_LIMIT_CHAT = os.getenv("RATE_LIMIT_CHAT", "5/minute;150/day")
