@@ -1,16 +1,20 @@
 import anyio
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from db.documents import search_chunks
 from embedding.embed import embed_query
+from api.ratelimit import limiter, user_or_ip
 from api.schemas.search import SearchResponse
 from api.mappers import result_from_search_row
+from config import RATE_LIMIT_READ
 
 router = APIRouter()
 
 
 @router.get("/search", response_model=SearchResponse)
+@limiter.limit(RATE_LIMIT_READ, key_func=user_or_ip)
 async def search(
+    request: Request,
     q: str = Query(..., min_length=1),
     major: str | None = Query(None),
     category: str | None = Query(None),

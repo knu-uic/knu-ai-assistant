@@ -1,8 +1,10 @@
 import anyio
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from retrieval.graph import GRAPH
+from api.ratelimit import limiter, user_or_ip
 from api.schemas.chat import ChatRequest, ChatResponse
+from config import RATE_LIMIT_CHAT
 
 router = APIRouter()
 
@@ -13,7 +15,8 @@ def _invoke_graph(question: str, major: str | None) -> dict:
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest) -> ChatResponse:
+@limiter.limit(RATE_LIMIT_CHAT, key_func=user_or_ip)
+async def chat(request: Request, req: ChatRequest) -> ChatResponse:
     state = await anyio.to_thread.run_sync(_invoke_graph, req.question, req.major)
     # categories는 ChatState에서 enum일 수 있음 → 문자열로 정규화(dart는 string 배열).
     categories = [getattr(c, "value", c) for c in (state.get("categories") or [])]

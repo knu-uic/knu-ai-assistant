@@ -12,6 +12,9 @@ httpx
 pyjwt
 bcrypt
 
+# 레이트리밋 (auth IP 기반 + chat 유저 기반)
+slowapi
+
 # LangChain / LangGraph
 # - langchain-openai: LM Studio가 OpenAI 호환 API라서 필요
 # - langchain-google-genai: provider를 google로 바꿀 때 사용

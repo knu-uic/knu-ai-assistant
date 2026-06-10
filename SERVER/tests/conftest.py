@@ -21,6 +21,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "real_auth: 인증 우회 없이 실제 토큰 검증을 테스트"
     )
+    config.addinivalue_line(
+        "markers", "real_rate_limit: 레이트리밋 비활성화 없이 실제 상한 동작을 테스트"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -36,6 +39,22 @@ def bypass_auth(request):
     app.dependency_overrides[require_user] = lambda: "testuser"
     yield
     app.dependency_overrides.pop(require_user, None)
+
+
+@pytest.fixture(autouse=True)
+def disable_rate_limit(request):
+    """일반 테스트가 호출 누적으로 429에 걸리지 않도록 limiter를 끈다.
+    실제 상한 동작 테스트는 @pytest.mark.real_rate_limit으로 켜고, 카운터를 초기화한다."""
+    from api.ratelimit import limiter
+
+    if "real_rate_limit" in request.keywords:
+        limiter.reset()
+        yield
+        limiter.reset()
+        return
+    limiter.enabled = False
+    yield
+    limiter.enabled = True
 
 
 @pytest.fixture(autouse=True)

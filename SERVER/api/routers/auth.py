@@ -4,17 +4,18 @@ from functools import partial
 
 import anyio
 import bcrypt
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from api.deps import create_access_token
 from api.mailer import send_verification_email
+from api.ratelimit import limiter
 from api.schemas.auth import (
     LoginRequest,
     SignupCodeRequest,
     SignupVerifyRequest,
     TokenResponse,
 )
-from config import SIGNUP_EMAIL_DOMAIN
+from config import RATE_LIMIT_AUTH, RATE_LIMIT_SIGNUP_REQUEST, SIGNUP_EMAIL_DOMAIN
 from db.accounts import (
     consume_verification,
     create_account,
@@ -30,7 +31,8 @@ CODE_TTL_MINUTES = 10
 
 
 @router.post("/auth/signup/request")
-async def signup_request(req: SignupCodeRequest) -> dict:
+@limiter.limit(RATE_LIMIT_SIGNUP_REQUEST)
+async def signup_request(request: Request, req: SignupCodeRequest) -> dict:
     email = req.email.strip().lower()
     if email.count("@") != 1 or not email.endswith(f"@{SIGNUP_EMAIL_DOMAIN}"):
         raise HTTPException(
@@ -62,7 +64,8 @@ async def signup_request(req: SignupCodeRequest) -> dict:
 
 
 @router.post("/auth/signup/verify", response_model=TokenResponse, status_code=201)
-async def signup_verify(req: SignupVerifyRequest) -> TokenResponse:
+@limiter.limit(RATE_LIMIT_AUTH)
+async def signup_verify(request: Request, req: SignupVerifyRequest) -> TokenResponse:
     email = req.email.strip().lower()
 
     # 코드 소비 전에 username 중복을 먼저 확인 — 중복 때문에 코드가 날아가는 UX 방지
@@ -91,7 +94,8 @@ async def signup_verify(req: SignupVerifyRequest) -> TokenResponse:
 
 
 @router.post("/auth/login", response_model=TokenResponse)
-async def login(req: LoginRequest) -> TokenResponse:
+@limiter.limit(RATE_LIMIT_AUTH)
+async def login(request: Request, req: LoginRequest) -> TokenResponse:
     account = await anyio.to_thread.run_sync(partial(get_account, req.username))
     # 계정 없음/비밀번호 불일치를 같은 응답으로 → 아이디 존재 탐지(enumeration) 방지
     valid = account is not None and await anyio.to_thread.run_sync(
