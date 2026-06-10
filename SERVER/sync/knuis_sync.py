@@ -421,30 +421,43 @@ def parse_timetable_data(context) -> list[dict] | None:
         rows.append(row)
     return [{"frame_url": frame.url, "frame_name": frame.name or "", "rows": rows}]
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="KNUIS 포털 졸업자가진단 연동")
-    parser.add_argument("--username", required=True, help="포털 로그인 아이디 (학번)")
-    parser.add_argument("--password-stdin", action="store_true", help="비밀번호를 stdin에서 읽음")
-    parser.add_argument("--timeout", type=int, default=60, help="동기화 제한 시간(초)")
-    parser.add_argument("--headed", action="store_true", help="브라우저를 화면에 띄움(시각 검증용)")
-    parser.add_argument("--slow-mo", type=int, default=0, help="각 동작 사이 지연(ms). 디버그/시각 검증용")
-    parser.add_argument("--keep-open", type=int, default=0, help="작업 종료 후 브라우저를 N초 동안 닫지 않음(시각 검증용)")
-    parser.add_argument("--no-db", action="store_true", help="DB 저장 단계를 건너뛰고 파싱 결과만 stdout에 요약 출력(시각 검증용)")
-    args = parser.parse_args()
+def run_portal_sync(
+    student_id: str,
+    password: str,
+    *,
+    headed: bool = False,
+    slow_mo: int = 0,
+    keep_open: int = 0,
+    save_db: bool = True,
+    on_step=None,
+) -> dict:
+    """포털 로그인 → 시간표·성적·졸업정보 파싱 → users 저장. 결과 dict 반환.
 
-    if args.password_stdin:
-        password = sys.stdin.readline().rstrip("\n")
-    else:
-        print("비밀번호 입력 파라미터가 유효하지 않습니다. --password-stdin을 사용하세요.", file=sys.stderr)
-        return 1
+    on_step: 진행 단계 문자열 콜백(잡 진행 표시용). 호출 실패는 동기화를 막지 않는다.
+    반환 키는 dart PortalSyncResult와 1:1 (success, message, *_synced).
+    """
+    def _step(msg: str) -> None:
+        if on_step:
+            try:
+                on_step(msg)
+            except Exception:
+                pass
 
+    result = {
+        "success": False,
+        "message": "",
+        "timetable_synced": False,
+        "grade_distribution_synced": False,
+        "cumulative_grades_synced": False,
+        "graduation_synced": False,
+    }
     if not password:
-        print("비밀번호가 비어있습니다.", file=sys.stderr)
-        return 1
+        result["message"] = "비밀번호가 비어있습니다."
+        return result
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=not args.headed, slow_mo=args.slow_mo)
+            browser = p.chromium.launch(headless=not headed, slow_mo=slow_mo)
             context = browser.new_context(
                 viewport={"width": 1280, "height": 800},
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -453,6 +466,7 @@ def main() -> int:
             
             # 1. 로그인 단계
             print("[1/7] 포털 로그인 시도 중...", flush=True)
+            _step("포털 로그인 중")
             
             # Dialog(알럿창 등) 이벤트 감지 추가
             def handle_dialog(dialog):
@@ -466,9 +480,9 @@ def main() -> int:
             btn_selector = 'input[id="frmIlban.pb_i_login"]'
             
             page.wait_for_selector(id_selector, timeout=15000)
-            page.fill(id_selector, args.username)
+            page.fill(id_selector, student_id)
             page.fill(pw_selector, password)
-            print(f"[1/7] 로그인 입력 폼 작성 완료 (ID: {args.username})", flush=True)
+            print(f"[1/7] 로그인 입력 폼 작성 완료 (ID: {student_id})", flush=True)
             page.click(btn_selector)
             
             # 대기 및 새로고침 (포털 구조상 필수)
@@ -484,6 +498,7 @@ def main() -> int:
             
             # 2. 통합정보시스템 진입
             print("[2/7] 통합정보시스템 버튼 탐색 중...", flush=True)
+            _step("통합정보시스템 진입 중")
             sys_btn_selector = 'img[id="frmsystem_s.imgsys1"]'
             
             # 현재 페이지 프레임 URL 정보 로깅
@@ -525,6 +540,7 @@ def main() -> int:
             timetable_json = None
             try:
                 print("[3/8] 시간표 진입 (fn_runFileMDI)...", flush=True)
+                _step("시간표 가져오는 중")
                 open_menu(knuis_page, "1000000062")
                 knuis_page.wait_for_timeout(3000)
                 wait_for_grid_rows(context, "WHHSKV", "G1", timeout_sec=30)
@@ -537,6 +553,7 @@ def main() -> int:
             grade_distribution_json = None
             try:
                 print("[4/8] 나의 성적분포 진입 (fn_runFileMDI)...", flush=True)
+                _step("성적분포 가져오는 중")
                 open_menu(knuis_page, "1000000103")
                 knuis_page.wait_for_timeout(3000)
                 wait_for_grid_rows(context, "WHHSJV0275", "G1", timeout_sec=30)
@@ -549,6 +566,7 @@ def main() -> int:
             cumulative_grades_json = None
             try:
                 print("[5/8] 누적성적조회 진입 (fn_runFileMDI)...", flush=True)
+                _step("누적성적 가져오는 중")
                 open_menu(knuis_page, "1000000102")
                 knuis_page.wait_for_timeout(3000)
                 select_semester_all(knuis_page)
@@ -577,6 +595,7 @@ def main() -> int:
             name, major, year, grad_json = None, None, None, None
             try:
                 print("[6/8] 졸업사전예고 진입 (fn_runFileMDI)...", flush=True)
+                _step("졸업정보 가져오는 중")
                 open_menu(knuis_page, "1000000111")
                 knuis_page.wait_for_timeout(3000)
                 # 안내문 팝업 '확인' 닫기 시도(실패해도 무시 — DOM 읽기에 영향 없음).
@@ -613,7 +632,7 @@ def main() -> int:
                 print(f"졸업사전예고 연동 중 오류 발생(무시): {gae}", file=sys.stderr, flush=True)
 
             # 7. DB 일괄 저장
-            if args.no_db:
+            if not save_db:
                 print("[7/7] --no-db 지정으로 DB 저장 단계 건너뜀. 파싱 결과 요약만 출력합니다.", flush=True)
                 print(f"  · 학적: name={name}, major={major}, year={year}")
                 print(f"  · 졸업학점: {'존재' if grad_json else 'NULL'}")
@@ -630,7 +649,7 @@ def main() -> int:
                 import json as _json
                 import os as _os
                 _os.makedirs("output", exist_ok=True)
-                _dump_path = f"output/grades_dump_{args.username}.json"
+                _dump_path = f"output/grades_dump_{student_id}.json"
                 with open(_dump_path, "w", encoding="utf-8") as _f:
                     _json.dump({
                         "timetable": timetable_json,
@@ -639,8 +658,9 @@ def main() -> int:
                     }, _f, ensure_ascii=False, indent=2)
                 print(f"[7/7] 전체 파싱 결과 덤프 저장: {_dump_path}", flush=True)
             else:
+                _step("저장 중")
                 upsert_user(
-                    student_id=args.username,
+                    student_id=student_id,
                     name=name,
                     major=major,
                     year=year,
@@ -649,21 +669,62 @@ def main() -> int:
                     grade_distribution=grade_distribution_json,
                     cumulative_grades=cumulative_grades_json,
                 )
-            print(
+            message = (
                 f"포털 데이터 연동 성공 "
                 f"(시간표: {'성공' if timetable_json else '실패'}, "
                 f"성적분포: {'성공' if grade_distribution_json else '실패'}, "
                 f"누적성적: {'성공' if cumulative_grades_json else '실패'})"
             )
-            if args.keep_open > 0:
-                print(f"[keep-open] 브라우저를 {args.keep_open}초 동안 유지합니다(시각 확인용)...", flush=True)
-                time.sleep(args.keep_open)
+            print(message)
+            result.update(
+                success=True,
+                message=message,
+                timetable_synced=bool(timetable_json),
+                grade_distribution_synced=bool(grade_distribution_json),
+                cumulative_grades_synced=bool(cumulative_grades_json),
+                graduation_synced=bool(grad_json),
+            )
+            if keep_open > 0:
+                print(f"[keep-open] 브라우저를 {keep_open}초 동안 유지합니다(시각 확인용)...", flush=True)
+                time.sleep(keep_open)
             browser.close()
-            return 0
-            
+            return result
+
     except Exception as e:
         print(f"포털 연동 중 에러 발생: {e}", file=sys.stderr)
+        result["message"] = f"포털 연동 실패: {e}"
+        return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="KNUIS 포털 졸업자가진단 연동")
+    parser.add_argument("--username", required=True, help="포털 로그인 아이디 (학번)")
+    parser.add_argument("--password-stdin", action="store_true", help="비밀번호를 stdin에서 읽음")
+    parser.add_argument("--timeout", type=int, default=60, help="동기화 제한 시간(초)")
+    parser.add_argument("--headed", action="store_true", help="브라우저를 화면에 띄움(시각 검증용)")
+    parser.add_argument("--slow-mo", type=int, default=0, help="각 동작 사이 지연(ms). 디버그/시각 검증용")
+    parser.add_argument("--keep-open", type=int, default=0, help="작업 종료 후 브라우저를 N초 동안 닫지 않음(시각 검증용)")
+    parser.add_argument("--no-db", action="store_true", help="DB 저장 단계를 건너뛰고 파싱 결과만 stdout에 요약 출력(시각 검증용)")
+    args = parser.parse_args()
+
+    if args.password_stdin:
+        password = sys.stdin.readline().rstrip("\n")
+    else:
+        print("비밀번호 입력 파라미터가 유효하지 않습니다. --password-stdin을 사용하세요.", file=sys.stderr)
         return 1
+
+    result = run_portal_sync(
+        args.username,
+        password,
+        headed=args.headed,
+        slow_mo=args.slow_mo,
+        keep_open=args.keep_open,
+        save_db=not args.no_db,
+    )
+    if not result["success"]:
+        print(result["message"], file=sys.stderr)
+    return 0 if result["success"] else 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

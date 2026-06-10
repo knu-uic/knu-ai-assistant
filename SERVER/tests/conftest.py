@@ -15,6 +15,8 @@ os.environ.setdefault("RERANKER_PROVIDER", "local")
 os.environ.setdefault("VLM_PROVIDER", "local")
 # HS256 권장 최소 키 길이(32바이트) 충족 — 짧으면 pyjwt InsecureKeyLengthWarning
 os.environ.setdefault("AUTH_JWT_SECRET", "test-secret-for-unit-tests-0123456789ab")
+# 테스트 전용 Fernet 키 (포털 비번 암호화 왕복 테스트용 — 실서비스 키 아님)
+os.environ.setdefault("PORTAL_SYNC_ENC_KEY", "07XjrVw_PO7mzB6-G57NPw9swTSf_qlbQA6hVdhyN9k=")
 
 
 def pytest_configure(config):
