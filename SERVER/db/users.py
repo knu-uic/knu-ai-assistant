@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import json
 
-import psycopg
-
-from db.schema import DB_URL
+from db.pool import sync_pool
 
 
 def ensure_users_schema():
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 student_id VARCHAR(20) PRIMARY KEY,
@@ -29,7 +27,7 @@ def ensure_users_schema():
 
 
 def get_user(student_id: str) -> dict | None:
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         cur = conn.execute(
             "SELECT student_id, name, major, year, interests, favorite_courses, graduation_credits, timetable, grade_distribution_json, cumulative_grades_json FROM users WHERE student_id = %s;",
             (student_id,),
@@ -90,7 +88,7 @@ def upsert_user(
     timetable_json = json.dumps(timetable, ensure_ascii=False) if timetable is not None else None
     grade_distribution_json = json.dumps(grade_distribution, ensure_ascii=False) if grade_distribution is not None else None
     cumulative_grades_json = json.dumps(cumulative_grades, ensure_ascii=False) if cumulative_grades is not None else None
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         conn.execute("""
             INSERT INTO users (student_id, name, major, year, interests, favorite_courses, graduation_credits, timetable, grade_distribution_json, cumulative_grades_json)
             VALUES (%s, %s, %s, %s, COALESCE(%s, ''), COALESCE(%s, ''), %s, %s, %s, %s)
@@ -110,7 +108,7 @@ def upsert_user(
 
 def set_favorite_courses(student_id: str, courses: list[str]) -> None:
     favorites_csv = ",".join(courses or [])
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         conn.execute(
             "UPDATE users SET favorite_courses = %s WHERE student_id = %s;",
             (favorites_csv, student_id),
