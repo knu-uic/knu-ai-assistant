@@ -1,7 +1,13 @@
 from pydantic import BaseModel, Field
 
 
-class SignupRequest(BaseModel):
+class SignupCodeRequest(BaseModel):
+    email: str = Field(max_length=100)
+
+
+class SignupVerifyRequest(BaseModel):
+    email: str = Field(max_length=100)
+    code: str = Field(min_length=6, max_length=6)
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=8, max_length=128)
 
