@@ -263,10 +263,24 @@ def init_db():
                 id BIGSERIAL PRIMARY KEY,
                 username VARCHAR(50) UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
+                email VARCHAR(100) UNIQUE,
                 student_id VARCHAR(20),
                 created_at TIMESTAMPTZ DEFAULT now()
             );
         """)
+        conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS email VARCHAR(100) UNIQUE;")
+
+        # 가입 인증 코드. 만료(expires_at) 지난 행은 검증에서 무시되고 다음 가입 때 삭제됨.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS email_verifications (
+                id BIGSERIAL PRIMARY KEY,
+                email VARCHAR(100) NOT NULL,
+                code VARCHAR(6) NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT now()
+            );
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_email_verifications_email ON email_verifications(email);")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS lms_courses (

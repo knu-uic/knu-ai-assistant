@@ -26,7 +26,7 @@ tempCodeRunnerFile.py
 .secrets/
 AGENTS.md
 data/
-tests/
+/tests/
 CLAUDE.md
 .DS_store
 state.json

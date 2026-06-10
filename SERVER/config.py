@@ -233,6 +233,29 @@ AUTH_TOKEN_TTL_DAYS = _env_int(
 )
 
 # -----------------------------
+# mail (가입 인증)
+# -----------------------------
+
+MAIL_PROVIDER = (
+    os.getenv("MAIL_PROVIDER", "gmail")
+    .strip()
+    .lower()
+)
+
+GMAIL_USER = os.getenv("GMAIL_USER")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+
+MAIL_FROM = os.getenv("MAIL_FROM") or GMAIL_USER
+
+SIGNUP_EMAIL_DOMAIN = (
+    os.getenv("SIGNUP_EMAIL_DOMAIN", "smail.kongju.ac.kr")
+    .strip()
+    .lower()
+)
+
+# -----------------------------
 # validation
 # -----------------------------
 
