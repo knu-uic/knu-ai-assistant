@@ -42,8 +42,13 @@ def _parse_posted_date(raw: str | None) -> date | None:
         return None
 
 
-if __name__ == "__main__":
+def run_ingest() -> dict:
+    """전체 크롤러 증분 수집 1회. 합산 카운트를 반환한다(워커 로그·모니터링용).
+
+    DB에 이미 있는 글은 should_skip으로 건너뛰므로 반복 실행해도 안전하다.
+    """
     init_db()
+    total = {"crawled": 0, "inserted": 0, "skipped": 0, "dropped": 0}
     pinned_urls: set[str] = set()
     for crawler in CRAWLERS:
         collect_pinned_urls = getattr(crawler, "collect_pinned_urls", None)
@@ -179,3 +184,13 @@ if __name__ == "__main__":
             f"2. 크롤링/적재 완료: 수집 {crawled_count}개, "
             f"신규 저장 {inserted_count}개, 중복 스킵 {skipped_count}개, refine 드롭 {dropped_count}개"
         )
+        total["crawled"] += crawled_count
+        total["inserted"] += inserted_count
+        total["skipped"] += skipped_count
+        total["dropped"] += dropped_count
+
+    return total
+
+
+if __name__ == "__main__":
+    run_ingest()

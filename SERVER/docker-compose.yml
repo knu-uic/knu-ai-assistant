@@ -39,6 +39,15 @@ services:
     networks:
       - bot_network
 
+  redis:
+    image: redis:7-alpine
+    container_name: knu-uic-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - bot_network
+
 volumes:
   pgdata:
   hf_cache:
