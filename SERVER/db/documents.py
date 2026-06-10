@@ -3,15 +3,13 @@ from __future__ import annotations
 import json
 from datetime import date
 
-import psycopg
 from psycopg import sql
 
+from db.pool import sync_pool
 from db.schema import (
-    DB_URL,
     SLUGS,
     SLUG_TO_CATEGORY,
     _chunk_ident,
-    _connect_with_vector,
     _doc_ident,
     _months_ago,
     _slug,
@@ -28,7 +26,7 @@ def prune_documents(
     protected_urls = protected_urls or set()
     total = 0
 
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         for slug in SLUGS:
             category = SLUG_TO_CATEGORY[slug]
             expired_clause = (
@@ -71,7 +69,7 @@ def prune_documents(
 
 
 def sync_pinned_urls(pinned_urls: set[str]) -> None:
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         for slug in SLUGS:
             conn.execute(
                 sql.SQL("UPDATE {doc} SET is_pinned = false WHERE is_pinned = true;").format(
@@ -90,7 +88,7 @@ def sync_pinned_urls(pinned_urls: set[str]) -> None:
 
 
 def upsert_source(code: str, name: str, kind: str, department: str | None, base_url: str | None) -> int:
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         cur = conn.execute("""
             INSERT INTO source (code, name, kind, department, base_url)
             VALUES (%s, %s, %s, %s, %s)
@@ -113,7 +111,7 @@ def document_exists(url: str) -> bool:
         sql.SQL("SELECT 1 FROM {} WHERE url = %s").format(_doc_ident(s)) for s in SLUGS
     )
     query = sql.SQL("SELECT EXISTS({sub});").format(sub=sub)
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         cur = conn.execute(query, tuple([url] * len(SLUGS)))
         row = cur.fetchone()
         return bool(row and row[0])
@@ -121,7 +119,7 @@ def document_exists(url: str) -> bool:
 
 def delete_documents_by_source(source_id: int) -> int:
     deleted_total = 0
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         for slug in SLUGS:
             category = SLUG_TO_CATEGORY[slug]
             rows = conn.execute(
@@ -230,7 +228,7 @@ def insert_document(
         RETURNING id;
     """).format(doc=_doc_ident(slug))
 
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         cur = conn.execute(
             query,
             (
@@ -263,7 +261,7 @@ def insert_assets(category: str, document_id: int, assets: list[dict]):
     if not assets:
         return
     _slug(category)
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         conn.execute(
             "DELETE FROM document_asset WHERE category = %s AND document_id = %s;",
             (category, document_id),
@@ -317,7 +315,7 @@ def insert_chunks(
         """
     ).format(_chunk_ident(slug))
 
-    with _connect_with_vector() as conn:
+    with sync_pool.connection() as conn:
         conn.execute(del_q, (document_id,))
         for chunk in chunks:
             if len(chunk) == 3:
@@ -423,7 +421,7 @@ def search_chunks(
     """).format(union=union)
     params.append(limit)
 
-    with _connect_with_vector() as conn:
+    with sync_pool.connection() as conn:
         cursor = conn.execute(final_q, params)
         return cursor.fetchall()
 
@@ -431,7 +429,7 @@ def search_chunks(
 def get_document_content(category: str, url: str) -> str | None:
     slug = _slug(category)
     q = sql.SQL("SELECT content FROM {doc} WHERE url = %s").format(doc=_doc_ident(slug))
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         cur = conn.execute(q, (url,))
         row = cur.fetchone()
         return row[0] if row else None
@@ -493,7 +491,7 @@ def get_documents(
     """).format(union=union)
     params.append(limit)
 
-    with psycopg.connect(DB_URL) as conn:
+    with sync_pool.connection() as conn:
         cursor = conn.execute(final_q, params)
         return cursor.fetchall()
 
