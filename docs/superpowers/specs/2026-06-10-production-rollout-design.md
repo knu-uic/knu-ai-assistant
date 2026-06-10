@@ -1,7 +1,17 @@
 # KNU AI Assistant — 교내 실사용 배포 설계 (rollout plan)
 
-> 전제 문서: rev2(`2026-06-05-fastapi-migration-architecture-design.md`) + rev3 델타(`2026-06-10-architecture-rev3-delta.md`).
-> 이 문서는 "배포까지의 전체 계획"을 확정한다. 충돌 시 이 문서 > rev3 델타 > rev2.
+> 전제 문서: rev2(`2026-06-05-fastapi-migration-architecture-design.md`).
+> 이 문서는 "배포까지의 전체 계획"을 확정한다. 충돌 시 이 문서가 rev2보다 우선.
+
+## rev2 중 무효화된 절 (사용자 결정으로 대체)
+
+1. **§1 "채팅 공개(B5)" 폐기** — chat/notices/search는 자체 계정 JWT로 보호 (PR #95). 공개는 `/api/health`·`/api/auth/*`뿐. 근거: LLM 비용 방어 > UX 마찰.
+2. **§1/§5 "JWT는 portal sync 완료 시 발급" 폐기** — JWT는 `POST /api/auth/login`에서 발급, **sub=username**. portal sync는 인증 수단이 아니라 로그인 후 기능. job done 시 `accounts.student_id` 연결만 수행. job_id 추측불가 토큰 + 로그 스크럽 경고는 여전히 유효.
+3. **§4 "24곳 async 포팅 = 최장 작업" 강등** — `sync_pool`(PR #94)로 connect-storm 이미 제거. async 포팅은 선택적 최적화로 백로그.
+
+### 위 전환이 남긴 주의점
+- **IDOR 가드**: rev2 G1은 `JWT sub == path student_id` 비교 전제였으나 이제 sub=username → `/api/user/{id}` 구현 시 accounts에서 username→student_id 조회 후 비교.
+- **accounts 테이블이 init_db로 들어감** (migrations 러너 부재 시점) → 러너 도입 시 첫 마이그레이션에서 baseline 처리.
 
 ## 확정된 결정 (사용자, 2026-06-10)
 
