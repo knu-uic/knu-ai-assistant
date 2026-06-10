@@ -13,6 +13,29 @@ os.environ.setdefault("DB_PORT", "5432")
 os.environ.setdefault("EMBEDDING_PROVIDER", "local")
 os.environ.setdefault("RERANKER_PROVIDER", "local")
 os.environ.setdefault("VLM_PROVIDER", "local")
+# HS256 권장 최소 키 길이(32바이트) 충족 — 짧으면 pyjwt InsecureKeyLengthWarning
+os.environ.setdefault("AUTH_JWT_SECRET", "test-secret-for-unit-tests-0123456789ab")
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "real_auth: 인증 우회 없이 실제 토큰 검증을 테스트"
+    )
+
+
+@pytest.fixture(autouse=True)
+def bypass_auth(request):
+    """보호 라우터 테스트가 토큰 없이 동작하도록 require_user를 대체.
+    실제 인증 동작을 검증하는 테스트는 @pytest.mark.real_auth로 우회를 끈다."""
+    if "real_auth" in request.keywords:
+        yield
+        return
+    from api.main import app
+    from api.deps import require_user
+
+    app.dependency_overrides[require_user] = lambda: "testuser"
+    yield
+    app.dependency_overrides.pop(require_user, None)
 
 
 @pytest.fixture(autouse=True)
