@@ -256,6 +256,18 @@ SIGNUP_EMAIL_DOMAIN = (
 )
 
 # -----------------------------
+# rate limit
+# -----------------------------
+
+# 있으면 slowapi 저장소로 Redis 사용(다중 프로세스 대응). 없으면 in-memory.
+REDIS_URL = os.getenv("REDIS_URL")
+
+RATE_LIMIT_SIGNUP_REQUEST = os.getenv("RATE_LIMIT_SIGNUP_REQUEST", "3/minute")
+RATE_LIMIT_AUTH = os.getenv("RATE_LIMIT_AUTH", "10/minute")
+RATE_LIMIT_CHAT = os.getenv("RATE_LIMIT_CHAT", "5/minute;150/day")
+RATE_LIMIT_READ = os.getenv("RATE_LIMIT_READ", "30/minute")
+
+# -----------------------------
 # validation
 # -----------------------------
 
