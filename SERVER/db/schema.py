@@ -85,21 +85,18 @@ def reset_db():
 
 
 def init_db():
-    """category별 document/chunk 스키마를 비파괴적으로 준비한다."""
+    """전체 스키마를 비파괴적으로 준비한다.
+
+    고정 테이블(source, users, accounts 등)은 migrations/ 러너가 담당하고,
+    여기서는 category별 동적 document/chunk 테이블만 만든다.
+    """
+    # 동적 테이블이 source(id)를 참조하므로 고정 테이블 먼저.
+    # (함수 안 import: db.migrate가 이 모듈의 DB_URL을 쓰는 순환 참조 방지)
+    from db.migrate import migrate
+
+    migrate()
     with psycopg.connect(DB_URL) as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS source (
-                id BIGSERIAL PRIMARY KEY,
-                code VARCHAR(50) UNIQUE NOT NULL,
-                name VARCHAR(100) NOT NULL,
-                kind VARCHAR(20) NOT NULL CHECK (kind IN ('notice', 'academic')),
-                department VARCHAR(100),
-                base_url VARCHAR(500),
-                created_at TIMESTAMPTZ DEFAULT now()
-            );
-        """)
 
         for slug in SLUGS:
             conn.execute(sql.SQL("""
@@ -193,106 +190,8 @@ def init_db():
                 chunk=_chunk_ident(slug),
             ))
 
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS document_asset (
-                id BIGSERIAL PRIMARY KEY,
-                category VARCHAR(20) NOT NULL,
-                document_id BIGINT NOT NULL,
-                kind VARCHAR(30) NOT NULL,
-                filename VARCHAR(300),
-                source_url VARCHAR(800) NOT NULL,
-                storage_path VARCHAR(800),
-                mime_type VARCHAR(80),
-                extracted_text TEXT,
-                order_idx INT NOT NULL DEFAULT 0,
-                created_at TIMESTAMPTZ DEFAULT now()
-            );
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_document_asset_doc  ON document_asset(category, document_id);")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_document_asset_kind ON document_asset(kind);")
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                student_id VARCHAR(20) PRIMARY KEY,
-                major VARCHAR(50),
-                name VARCHAR(50),
-                year INT,
-                interests TEXT,
-                courses TEXT
-            );
-        """)
-        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS year INT;")
-        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS favorite_courses TEXT;")
-        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS graduation_credits JSONB;")
-        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS timetable JSONB;")
-        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS grade_distribution_json JSONB;")
-        conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS cumulative_grades_json JSONB;")
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS lms_tasks (
-                id BIGSERIAL PRIMARY KEY,
-                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
-                task_type VARCHAR(20) NOT NULL CHECK (task_type IN ('lecture', 'assignment', 'notice')),
-                title VARCHAR(255) NOT NULL,
-                course_name VARCHAR(120),
-                due_date DATE,
-                progress INT CHECK (progress IS NULL OR (progress >= 0 AND progress <= 100)),
-                url VARCHAR(800),
-                is_done BOOLEAN NOT NULL DEFAULT false,
-                source VARCHAR(30) NOT NULL DEFAULT 'manual',
-                external_id VARCHAR(160),
-                synced_at TIMESTAMPTZ,
-                raw JSONB,
-                created_at TIMESTAMPTZ DEFAULT now(),
-                updated_at TIMESTAMPTZ DEFAULT now()
-            );
-        """)
-        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS source VARCHAR(30) NOT NULL DEFAULT 'manual';")
-        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS external_id VARCHAR(160);")
-        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ;")
-        conn.execute("ALTER TABLE lms_tasks ADD COLUMN IF NOT EXISTS raw JSONB;")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_lms_tasks_student_done_due ON lms_tasks(student_id, is_done, due_date);")
-        conn.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_lms_tasks_external
-            ON lms_tasks(student_id, source, external_id)
-            WHERE external_id IS NOT NULL;
-        """)
-        # 자체 웹 로그인 계정. student_id는 추후 포털 연동 시 users와 링크용(현재 미사용).
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                id BIGSERIAL PRIMARY KEY,
-                username VARCHAR(50) UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                email VARCHAR(100) UNIQUE,
-                student_id VARCHAR(20),
-                created_at TIMESTAMPTZ DEFAULT now()
-            );
-        """)
-        conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS email VARCHAR(100) UNIQUE;")
-
-        # 가입 인증 코드. 만료(expires_at) 지난 행은 검증에서 무시되고 다음 가입 때 삭제됨.
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS email_verifications (
-                id BIGSERIAL PRIMARY KEY,
-                email VARCHAR(100) NOT NULL,
-                code VARCHAR(6) NOT NULL,
-                expires_at TIMESTAMPTZ NOT NULL,
-                created_at TIMESTAMPTZ DEFAULT now()
-            );
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_email_verifications_email ON email_verifications(email);")
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS lms_courses (
-                student_id VARCHAR(20) NOT NULL REFERENCES users(student_id) ON DELETE CASCADE,
-                course_id BIGINT NOT NULL,
-                course_name VARCHAR(200) NOT NULL,
-                synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                PRIMARY KEY (student_id, course_id)
-            );
-        """)
         conn.commit()
-        print(f"✅ source + {len(SLUGS)}개 category 테이블({', '.join(SLUGS)}) + asset/users 생성 완료")
+        print(f"✅ 고정 테이블(migrations) + {len(SLUGS)}개 category 테이블({', '.join(SLUGS)}) 준비 완료")
 
 
 __all__ = [
