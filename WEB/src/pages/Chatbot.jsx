@@ -45,20 +45,19 @@ export function ChatbotPage() {
 
   return (
     <div className="chat-wrap">
-      <div className="chat-quick">
-        {chatSuggestions.map((s) => (
-          <button key={s.label} className="quick-chip" onClick={() => send(s.label)}>
-            <Icon name={s.icon} size={15} /> {s.label}
-          </button>
-        ))}
-      </div>
-
       <div className="chat-scroll" ref={scrollRef}>
         {empty && (
           <div className="chat-welcome">
             <div className="welcome-ico"><Icon name="bot" size={26} /></div>
             <div className="welcome-title">무엇을 도와드릴까요?</div>
             <div className="welcome-sub">KNU 학사·캠퍼스·규정에 대해 무엇이든 물어보세요.</div>
+            <div className="welcome-chips">
+              {chatSuggestions.map((s) => (
+                <button key={s.label} className="quick-chip" onClick={() => send(s.label)}>
+                  <Icon name={s.icon} size={15} /> {s.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         <div className="chat-msgs">

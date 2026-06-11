@@ -203,5 +203,6 @@ export const MOCK = {
 export const chatSuggestions = [
   { icon: "coins", label: "장학금 정보 알려줘" },
   { icon: "book", label: "수강신청 방법" },
-  { icon: "utensils", label: "학식 메뉴" },
+  { icon: "calendar", label: "학사일정 알려줘" },
+  { icon: "landmark", label: "도서관 운영시간" },
 ];
