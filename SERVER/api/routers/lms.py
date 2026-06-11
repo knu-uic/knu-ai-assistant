@@ -29,6 +29,14 @@ async def lms_sync_start(
 ) -> LmsSyncStartResponse:
     pool = await get_arq_pool()
     job_id = _user_job_id(username)
+
+    # dedup은 "진행 중"일 때만 — 완료된 이전 잡 결과가 남아 있으면 지우고 새로 실행한다.
+    # (안 지우면 needs_reconnect 직후 비번 재제출이 stale 결과로 dedup돼 무한 반복)
+    status = await Job(job_id, redis=pool).status()
+    if status in (JobStatus.queued, JobStatus.deferred, JobStatus.in_progress):
+        return LmsSyncStartResponse(job_id=job_id)
+    await pool.delete(f"arq:result:{job_id}")
+
     # 비밀번호가 있으면 암호문으로만 전달, 없으면 None(세션 재사용 경로).
     enc_password = encrypt_secret(req.password) if req.password else None
     await pool.enqueue_job(
