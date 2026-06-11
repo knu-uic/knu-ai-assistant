@@ -27,7 +27,7 @@ function NoticeCard({ n }) {
 }
 
 export function NoticesPage() {
-  const { notices, loadNotices } = useApp();
+  const { notices, loadNotices, profile } = useApp();
   const [cat, setCat] = useState("전체");
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
@@ -44,6 +44,12 @@ export function NoticesPage() {
     <div className="main-inner wide">
       <h1 className="page-title">공지사항</h1>
       <p className="page-sub">최신 학사·일반 공지를 확인하세요.</p>
+
+      {profile && !profile.portal_linked && (
+        <div className="banner" style={{ marginBottom: 14 }}>
+          포털을 연결하면 내 학과 공지도 함께 볼 수 있어요. 지금은 전체 공통 공지만 표시됩니다.
+        </div>
+      )}
 
       <div className="search-bar">
         <Icon name="search" size={18} />

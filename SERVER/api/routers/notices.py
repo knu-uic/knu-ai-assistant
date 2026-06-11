@@ -4,15 +4,28 @@ from datetime import datetime
 from functools import partial
 
 import anyio
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from db.accounts import get_account
 from db.documents import get_documents
+from db.users import get_user
+from api.deps import require_user
 from api.ratelimit import limiter, user_or_ip
 from api.schemas.notices import NoticeListResponse
 from api.mappers import notice_from_list_row
 from config import HIDDEN_NOTICE_SOURCE_CODES, RATE_LIMIT_READ
 
 router = APIRouter()
+
+
+async def _resolve_major(username: str) -> str | None:
+    """로그인 유저 → 연결된 학번 → 학과. 미연동이면 None."""
+    account = await anyio.to_thread.run_sync(partial(get_account, username))
+    student_id = account.get("student_id") if account else None
+    if not student_id:
+        return None
+    user = await anyio.to_thread.run_sync(partial(get_user, student_id))
+    return (user or {}).get("major")
 
 
 def _encode_cursor(sort_ts: datetime, url: str) -> str:
@@ -36,6 +49,7 @@ async def notices(
     major: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     cursor: str | None = Query(None),
+    username: str = Depends(require_user),
 ) -> NoticeListResponse:
     cursor_ts, cursor_url = None, None
     if cursor:
@@ -44,12 +58,23 @@ async def notices(
         except (ValueError, binascii.Error, UnicodeDecodeError):
             raise HTTPException(status_code=400, detail="잘못된 페이지 커서입니다.")
 
+    # 자동 학과 스코프: major 쿼리가 명시되면 그걸 우선(dart 앱 호환),
+    # 없으면 로그인 유저 학과로 스코프. 연동 유저=내학과+공통, 비연동=공통만.
+    department = None
+    if major is None:
+        resolved = await _resolve_major(username)
+        if resolved:
+            major = resolved
+        else:
+            department = "공통"
+
     # limit+1로 한 행 더 가져와 다음 페이지 존재 여부를 판정한다.
     rows = await anyio.to_thread.run_sync(
         partial(
             get_documents,
             category=category,
             major=major,
+            department=department,
             limit=limit + 1,
             cursor_ts=cursor_ts,
             cursor_url=cursor_url,
