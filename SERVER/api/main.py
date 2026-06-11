@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
+from config import WEB_CORS_ORIGINS
 from db.pool import pool
 from api.deps import require_user
 from api.ratelimit import limiter
@@ -21,6 +23,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="KNU AI Assistant API", lifespan=lifespan)
 app.state.limiter = limiter
+
+# 웹 SPA 오리진 허용. 개발은 vite proxy로 동일 오리진이라 불필요하나,
+# prod에서 웹이 API를 다른 오리진으로 직접 호출하는 경우 대비.
+if WEB_CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=WEB_CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 @app.exception_handler(RateLimitExceeded)

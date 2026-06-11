@@ -9,7 +9,7 @@ def _patch(monkeypatch, account=None, user=None, courses=None, tasks=None):
     monkeypatch.setattr(me_mod, "get_account", lambda u: account)
     monkeypatch.setattr(me_mod, "get_user", lambda sid: user)
     monkeypatch.setattr(me_mod, "get_lms_courses", lambda sid: courses or [])
-    monkeypatch.setattr(me_mod, "get_lms_tasks", lambda sid: tasks or [])
+    monkeypatch.setattr(me_mod, "get_lms_tasks", lambda sid, inc=False: tasks or [])
 
 
 def test_me_unlinked_returns_empty(monkeypatch):

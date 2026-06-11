@@ -10,7 +10,7 @@ from db.documents import get_documents
 from api.ratelimit import limiter, user_or_ip
 from api.schemas.notices import NoticeListResponse
 from api.mappers import notice_from_list_row
-from config import RATE_LIMIT_READ
+from config import HIDDEN_NOTICE_SOURCE_CODES, RATE_LIMIT_READ
 
 router = APIRouter()
 
@@ -53,6 +53,7 @@ async def notices(
             limit=limit + 1,
             cursor_ts=cursor_ts,
             cursor_url=cursor_url,
+            exclude_codes=HIDDEN_NOTICE_SOURCE_CODES,
         )
     )
     has_more = len(rows) > limit

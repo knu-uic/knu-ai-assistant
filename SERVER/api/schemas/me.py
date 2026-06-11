@@ -3,12 +3,17 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 
+class InterestsRequest(BaseModel):
+    interests: List[str] = []
+
+
 class MeProfile(BaseModel):
     student_id: Optional[str] = None
     name: Optional[str] = None
     major: Optional[str] = None
     year: Optional[int] = None
     interests: List[str] = []
+    favorite_courses: List[str] = []
     portal_linked: bool = False
     lms_linked: bool = False
 
@@ -46,3 +51,35 @@ class LmsCourse(BaseModel):
 
 class LmsCoursesResponse(BaseModel):
     courses: List[LmsCourse] = []
+
+
+class FavoritesRequest(BaseModel):
+    favorite_courses: List[str] = []
+
+
+class TaskDoneRequest(BaseModel):
+    is_done: bool
+
+
+class RecItem(BaseModel):
+    title: str
+    url: str
+    summary: Optional[str] = None
+    category: Optional[str] = None
+    d_label: Optional[str] = None
+    days_left: Optional[int] = None
+    matched_keywords: List[str] = []
+
+
+class DeadlineItem(BaseModel):
+    title: str
+    url: str
+    category: Optional[str] = None
+    end_date: str
+    d_label: Optional[str] = None
+    days_left: int
+
+
+class HomeResponse(BaseModel):
+    recommended: List[RecItem] = []
+    deadlines: List[DeadlineItem] = []

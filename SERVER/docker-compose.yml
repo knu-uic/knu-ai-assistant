@@ -28,6 +28,11 @@ services:
       - "8501:8501"
     env_file:
       - .env  # .env의 모든 변수들을 자동으로 컨테이너 환경변수로 로드
+    environment:
+      # 컨테이너 안에서는 DB 호스트가 'db'(compose 네트워크). .env는 네이티브
+      # 개발용 local이라, 컨테이너 실행 시에만 docker로 덮어쓴다(load_dotenv는
+      # override=False라 이 OS env가 우선).
+      RUNTIME_ENV: docker
     volumes:
       - .:/app
       - hf_cache:/root/.cache/huggingface

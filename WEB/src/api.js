@@ -1,0 +1,213 @@
+/* KNU PICK — API 레이어.
+   실 백엔드(FastAPI) 호출 + JWT 토큰 관리. 일부 화면(홈 추천/마감 집계,
+   포털 졸업표 변환 미구현분)은 목업을 유지하고 주석으로 표시한다. */
+
+const TOKEN_KEY = "knu_pick_token";
+
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+export function setToken(t) {
+  if (t) localStorage.setItem(TOKEN_KEY, t);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+export function isAuthed() {
+  return !!getToken();
+}
+
+async function req(method, path, body) {
+  const headers = { "Content-Type": "application/json" };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(path, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) {
+    setToken(null);
+    throw new Error("세션이 만료되었습니다. 다시 로그인해주세요.");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `요청 실패 (${res.status})`);
+  return data;
+}
+
+// ── 인증 ──────────────────────────────────────────────
+export const auth = {
+  async signupRequest(email) {
+    return req("POST", "/api/auth/signup/request", { email });
+  },
+  async signupVerify(email, code, username, password) {
+    const r = await req("POST", "/api/auth/signup/verify", {
+      email,
+      code,
+      username,
+      password,
+    });
+    setToken(r.access_token);
+    return r;
+  },
+  async login(username, password) {
+    const r = await req("POST", "/api/auth/login", { username, password });
+    setToken(r.access_token);
+    return r;
+  },
+  logout() {
+    setToken(null);
+  },
+};
+
+// ── 챗봇 ──────────────────────────────────────────────
+// 백엔드는 flat 키(answer 문자열)를 반환 → AnswerCard 구조로 어댑트.
+export async function askChatbot(question, major) {
+  const r = await req("POST", "/api/chat", { question, major });
+  return {
+    intro: r.answer || "",
+    bullets: [],
+    outro: r.grounded === false ? "근거 문서를 찾지 못했습니다." : "",
+    citations: [],
+  };
+}
+
+// ── 공지 ──────────────────────────────────────────────
+// 백엔드 category는 한글 그대로("장학"/"수강"/"취업(진로)"/"행사(공모전)"/"일반(기타)").
+export async function getNotices() {
+  const r = await req("GET", "/api/notices?limit=100");
+  return (r.notices || []).map((n) => ({
+    urgent: false,
+    source: n.source_name || "공지",
+    dept: "",
+    deadlineLabel: n.end_date ? `~ ${n.end_date}` : "",
+    deadlineWarm: false,
+    reg: n.posted_at ? `Reg: ${n.posted_at}` : "",
+    title: n.title,
+    body: n.summary || n.content || "",
+    target: (n.target && n.target[0]) || "전체",
+    tags: (n.keywords || []).slice(0, 3).map((k) => `# ${k}`),
+    attachments: [],
+    category: n.category || "일반(기타)",
+    url: n.url,
+  }));
+}
+
+// ── 본인 데이터 (/api/me/*) ────────────────────────────
+export async function getProfile() {
+  return req("GET", "/api/me");
+}
+export async function getMeTimetable() {
+  const r = await req("GET", "/api/me/timetable");
+  return r.timetable || [];
+}
+export async function getPortalData() {
+  return req("GET", "/api/me/portal");
+}
+export async function getLmsTasks() {
+  const r = await req("GET", "/api/me/lms/tasks");
+  // 백엔드 task → 디자인 TaskRow shape (type/due/done/course/progress)
+  return (r.tasks || []).map((t) => ({
+    id: t.id,
+    type: t.task_type,
+    title: t.title,
+    course: t.course_name || "기타",
+    due_date: t.due_date || null,   // ISO 문자열 또는 null — D-day는 화면에서 계산
+    url: t.url || null,
+    progress: t.progress,
+    done: t.is_done,
+  }));
+}
+export async function saveInterests(interests) {
+  return req("POST", "/api/me/interests", { interests });
+}
+export async function saveFavorites(favorite_courses) {
+  return req("POST", "/api/me/lms/favorites", { favorite_courses });
+}
+export async function setTaskDone(taskId, isDone) {
+  await req("POST", `/api/me/lms/tasks/${taskId}/done`, { is_done: isDone });
+}
+export async function deleteTask(taskId) {
+  await req("DELETE", `/api/me/lms/tasks/${taskId}`);
+}
+export async function getHome() {
+  const r = await req("GET", "/api/me/home");
+  return {
+    recommended: (r.recommended || []).map((n) => ({
+      title: n.title,
+      body: n.summary || "",
+      url: n.url,
+      d: n.d_label,
+      warm: n.days_left != null && n.days_left <= 3,
+      tags: [
+        ...(n.category ? [`# ${n.category}`] : []),
+        ...(n.matched_keywords || []).map((k) => `# ${k}`),
+      ],
+    })),
+    deadlines: (r.deadlines || []).map((d) => ({
+      title: d.title,
+      url: d.url,
+      sub: d.end_date ? `마감 ${d.end_date}` : "",
+      cat: d.category || "",
+      d: d.d_label,
+      warm: d.days_left != null && d.days_left <= 3,
+    })),
+  };
+}
+
+export async function getLmsCourses() {
+  const r = await req("GET", "/api/me/lms/courses");
+  return (r.courses || []).map((c) => ({
+    course_id: c.course_id,
+    course_name: c.course_name,
+    fav: false,
+  }));
+}
+
+// ── 동기화 트리거 (잡 + 폴링) ──────────────────────────
+async function pollJob(base, jobId, onStep) {
+  const deadline = Date.now() + 240000;
+  while (Date.now() < deadline) {
+    const s = await req("GET", `${base}/${jobId}`);
+    if (s.status === "done") return s.result;
+    if (s.status === "failed") {
+      if (s.needs_reconnect) {
+        const e = new Error(s.detail || "재연결이 필요합니다.");
+        e.needsReconnect = true;
+        throw e;
+      }
+      throw new Error(s.detail || "동기화에 실패했습니다.");
+    }
+    if (s.step) onStep?.(s.step);
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  throw new Error("동기화 시간이 초과되었습니다.");
+}
+
+export async function syncPortal(studentId, password, onStep) {
+  const r = await req("POST", "/api/portal/sync/start", {
+    student_id: studentId,
+    password,
+  });
+  return pollJob("/api/portal/sync", r.job_id, onStep);
+}
+export async function syncLms(studentId, password, onStep) {
+  const r = await req("POST", "/api/lms/sync/start", {
+    student_id: studentId,
+    password: password || undefined,
+  });
+  return pollJob("/api/lms/sync", r.job_id, onStep);
+}
+
+// ── 정적/상수 + 목업(엔드포인트 없음 — 다음 작업) ──────
+export const NOTICE_CATEGORIES = ["전체", "장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"];
+export const INTEREST_KEYWORD_POOL = [
+  "인턴", "장학금", "캡스톤", "해커톤", "교환학생",
+  "공모전", "근로장학", "특강", "동아리", "취업박람회",
+];
+export const MAX_INTERESTS = 6;
+
+export const chatSuggestions = [
+  { icon: "coins", label: "장학금 정보 알려줘" },
+  { icon: "book", label: "수강신청 방법" },
+  { icon: "calendar", label: "학사일정 알려줘" },
+  { icon: "landmark", label: "도서관 운영시간" },
+];
