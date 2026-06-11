@@ -1,26 +1,24 @@
 import React from "react";
-import { Icon, Crest } from "./icons.jsx";
+import { Icon } from "./icons.jsx";
 
 const NAV = [
-  { id: "home", icon: "home", label: "Home" },
-  { id: "notices", icon: "bell", label: "Notices" },
+  { id: "home", icon: "home", label: "홈" },
+  { id: "notices", icon: "bell", label: "공지" },
   { id: "lms", icon: "book", label: "LMS" },
-  { id: "portal", icon: "landmark", label: "Portal" },
-  { id: "chatbot", icon: "bot", label: "AI Chatbot" },
-  { id: "settings", icon: "settings", label: "Settings" },
+  { id: "portal", icon: "landmark", label: "포털" },
+  { id: "chatbot", icon: "bot", label: "AI 챗봇" },
+  { id: "settings", icon: "settings", label: "설정" },
 ];
 
 export function Sidebar({ page, onNav }) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <Crest size={34} />
         <div>
           <div className="brand-name">KNU PICK</div>
           <div className="brand-sub">Academic Intelligence</div>
         </div>
       </div>
-
       <nav className="nav">
         {NAV.map((n) => (
           <button
@@ -33,15 +31,10 @@ export function Sidebar({ page, onNav }) {
           </button>
         ))}
       </nav>
-
       <div className="sidebar-foot">
-        <button
-          className="foot-user"
-          onClick={() => onNav("settings")}
-          style={{ border: "none", background: "none", width: "100%" }}
-        >
+        <button className="foot-user" onClick={() => onNav("settings")}>
           <Icon name="user" />
-          <span>Student Profile</span>
+          <span>내 프로필</span>
         </button>
       </div>
     </aside>

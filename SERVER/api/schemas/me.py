@@ -13,6 +13,7 @@ class MeProfile(BaseModel):
     major: Optional[str] = None
     year: Optional[int] = None
     interests: List[str] = []
+    favorite_courses: List[str] = []
     portal_linked: bool = False
     lms_linked: bool = False
 
@@ -50,3 +51,11 @@ class LmsCourse(BaseModel):
 
 class LmsCoursesResponse(BaseModel):
     courses: List[LmsCourse] = []
+
+
+class FavoritesRequest(BaseModel):
+    favorite_courses: List[str] = []
+
+
+class TaskDoneRequest(BaseModel):
+    is_done: bool

@@ -1,6 +1,35 @@
 import React, { useEffect } from "react";
 import { Icon } from "../icons.jsx";
 import { useApp } from "../store.jsx";
+import { weekGrid } from "../timetable.js";
+
+function WeekTimetable({ timetable }) {
+  const grid = weekGrid(timetable);
+  if (!grid) return null;
+  return (
+    <>
+      <h2 className="sub-h"><Icon name="calendar" size={19} /> 주간 시간표</h2>
+      <div className="card flush" style={{ marginTop: 10 }}>
+        <div className="grad-scroll">
+          <table className="week-grid">
+            <thead><tr>{grid.header.map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
+            <tbody>
+              {grid.body.map((row, ri) => (
+                <tr key={ri}>
+                  {row.map((cell, ci) =>
+                    ci === 0
+                      ? <td key={ci} className="wperiod">{cell}</td>
+                      : <td key={ci}>{cell ? <div className="wcell">{cell}</div> : null}</td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
 
 const GRAD_PATHS = [
   ["교양", "기초교양", "필수"], ["교양", "기초교양", "선택"], ["교양", "균형교양", "선택"],
@@ -101,8 +130,8 @@ function GenericGrids({ data }) {
 }
 
 export function PortalPage() {
-  const { profile, portalData, loadPortal } = useApp();
-  useEffect(() => { loadPortal(); }, [loadPortal]);
+  const { profile, portalData, loadPortal, timetable, loadTimetable } = useApp();
+  useEffect(() => { loadPortal(); loadTimetable(); }, [loadPortal, loadTimetable]);
 
   const grid = toGrid(portalData?.graduation_credits);
   const linked = !!profile?.portal_linked;
@@ -112,17 +141,19 @@ export function PortalPage() {
       <div className="row-between" style={{ alignItems: "flex-start" }}>
         <div>
           <h1 className="page-title">포털</h1>
-          <p className="page-sub">통합정보시스템(KNUIS)에서 연동된 취득학점·성적 정보입니다.</p>
+          <p className="page-sub">통합정보시스템(KNUIS)에서 연동된 시간표·취득학점·성적 정보입니다.</p>
         </div>
       </div>
 
       {portalData && !linked && (
-        <div className="banner" style={{ marginTop: 20 }}>설정에서 포털을 연결하면 취득학점·성적이 표시됩니다.</div>
+        <div className="banner" style={{ marginTop: 20 }}>설정에서 포털을 연결하면 시간표·취득학점·성적이 표시됩니다.</div>
       )}
+
+      <WeekTimetable timetable={timetable} />
 
       {grid && (
         <>
-          <h2 className="sub-h"><Icon name="cap" size={19} /> 취득학점 현황</h2>
+          <h2 className="sub-h" style={{ marginTop: 32 }}><Icon name="cap" size={19} /> 취득학점 현황</h2>
           <p className="caption" style={{ marginTop: -4, marginBottom: 12 }}>동기화된 졸업사전예고 취득학점 상세 현황입니다. (가로 스크롤 가능)</p>
           <div className="card flush"><CreditTable grid={grid} /></div>
         </>

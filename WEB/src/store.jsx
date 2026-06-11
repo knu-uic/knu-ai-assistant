@@ -84,6 +84,21 @@ export function AppProvider({ children }) {
     setProfile(p);
   }, []);
 
+  const saveFavorites = useCallback(async (favs) => {
+    const p = await api.saveFavorites(favs);
+    setProfile(p);
+  }, []);
+
+  const toggleTaskDone = useCallback(async (id, done) => {
+    await api.setTaskDone(id, done);
+    setLmsTasks((ts) => (ts || []).map((t) => (t.id === id ? { ...t, done } : t)));
+  }, []);
+
+  const removeTask = useCallback(async (id) => {
+    await api.deleteTask(id);
+    setLmsTasks((ts) => (ts || []).filter((t) => t.id !== id));
+  }, []);
+
   // 동기화 성공 후 관련 캐시 무효화 + 프로필 갱신
   const syncPortal = useCallback(async (sid, pw, onStep) => {
     const r = await api.syncPortal(sid, pw, onStep);
@@ -108,7 +123,8 @@ export function AppProvider({ children }) {
     lmsTasks, lmsCourses, loadLms,
     portalData, loadPortal,
     timetable, loadTimetable,
-    saveInterests, syncPortal, syncLms,
+    saveInterests, saveFavorites, toggleTaskDone, removeTask,
+    syncPortal, syncLms,
     setLmsTasks,
     chatMsgs, setChatMsgs,
   };

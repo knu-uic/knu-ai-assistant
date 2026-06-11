@@ -5,29 +5,22 @@ import { useApp } from "../store.jsx";
 
 function NoticeCard({ n }) {
   return (
-    <a className={"notice-card" + (n.urgent ? " urgent" : "")} href={n.url || "#"} target="_blank" rel="noreferrer" style={{ textDecoration: "none", color: "inherit", display: "block" }}>
+    <a className="notice-card" href={n.url || "#"} target="_blank" rel="noreferrer">
       <div className="nc-head">
         <div className="nc-source">
-          {n.urgent && <span className="nc-urgent">URGENT</span>}
           <span className="nc-src-name">{n.source}</span>
           {n.dept && <><span className="nc-dot">•</span><span className="nc-dept">{n.dept}</span></>}
         </div>
-        <div className="nc-dates">
-          {n.deadlineLabel && (
-            <div className={"nc-deadline" + (n.deadlineWarm ? " warm" : "")}>
-              <Icon name="clock" size={13} /> {n.deadlineLabel}
-            </div>
-          )}
+        <div style={{ textAlign: "right" }}>
+          {n.deadlineLabel && <div className={"nc-deadline" + (n.deadlineWarm ? " warm" : "")}><Icon name="clock" size={13} /> {n.deadlineLabel}</div>}
           <div className="nc-reg">{n.reg}</div>
         </div>
       </div>
       <div className="nc-title">{n.title}</div>
       <div className="nc-body">{n.body}</div>
       <div className="nc-foot">
-        <div className="nc-tags">
-          <span className="tag nc-target">{n.target}</span>
-          {n.tags.map((t) => <span key={t} className="tag">{t}</span>)}
-        </div>
+        <span className="tag">{n.target}</span>
+        {n.tags.map((t) => <span key={t} className="tag">{t}</span>)}
       </div>
     </a>
   );
@@ -57,17 +50,15 @@ export function NoticesPage() {
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="제목·내용으로 검색..." />
       </div>
 
-      <div className="notices-filters">
-        <div className="cat-pills">
-          {NOTICE_CATEGORIES.map((c) => (
-            <button key={c} className={"cat-pill" + (cat === c ? " on" : "")} onClick={() => setCat(c)}>{c}</button>
-          ))}
-        </div>
+      <div className="cat-pills">
+        {NOTICE_CATEGORIES.map((c) => (
+          <button key={c} className={"cat-pill" + (cat === c ? " on" : "")} onClick={() => setCat(c)}>{c}</button>
+        ))}
       </div>
 
       <div className="notices-list">
         {filtered.map((n, i) => <NoticeCard key={i} n={n} />)}
-        {filtered.length === 0 && <div className="caption" style={{ textAlign: "center", padding: 40 }}>{err || (notices ? "표시할 공지사항이 없어요." : "불러오는 중...")}</div>}
+        {filtered.length === 0 && <div className="empty-msg">{err || (notices ? "표시할 공지사항이 없어요." : "불러오는 중...")}</div>}
       </div>
     </div>
   );

@@ -116,13 +116,23 @@ export async function getLmsTasks() {
     type: t.task_type,
     title: t.title,
     course: t.course_name || "기타",
-    due: t.due_date ? `~${t.due_date}` : "기한 없음",
+    due_date: t.due_date || null,   // ISO 문자열 또는 null — D-day는 화면에서 계산
+    url: t.url || null,
     progress: t.progress,
     done: t.is_done,
   }));
 }
 export async function saveInterests(interests) {
   return req("POST", "/api/me/interests", { interests });
+}
+export async function saveFavorites(favorite_courses) {
+  return req("POST", "/api/me/lms/favorites", { favorite_courses });
+}
+export async function setTaskDone(taskId, isDone) {
+  await req("POST", `/api/me/lms/tasks/${taskId}/done`, { is_done: isDone });
+}
+export async function deleteTask(taskId) {
+  await req("DELETE", `/api/me/lms/tasks/${taskId}`);
 }
 export async function getLmsCourses() {
   const r = await req("GET", "/api/me/lms/courses");
