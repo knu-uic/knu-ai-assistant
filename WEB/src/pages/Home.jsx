@@ -32,9 +32,9 @@ export function HomePage() {
         {MOCK.recommended.map((n, i) => <RecCard key={i} n={n} />)}
       </div>
 
-      <div className="home-2col">
-        <div className="card panel">
-          <div className="panel-head"><span style={{ display: "flex", alignItems: "center", gap: 9 }}><Icon name="clock" size={18} /> 다가오는 마감</span></div>
+      <div className="card panel" style={{ marginTop: 22 }}>
+        <div className="panel-head"><span style={{ display: "flex", alignItems: "center", gap: 9 }}><Icon name="clock" size={18} /> 다가오는 마감</span></div>
+        <div className="dl-scroll">
           {MOCK.deadlines.map((d, i) => (
             <div className="dl-row" key={i}>
               <span className={"dl-d " + (d.warm ? "warm" : "cool")}>{d.d}</span>
@@ -46,32 +46,32 @@ export function HomePage() {
             </div>
           ))}
         </div>
+      </div>
 
-        <div className="card panel">
-          <div className="panel-head">
-            <span style={{ display: "flex", alignItems: "center", gap: 9 }}><Icon name="calendar" size={18} /> 오늘 시간표</span>
-            {today.length > 0 && <span className="caption">{today.length}과목</span>}
-          </div>
-          {today.length === 0
-            ? <div className="tt-empty">{timetable ? "오늘은 수업이 없어요." : "포털을 연결하면 시간표가 표시됩니다."}</div>
-            : <div className="tt-scroll">
-                {today.map((c, i) => {
-                  const { name, room } = parseCell(c.name);
-                  return (
-                    <div className="tt-item" key={i}>
-                      <div className="tt-period">
-                        <div className="tt-no">{c.no}</div>
-                        <div className="tt-time">{c.time}</div>
-                      </div>
-                      <div className="tt-body">
-                        <div className="tt-name">{name}</div>
-                        {room && <div className="tt-room">{room}</div>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>}
+      <div className="card panel" style={{ marginTop: 18 }}>
+        <div className="panel-head">
+          <span style={{ display: "flex", alignItems: "center", gap: 9 }}><Icon name="calendar" size={18} /> 오늘 시간표</span>
+          {today.length > 0 && <span className="caption">{today.length}과목</span>}
         </div>
+        {today.length === 0
+          ? <div className="tt-empty">{timetable ? "오늘은 수업이 없어요." : "포털을 연결하면 시간표가 표시됩니다."}</div>
+          : <div className="tt-scroll">
+              {today.map((c, i) => {
+                const { name, room } = parseCell(c.name);
+                return (
+                  <div className="tt-item" key={i}>
+                    <div className="tt-period">
+                      <div className="tt-no">{c.no}</div>
+                      <div className="tt-time">{c.time}</div>
+                    </div>
+                    <div className="tt-body">
+                      <div className="tt-name">{name}</div>
+                      {room && <div className="tt-room">{room}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>}
       </div>
     </div>
   );
