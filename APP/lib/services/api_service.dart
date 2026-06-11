@@ -189,19 +189,49 @@ class ApiService {
   // ── 포털 동기화 ─────────────────────────────────────────────
 
   /// KNUIS 포털에서 시간표/성적/졸업정보를 서버 DB로 동기화.
-  /// 서버에서 Playwright 크롤러를 실행하므로 30~120초 소요.
+  ///
+  /// 서버가 30~120초 걸리는 크롤링을 백그라운드 잡으로 처리하므로,
+  /// 접수번호(job_id)를 받고 2초 간격으로 완료를 폴링한다.
+  /// 폴링 한 번 한 번은 짧은 요청이라 와이파이↔LTE 전환 등으로
+  /// 연결이 끊겨도 다음 폴링에서 자연 복구된다.
+  ///
+  /// [onProgress]는 "시간표 가져오는 중" 같은 진행 단계 문구를 전달한다
+  /// (UI 표시용, 선택).
   Future<PortalSyncResult> syncPortal({
     required String studentId,
     required String password,
+    void Function(String step)? onProgress,
   }) async {
     try {
-      final res = await _dio.post(
-        '/api/portal/sync',
+      final startRes = await _dio.post(
+        '/api/portal/sync/start',
         data: {'student_id': studentId, 'password': password},
       );
+      final jobId = (startRes.data as Map<String, dynamic>)['job_id'] as String;
 
-      final data = res.data as Map<String, dynamic>;
-      return PortalSyncResult.fromJson(data);
+      // 잡 타임아웃(서버 180초) + 여유. 초과 시 루프 종료 후 예외.
+      final deadline = DateTime.now().add(const Duration(seconds: 240));
+      while (DateTime.now().isBefore(deadline)) {
+        final res = await _dio.get('/api/portal/sync/$jobId');
+        final data = res.data as Map<String, dynamic>;
+        final status = data['status'] as String;
+
+        if (status == 'done') {
+          return PortalSyncResult.fromJson(
+            data['result'] as Map<String, dynamic>,
+          );
+        }
+        if (status == 'failed') {
+          throw ApiException(
+            (data['detail'] as String?) ?? '동기화에 실패했습니다.',
+          );
+        }
+        final step = data['step'] as String?;
+        if (step != null) onProgress?.call(step);
+
+        await Future.delayed(const Duration(seconds: 2));
+      }
+      throw ApiException('동기화 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.');
     } on DioException catch (e) {
       throw ApiException(_handleError(e));
     }
