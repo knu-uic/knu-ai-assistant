@@ -52,6 +52,78 @@ async def portal_sync(ctx: dict, username: str, student_id: str, enc_password: s
     return result
 
 
+def _run_lms_sync_blocking(username: str, student_id: str, password: str | None, on_step) -> dict:
+    """LMS 동기화 (sync, 스레드에서 실행).
+
+    분기:
+    - 비번 있음 → 로그인(브라우저)으로 세션 새로 발급·저장 → 동기화
+    - 비번 없음 + 저장된 세션 있음 → 세션만으로 동기화 (브라우저 없음)
+    - 비번 없음 + 세션 없음/만료 → needs_reconnect (앱이 비번 재제출)
+    """
+    import tempfile
+    from pathlib import Path
+
+    from sync.common import canvas_token_path
+    from sync.lms_login import login_with_credentials
+    from sync.lms_sync import run_lms_sync
+    from api.sessions import load_session, save_session
+
+    with tempfile.TemporaryDirectory() as tmp:
+        state_path = Path(tmp) / "lms_storage_state.json"
+        token_path = canvas_token_path(state_path)
+
+        session = load_session(username)
+        if session:
+            state_path.write_text(session["storage_state"], encoding="utf-8")
+            if session.get("canvas_token"):
+                token_path.write_text(session["canvas_token"], encoding="utf-8")
+
+        if password:
+            on_step("LMS 로그인 중")
+            login_with_credentials(student_id, password, state=str(state_path))
+
+        if not state_path.exists():
+            # 세션도 비번도 없음 — 앱에 재연결(비번 재제출) 요청
+            return {"success": False, "needs_reconnect": True,
+                    "message": "포털 재연결이 필요합니다."}
+
+        try:
+            result = run_lms_sync(student_id, state_path=state_path, on_step=on_step)
+        except Exception as e:
+            # 비번 없이 재사용한 세션이 만료된 경우 — 재연결 요청으로 안내
+            if not password:
+                return {"success": False, "needs_reconnect": True,
+                        "message": "세션이 만료되었습니다. 다시 연결해주세요."}
+            raise
+
+        # 로그인으로 세션이 갱신됐으면 Redis에 저장 (다음 동기화는 비번 없이)
+        if password and state_path.exists():
+            token = token_path.read_text(encoding="utf-8") if token_path.exists() else None
+            save_session(username, state_path.read_text(encoding="utf-8"), token)
+
+        return result
+
+
+async def lms_sync(ctx: dict, username: str, student_id: str, enc_password: str | None) -> dict:
+    from api.crypto import decrypt_secret
+
+    job_id = ctx.get("job_id", "")
+    r = redis_sync.from_url(REDIS_URL or "redis://localhost:6379")
+
+    def on_step(msg: str) -> None:
+        r.set(step_key(job_id), msg, ex=STEP_TTL_SECONDS)
+
+    password = decrypt_secret(enc_password) if enc_password else None
+    try:
+        return await asyncio.to_thread(
+            _run_lms_sync_blocking, username, student_id, password, on_step
+        )
+    finally:
+        if password:
+            del password
+        r.close()
+
+
 async def poll_notices(ctx: dict) -> dict:
     # 크롤+임베딩은 sync·장시간 작업 → 워커 이벤트루프 비블로킹 위해 스레드에서.
     # import도 여기서: 크롤러·임베딩(torch 등) 무거운 의존성을 잡 실행 시점에만 로드.
@@ -68,7 +140,7 @@ def _cron_minutes(interval: int) -> set[int]:
 
 
 class WorkerSettings:
-    functions = [portal_sync]
+    functions = [portal_sync, lms_sync]
     # 포털 동기화는 Playwright 동시 실행 RAM 피크 제한 — 워커당 잡 2개까지
     max_jobs = 2
     job_timeout = PORTAL_SYNC_TIMEOUT_SECONDS

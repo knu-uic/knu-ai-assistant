@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from db.pool import pool
 from api.deps import require_user
 from api.ratelimit import limiter
-from api.routers import auth, health, chat, notices, portal, search
+from api.routers import auth, health, chat, lms, notices, portal, search
 
 
 @asynccontextmanager
@@ -38,3 +38,4 @@ app.include_router(chat.router, prefix="/api", dependencies=[Depends(require_use
 app.include_router(notices.router, prefix="/api", dependencies=[Depends(require_user)])
 app.include_router(search.router, prefix="/api", dependencies=[Depends(require_user)])
 app.include_router(portal.router, prefix="/api", dependencies=[Depends(require_user)])
+app.include_router(lms.router, prefix="/api", dependencies=[Depends(require_user)])

@@ -500,8 +500,8 @@ def _sync_announcements(
             )
             title = item.get("title") or "LMS 공지"
             url = item.get("html_url")
-        if url and url.startswith("/"):
-            url = build_url(DEFAULT_LMS_URL, url)
+            if url and url.startswith("/"):
+                url = build_url(DEFAULT_LMS_URL, url)
 
             upsert_lms_task(
                 student_id=student_id,
@@ -686,6 +686,70 @@ def _sync_lecture_items(
     return count
 
 
+def run_lms_sync(
+    student_id_arg: str,
+    *,
+    state_path: Path,
+    url: str = DEFAULT_LMS_URL,
+    days: int = 45,
+    announcement_days: int = 14,
+    on_step=None,
+) -> dict:
+    """저장된 LMS 세션(state_path)으로 Canvas/LearningX 데이터를 동기화.
+
+    on_step: 진행 단계 콜백. 결과 dict는 동기화 건수 요약(success 포함).
+    세션 유효성은 호출 측(워커)이 보장한다 — 여기선 state_path를 신뢰한다.
+    """
+    def _step(msg: str) -> None:
+        if on_step:
+            try:
+                on_step(msg)
+            except Exception:
+                pass
+
+    ensure_users_schema()
+    with sync_playwright() as p:
+        _step("LMS 접속 중")
+        request = _request_context(p, url, state_path)
+        learningx = _learningx_session(url, state_path)
+        courses = _course_map(request)
+        student_id, profile = _sync_user_profile(request, student_id_arg, courses)
+        # lms_courses FK(student_id → users) 위반 방지: 없을 때만 기본값으로 삽입
+        if get_user(student_id) is None:
+            upsert_user(student_id=student_id, name="이름 미설정", major="", year=None)
+        _step("과목 동기화 중")
+        course_count = _sync_courses(student_id, courses)
+        _sync_favorite_courses(request, student_id)
+        _step("할 일 동기화 중")
+        todo_count = _sync_todo_items(request, student_id, courses)
+        planner_count = _sync_planner_items(request, student_id, courses, days)
+        _step("공지 동기화 중")
+        announcement_count = _sync_announcements(request, student_id, courses, announcement_days)
+        _step("강의 동기화 중")
+        lecture_count = _sync_lecture_items(request, student_id, courses, learningx, url)
+        request.dispose()
+
+    message = (
+        "LMS 동기화 완료: "
+        f"{profile.get('name') or student_id} · "
+        f"과목 {course_count}개, planner {planner_count}건, todo {todo_count}건, "
+        f"공지 {announcement_count}건, 남은 강의 {lecture_count}건"
+    )
+    print(message)
+    return {
+        "success": True,
+        "message": message,
+        "student_id": student_id,
+        "name": profile.get("name"),
+        "login_id": profile.get("login_id"),
+        "course_count": course_count,
+        "planner_count": planner_count,
+        "todo_count": todo_count,
+        "announcement_count": announcement_count,
+        "lecture_count": lecture_count,
+    }
+
+
 def main() -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(description="Canvas API 기반 LMS 할 일 동기화")
@@ -704,54 +768,20 @@ def main() -> int:
             "먼저 `python3 sync/lms_login.py`로 로그인하거나 CANVAS_ACCESS_TOKEN을 설정하세요."
         )
 
-    ensure_users_schema()
-    with sync_playwright() as p:
-        request = _request_context(p, args.url, state_path)
-        learningx = _learningx_session(args.url, state_path)
-        courses = _course_map(request)
-        student_id, profile = _sync_user_profile(request, args.student_id, courses)
-        # lms_courses FK(student_id → users) 위반 방지: 기존 user row가 있으면 덮어쓰지 않고, 없을 때만 기본값으로 삽입
-        if get_user(student_id) is None:
-            upsert_user(
-                student_id=student_id,
-                name="이름 미설정",
-                major="",
-                year=None,
-            )
-        course_count = _sync_courses(student_id, courses)
-        _sync_favorite_courses(request, student_id)
-        todo_count = _sync_todo_items(request, student_id, courses)
-        planner_count = _sync_planner_items(request, student_id, courses, args.days)
-        announcement_count = _sync_announcements(
-            request,
-            student_id,
-            courses,
-            args.announcement_days,
-        )
-        lecture_count = _sync_lecture_items(
-            request,
-            student_id,
-            courses,
-            learningx,
-            args.url,
-        )
-        request.dispose()
-
-    current_user_path = Path(args.current_user_file)
-    write_json(
-        current_user_path,
-        {
-            "student_id": student_id,
-            "name": profile.get("name"),
-            "login_id": profile.get("login_id"),
-        },
+    result = run_lms_sync(
+        args.student_id,
+        state_path=state_path,
+        url=args.url,
+        days=args.days,
+        announcement_days=args.announcement_days,
     )
-
-    print(
-        "LMS 동기화 완료: "
-        f"{profile.get('name') or student_id} · "
-        f"과목 {course_count}개, planner {planner_count}건, todo {todo_count}건, "
-        f"공지 {announcement_count}건, 남은 강의 {lecture_count}건"
+    write_json(
+        Path(args.current_user_file),
+        {
+            "student_id": result["student_id"],
+            "name": result["name"],
+            "login_id": result["login_id"],
+        },
     )
     return 0
 
