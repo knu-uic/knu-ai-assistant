@@ -337,3 +337,57 @@ body { font-size: 17px; }
 .search-bar { padding: 14px 18px; margin-top: 26px; }
 .search-bar input { font-size: 16px; }
 .cat-pill { padding: 9px 18px; font-size: 14px; }
+
+/* ============================================================
+   2차 확대 — 시간표 크게 + 전체 한 단계 더
+   ============================================================ */
+body { font-size: 18px; }
+
+/* 시간표: 홈 오늘목록 */
+.tt-item { padding: 16px 0; gap: 16px; }
+.tt-item.now { padding: 16px 16px; }
+.tt-period { font-size: 15px; width: 56px; flex: 0 0 56px; }
+.tt-name { font-size: 18px; }
+.tt-empty { padding: 36px; font-size: 16px; }
+
+/* 시간표: 포털 주간 격자 — 셀 크게, 글자 키움 */
+.week-grid { font-size: 15px; }
+.week-grid th { padding: 14px 8px; font-size: 14px; }
+.week-grid td { height: 58px; padding: 6px; }
+.week-grid td.wperiod { width: 56px; font-size: 14px; }
+.wcell { font-size: 14px; padding: 8px 6px; border-radius: 8px; line-height: 1.35; }
+
+/* 포털 성적 테이블도 크게 */
+.data-table, .grad-table { font-size: 14.5px; }
+.data-table th, .grad-table th { padding: 12px 12px; font-size: 14px; }
+.data-table td, .grad-table td { padding: 11px 12px; }
+
+/* 전반 한 단계 더 */
+.page-title { font-size: 34px; }
+.page-sub { font-size: 17px; }
+.greet { font-size: 38px; }
+.sub-h { font-size: 23px; }
+.section-title { font-size: 22px; }
+.nav-item { font-size: 17px; padding: 13px 16px; }
+.brand-name { font-size: 20px; }
+.sidebar { width: 264px; flex: 0 0 264px; }
+
+.lm-count { font-size: 36px; }
+.lm-label { font-size: 15px; }
+.task-title { font-size: 16.5px; }
+.task-meta { font-size: 13.5px; }
+.exp-name { font-size: 17px; }
+.course-name { font-size: 17px; }
+.tab { font-size: 16px; padding: 13px 18px; }
+
+.nc-title { font-size: 19px; }
+.nc-body { font-size: 15.5px; }
+.rec-title { font-size: 17.5px; }
+.rec-body { font-size: 15px; }
+.dl-title { font-size: 16px; }
+.tag { font-size: 13px; padding: 4px 11px; }
+
+.field-input { font-size: 16px; padding: 13px 15px; }
+.btn { font-size: 15.5px; padding: 11px 20px; }
+.kw-pill { font-size: 15.5px; padding: 11px 20px; }
+.user-msg, .bot-bubble { font-size: 16.5px; }
