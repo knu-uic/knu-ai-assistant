@@ -46,12 +46,13 @@ function TaskCard({ t, onToggle, onDelete }) {
   );
 }
 
-function Expander({ name, children }) {
+function Expander({ name, count, doneCount, children }) {
   const [open, setOpen] = useState(false);
   return (
     <div className={"expander" + (open ? " open" : "")}>
       <button className="exp-head" onClick={() => setOpen(!open)}>
         <span className="exp-name">{name}</span>
+        {count > 0 && <span className="exp-count">{count}건{doneCount > 0 ? ` · 완료 ${doneCount}` : ""}</span>}
         <Icon name="chevron" size={16} className="exp-chev" />
       </button>
       {open && <div className="exp-body">{children}</div>}
@@ -102,10 +103,12 @@ export function LmsPage() {
     if (favorites.length === 0)
       return <div className="empty-msg">즐겨찾기한 과목이 없어요. '과목' 탭에서 별표를 눌러 추가하세요.</div>;
     return [...favorites].sort().map((cname) => {
-      let items = visible(tasks.filter((t) => t.type === type && t.course === cname));
+      const courseTasks = tasks.filter((t) => t.type === type && t.course === cname);
+      let items = visible(courseTasks);
       if (type === "notice") items = items.sort((a, b) => (b.due_date || "").localeCompare(a.due_date || ""));
+      const doneCount = courseTasks.filter((t) => t.done).length;
       return (
-        <Expander key={cname} name={cname}>
+        <Expander key={cname} name={cname} count={items.length} doneCount={showDone ? doneCount : 0}>
           {items.length === 0
             ? <div className="caption" style={{ padding: "8px 4px" }}>{empty}</div>
             : items.map((t) => <TaskCard key={t.id} t={t} onToggle={toggleTaskDone} onDelete={removeTask} />)}
