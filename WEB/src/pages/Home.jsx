@@ -53,7 +53,10 @@ export function HomePage() {
             ? <div className="tt-empty">{timetable ? "오늘은 수업이 없어요." : "포털을 연결하면 시간표가 표시됩니다."}</div>
             : today.map((c, i) => (
                 <div className="tt-item" key={i}>
-                  <span className="tt-period">{c.period}</span>
+                  <div className="tt-period">
+                    <div className="tt-no">{c.no}</div>
+                    <div className="tt-time">{c.time}</div>
+                  </div>
                   <span className="tt-name">{c.name}</span>
                 </div>
               ))}

@@ -5,27 +5,28 @@ import { weekGrid } from "../timetable.js";
 
 function WeekTimetable({ timetable }) {
   const grid = weekGrid(timetable);
-  if (!grid) return null;
+  if (!grid || grid.rows.length === 0) return null;
   return (
     <>
       <h2 className="sub-h"><Icon name="calendar" size={19} /> 주간 시간표</h2>
-      <div className="card flush" style={{ marginTop: 10 }}>
-        <div className="grad-scroll">
-          <table className="week-grid">
-            <thead><tr>{grid.header.map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
-            <tbody>
-              {grid.body.map((row, ri) => (
-                <tr key={ri}>
-                  {row.map((cell, ci) =>
-                    ci === 0
-                      ? <td key={ci} className="wperiod">{cell}</td>
-                      : <td key={ci}>{cell ? <div className="wcell">{cell}</div> : null}</td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="card" style={{ marginTop: 10, padding: 10 }}>
+        <table className="week-grid">
+          <colgroup>
+            <col style={{ width: "64px" }} />
+            {grid.days.map((_, i) => <col key={i} style={{ width: `${100 / grid.days.length}%` }} />)}
+          </colgroup>
+          <thead><tr><th>교시</th>{grid.days.map((d) => <th key={d}>{d}</th>)}</tr></thead>
+          <tbody>
+            {grid.rows.map((row, ri) => (
+              <tr key={ri}>
+                <td className="wperiod"><div className="wp-no">{row.no}</div><div className="wp-time">{row.time}</div></td>
+                {row.cells.map((cell, ci) => (
+                  <td key={ci}>{cell ? <div className="wcell">{cell}</div> : null}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </>
   );

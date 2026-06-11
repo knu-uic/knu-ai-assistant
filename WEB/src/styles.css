@@ -391,3 +391,58 @@ body { font-size: 18px; }
 .btn { font-size: 15.5px; padding: 11px 20px; }
 .kw-pill { font-size: 15.5px; padding: 11px 20px; }
 .user-msg, .bot-bubble { font-size: 16.5px; }
+
+/* ============================================================
+   적정 크기 재조정 (100% 줌 기준) + 시간표 정리 — 최종 override
+   ============================================================ */
+body { font-size: 15px; }
+.main-inner { padding: 40px 44px 64px; }
+.page-title { font-size: 27px; }
+.page-sub { font-size: 14.5px; margin-top: 8px; }
+.greet { font-size: 30px; }
+.sub-h { font-size: 19px; }
+.section-title { font-size: 19px; }
+.nav-item { font-size: 15px; padding: 11px 14px; }
+.brand-name { font-size: 18px; }
+.sidebar { width: 240px; flex: 0 0 240px; padding: 22px 16px; }
+
+.panel { padding: 22px; }
+.panel-head { font-size: 15.5px; margin-bottom: 14px; }
+.rec-card { padding: 18px; }
+.notice-card { padding: 20px 22px; }
+.set-card, .profile-head { padding: 24px; }
+.lms-metric { padding: 18px 20px; }
+.lm-count { font-size: 30px; }
+.lm-label { font-size: 13.5px; }
+.nc-title { font-size: 16.5px; }
+.nc-body { font-size: 14px; }
+.rec-title { font-size: 15.5px; }
+.rec-body { font-size: 13.5px; }
+.dl-title { font-size: 14.5px; }
+.task-title { font-size: 14.5px; }
+.exp-name { font-size: 15px; }
+.course-name { font-size: 15px; }
+.tab { font-size: 14.5px; padding: 11px 16px; }
+.field-input { font-size: 14.5px; padding: 11px 13px; }
+.btn { font-size: 14px; padding: 10px 17px; }
+.kw-pill { font-size: 14px; padding: 9px 16px; }
+.user-msg, .bot-bubble { font-size: 15px; }
+
+/* ── 홈 오늘 시간표 (교시/시간 분리, 깔끔) ── */
+.tt-item { padding: 13px 0; gap: 14px; align-items: center; }
+.tt-item.now { padding: 13px 12px; }
+.tt-period { width: 64px; flex: 0 0 64px; }
+.tt-no { font-size: 13.5px; font-weight: 700; color: var(--blue); }
+.tt-time { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.tt-name { font-size: 15px; font-weight: 600; color: var(--ink); }
+.tt-empty { padding: 30px; font-size: 14px; }
+
+/* ── 포털 주간 격자 (고정폭·평일만·교시 컴팩트) ── */
+.week-grid { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 12.5px; }
+.week-grid th { background: #f4f7fb; color: #5b6478; font-weight: 700; padding: 10px 6px; font-size: 13px; border-bottom: 1px solid var(--line); }
+.week-grid td { padding: 4px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); vertical-align: middle; text-align: center; }
+.week-grid td:last-child { border-right: none; }
+.week-grid td.wperiod { background: #fafbfd; }
+.wp-no { font-size: 12.5px; font-weight: 700; color: var(--muted); }
+.wp-time { font-size: 10.5px; color: var(--muted-2); margin-top: 2px; }
+.wcell { background: var(--blue-soft); color: var(--blue); border-radius: 7px; padding: 8px 5px; font-weight: 600; font-size: 11.5px; line-height: 1.3; min-height: 44px; display: flex; align-items: center; justify-content: center; }
