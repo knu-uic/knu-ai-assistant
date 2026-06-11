@@ -20,6 +20,15 @@ function parsePeriod(raw) {
   return { no: no ? `${no}교시` : s.trim(), time: (time || "").replace(/\s/g, "") };
 }
 
+/* "확률통계(03 김영부) 9공710" → { name: "확률통계(03 김영부)", room: "9공710" }
+   괄호로 끝나는 과목·교수 뒤의 나머지를 강의실로 분리. 괄호 없으면 전체가 name. */
+export function parseCell(raw) {
+  const s = String(raw || "").trim();
+  const m = s.match(/^(.*\))\s*(.+)$/);
+  if (m) return { name: m[1], room: m[2] };
+  return { name: s, room: "" };
+}
+
 /* 평일 컬럼 인덱스만: [{idx, label}] (월~금) */
 function weekdayCols(header) {
   const cols = [];

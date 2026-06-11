@@ -1,7 +1,17 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Icon } from "../icons.jsx";
 import { useApp } from "../store.jsx";
-import { weekGrid } from "../timetable.js";
+import { weekGrid, parseCell } from "../timetable.js";
+
+function Cell({ raw }) {
+  const { name, room } = parseCell(raw);
+  return (
+    <div className="wcell">
+      <div className="wcell-name">{name}</div>
+      {room && <div className="wcell-room">{room}</div>}
+    </div>
+  );
+}
 
 function WeekTimetable({ timetable }) {
   const grid = weekGrid(timetable);
@@ -12,7 +22,7 @@ function WeekTimetable({ timetable }) {
       <div className="card" style={{ marginTop: 10, padding: 10 }}>
         <table className="week-grid">
           <colgroup>
-            <col style={{ width: "64px" }} />
+            <col style={{ width: "92px" }} />
             {grid.days.map((_, i) => <col key={i} style={{ width: `${100 / grid.days.length}%` }} />)}
           </colgroup>
           <thead><tr><th>교시</th>{grid.days.map((d) => <th key={d}>{d}</th>)}</tr></thead>
@@ -21,7 +31,7 @@ function WeekTimetable({ timetable }) {
               <tr key={ri}>
                 <td className="wperiod"><div className="wp-no">{row.no}</div><div className="wp-time">{row.time}</div></td>
                 {row.cells.map((cell, ci) => (
-                  <td key={ci}>{cell ? <div className="wcell">{cell}</div> : null}</td>
+                  <td key={ci}>{cell ? <Cell raw={cell} /> : null}</td>
                 ))}
               </tr>
             ))}
@@ -107,19 +117,33 @@ function CreditTable({ grid }) {
   );
 }
 
-function GenericGrids({ data }) {
-  const grids = data?.grids || {};
-  const entries = Object.entries(grids);
-  if (entries.length === 0) return null;
-  return entries.map(([gid, g]) => (
-    <div key={gid} style={{ marginTop: 18 }}>
-      {g.title && <div className="table-label">{g.title}</div>}
+function GridTable({ g }) {
+  const cols = g.columns || [];
+  const rows = g.rows || [];
+  // "년도" 컬럼이 있으면 연도 필터 드롭다운 제공
+  const yearIdx = cols.findIndex((c) => String(c).includes("년도") || String(c).includes("연도"));
+  const years = yearIdx >= 0 ? [...new Set(rows.map((r) => String(r[yearIdx])))].sort() : [];
+  const [year, setYear] = useState("전체");
+  const shown = yearIdx >= 0 && year !== "전체"
+    ? rows.filter((r) => String(r[yearIdx]) === year)
+    : rows;
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div className="row-between" style={{ marginBottom: 8 }}>
+        {g.title ? <div className="table-label" style={{ margin: 0 }}>{g.title}</div> : <span />}
+        {years.length > 1 && (
+          <select className="year-select" value={year} onChange={(e) => setYear(e.target.value)}>
+            <option value="전체">전체 연도</option>
+            {years.map((y) => <option key={y} value={y}>{y}년</option>)}
+          </select>
+        )}
+      </div>
       <div className="card flush">
         <div className="grad-scroll">
           <table className="data-table">
-            <thead><tr>{(g.columns || []).map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
+            <thead><tr>{cols.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
             <tbody>
-              {(g.rows || []).map((row, ri) => (
+              {shown.map((row, ri) => (
                 <tr key={ri}>{row.map((v, ci) => <td key={ci}>{v}</td>)}</tr>
               ))}
             </tbody>
@@ -127,7 +151,13 @@ function GenericGrids({ data }) {
         </div>
       </div>
     </div>
-  ));
+  );
+}
+
+function GenericGrids({ data }) {
+  const entries = Object.entries(data?.grids || {});
+  if (entries.length === 0) return null;
+  return entries.map(([gid, g]) => <GridTable key={gid} g={g} />);
 }
 
 export function PortalPage() {

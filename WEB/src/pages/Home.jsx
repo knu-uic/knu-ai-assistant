@@ -2,7 +2,7 @@ import React, { useEffect } from "react";
 import { Icon } from "../icons.jsx";
 import { MOCK } from "../api.js";
 import { useApp } from "../store.jsx";
-import { todayClasses } from "../timetable.js";
+import { todayClasses, parseCell } from "../timetable.js";
 
 function RecCard({ n }) {
   return (
@@ -51,15 +51,21 @@ export function HomePage() {
           <div className="panel-head"><span style={{ display: "flex", alignItems: "center", gap: 9 }}><Icon name="calendar" size={18} /> 오늘 시간표</span></div>
           {today.length === 0
             ? <div className="tt-empty">{timetable ? "오늘은 수업이 없어요." : "포털을 연결하면 시간표가 표시됩니다."}</div>
-            : today.map((c, i) => (
-                <div className="tt-item" key={i}>
-                  <div className="tt-period">
-                    <div className="tt-no">{c.no}</div>
-                    <div className="tt-time">{c.time}</div>
+            : today.map((c, i) => {
+                const { name, room } = parseCell(c.name);
+                return (
+                  <div className="tt-item" key={i}>
+                    <div className="tt-period">
+                      <div className="tt-no">{c.no}</div>
+                      <div className="tt-time">{c.time}</div>
+                    </div>
+                    <div className="tt-body">
+                      <div className="tt-name">{name}</div>
+                      {room && <div className="tt-room">{room}</div>}
+                    </div>
                   </div>
-                  <span className="tt-name">{c.name}</span>
-                </div>
-              ))}
+                );
+              })}
         </div>
       </div>
     </div>
