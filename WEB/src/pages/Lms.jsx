@@ -52,12 +52,7 @@ function Expander({ name, count, children }) {
     <div className={"expander" + (open ? " open" : "")}>
       <button className="exp-head" onClick={() => setOpen(!open)}>
         <span className="exp-name">{name}</span>
-        {count > 0 && (
-          <span className="exp-dots" title={`${count}건`}>
-            {Array.from({ length: Math.min(count, 6) }).map((_, i) => <span key={i} className="dot" />)}
-            {count > 6 && <span className="dot-more">+{count - 6}</span>}
-          </span>
-        )}
+        {count > 0 && <span className="exp-dot" title={`${count}건`} />}
         <Icon name="chevron" size={16} className="exp-chev" />
       </button>
       {open && <div className="exp-body">{children}</div>}
