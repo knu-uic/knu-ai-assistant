@@ -283,6 +283,9 @@ PORTAL_SYNC_ENC_KEY = os.getenv("PORTAL_SYNC_ENC_KEY")
 # 포털 동기화 잡 제한 시간(초). Playwright 로그인+파싱 전체.
 PORTAL_SYNC_TIMEOUT_SECONDS = _env_int("PORTAL_SYNC_TIMEOUT_SECONDS", 180)
 
+# LMS 세션(쿠키+토큰) Redis 보관 기간(일). 만료 시 다음 동기화에 비번 재제출 필요.
+LMS_SESSION_TTL_DAYS = _env_int("LMS_SESSION_TTL_DAYS", 7)
+
 RATE_LIMIT_SIGNUP_REQUEST = os.getenv("RATE_LIMIT_SIGNUP_REQUEST", "3/minute")
 RATE_LIMIT_AUTH = os.getenv("RATE_LIMIT_AUTH", "10/minute")
 RATE_LIMIT_CHAT = os.getenv("RATE_LIMIT_CHAT", "5/minute;150/day")
