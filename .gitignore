@@ -64,3 +64,16 @@ app.*.map.json
 
 # Flutter IDE files
 *.iml
+
+# 에디터/툴 설정
+.vscode/
+.claude/
+
+# 바이브코딩 부수 산출물 — 깃 추적 제외
+.superpowers/
+docs/superpowers/
+
+# SERVER 테스트·참조앱
+SERVER/.vscode/
+SERVER/tests/
+SERVER/test_streamlit/

@@ -12,12 +12,18 @@ from typing import AsyncIterator
 from retrieval.graph import GRAPH
 
 
+# 최종 답변을 생성하는 노드들 — 이 노드의 LLM 토큰만 클라이언트로 흘린다.
+# (router·verifier의 LLM 호출 토큰은 답변이 아니므로 제외)
+_ANSWER_NODES = {"answerer", "broad_answerer", "smalltalk"}
+
+
 async def graph_events(
     question: str, major: str | None
 ) -> AsyncIterator[tuple[str, dict]]:
-    """("step"|"answer"|"error", payload) 튜플을 순서대로 내보낸다.
+    """("step"|"token"|"answer"|"error", payload) 튜플을 순서대로 내보낸다.
 
     - step: 노드 하나 완료 {"node": 이름, "status": "done"}
+    - token: 답변 노드의 LLM 토큰 한 조각 {"text": ...}
     - answer: 최종 누적 state (flat 매핑은 라우터 책임)
     - error: 파이프라인 예외 (유저용 메시지는 라우터에서 생성)
     """
@@ -30,12 +36,19 @@ async def graph_events(
     def _run() -> None:
         state: dict = {}
         try:
-            for update in GRAPH.stream(
-                {"question": question, "major": major}, stream_mode="updates"
+            for mode, chunk in GRAPH.stream(
+                {"question": question, "major": major},
+                stream_mode=["updates", "messages"],
             ):
-                for node, delta in update.items():
-                    state.update(delta or {})
-                    _put(("step", {"node": node, "status": "done"}))
+                if mode == "updates":
+                    for node, delta in chunk.items():
+                        state.update(delta or {})
+                        _put(("step", {"node": node, "status": "done"}))
+                elif mode == "messages":
+                    msg, meta = chunk
+                    text = getattr(msg, "content", "")
+                    if text and meta.get("langgraph_node") in _ANSWER_NODES:
+                        _put(("token", {"text": text}))
             _put(("answer", state))
         except Exception:
             traceback.print_exc()

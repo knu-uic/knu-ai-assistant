@@ -506,3 +506,9 @@ a.rec-card { display: block; text-decoration: none; color: inherit; transition: 
 a.rec-card:hover { border-color: #cadcf2; box-shadow: 0 4px 16px rgba(21,83,156,.10); }
 a.dl-row { text-decoration: none; color: inherit; }
 a.dl-row:hover .dl-title { color: var(--blue); }
+
+/* 챗봇 답변 링크 + 스트리밍 캐럿 */
+.ans-intro a { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
+.ans-intro a:hover { color: var(--blue-d); }
+.stream-caret { display: inline-block; width: 7px; height: 1.05em; margin-left: 2px; vertical-align: -2px; background: var(--blue); opacity: .8; animation: caretBlink 1s step-start infinite; }
+@keyframes caretBlink { 50% { opacity: 0; } }
