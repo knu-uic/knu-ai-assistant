@@ -17,6 +17,7 @@ export function AppProvider({ children }) {
   const [lmsCourses, setLmsCourses] = useState(null);
   const [portalData, setPortalData] = useState(null);
   const [timetable, setTimetable] = useState(null);
+  const [home, setHome] = useState(null);
   const [chatMsgs, setChatMsgs] = useState([]);
 
   const refreshProfile = useCallback(async () => {
@@ -48,6 +49,7 @@ export function AppProvider({ children }) {
     setLmsCourses(null);
     setPortalData(null);
     setTimetable(null);
+    setHome(null);
   }, []);
 
   // lazy 로더 — 캐시 있으면 그대로, 없으면 fetch
@@ -72,6 +74,13 @@ export function AppProvider({ children }) {
     return d;
   }, [portalData]);
 
+  const loadHome = useCallback(async (force) => {
+    if (home && !force) return home;
+    const h = await api.getHome();
+    setHome(h);
+    return h;
+  }, [home]);
+
   const loadTimetable = useCallback(async (force) => {
     if (timetable && !force) return timetable;
     const t = await api.getMeTimetable();
@@ -82,6 +91,7 @@ export function AppProvider({ children }) {
   const saveInterests = useCallback(async (interests) => {
     const p = await api.saveInterests(interests);
     setProfile(p);
+    setHome(null);  // 관심사 바뀌면 추천 순서 달라짐 → 다음 진입 시 재조회
   }, []);
 
   const saveFavorites = useCallback(async (favs) => {
@@ -123,6 +133,7 @@ export function AppProvider({ children }) {
     lmsTasks, lmsCourses, loadLms,
     portalData, loadPortal,
     timetable, loadTimetable,
+    home, loadHome,
     saveInterests, saveFavorites, toggleTaskDone, removeTask,
     syncPortal, syncLms,
     setLmsTasks,

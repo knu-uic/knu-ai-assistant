@@ -71,15 +71,9 @@ export async function askChatbot(question, major) {
 }
 
 // ── 공지 ──────────────────────────────────────────────
-const CATEGORY_LABEL = {
-  scholarship: "Scholarship",
-  academic: "Academic",
-  career: "Employment",
-  event: "Event",
-  etc: "General",
-};
+// 백엔드 category는 한글 그대로("장학"/"수강"/"취업(진로)"/"행사(공모전)"/"일반(기타)").
 export async function getNotices() {
-  const r = await req("GET", "/api/notices?limit=30");
+  const r = await req("GET", "/api/notices?limit=100");
   return (r.notices || []).map((n) => ({
     urgent: false,
     source: n.source_name || "공지",
@@ -92,7 +86,7 @@ export async function getNotices() {
     target: (n.target && n.target[0]) || "전체",
     tags: (n.keywords || []).slice(0, 3).map((k) => `# ${k}`),
     attachments: [],
-    category: CATEGORY_LABEL[n.category] || "General",
+    category: n.category || "일반(기타)",
     url: n.url,
   }));
 }
@@ -134,6 +128,31 @@ export async function setTaskDone(taskId, isDone) {
 export async function deleteTask(taskId) {
   await req("DELETE", `/api/me/lms/tasks/${taskId}`);
 }
+export async function getHome() {
+  const r = await req("GET", "/api/me/home");
+  return {
+    recommended: (r.recommended || []).map((n) => ({
+      title: n.title,
+      body: n.summary || "",
+      url: n.url,
+      d: n.d_label,
+      warm: n.days_left != null && n.days_left <= 3,
+      tags: [
+        ...(n.category ? [`# ${n.category}`] : []),
+        ...(n.matched_keywords || []).map((k) => `# ${k}`),
+      ],
+    })),
+    deadlines: (r.deadlines || []).map((d) => ({
+      title: d.title,
+      url: d.url,
+      sub: d.end_date ? `마감 ${d.end_date}` : "",
+      cat: d.category || "",
+      d: d.d_label,
+      warm: d.days_left != null && d.days_left <= 3,
+    })),
+  };
+}
+
 export async function getLmsCourses() {
   const r = await req("GET", "/api/me/lms/courses");
   return (r.courses || []).map((c) => ({
@@ -179,26 +198,12 @@ export async function syncLms(studentId, password, onStep) {
 }
 
 // ── 정적/상수 + 목업(엔드포인트 없음 — 다음 작업) ──────
-export const NOTICE_CATEGORIES = ["All", "Academic", "Employment", "Event", "General"];
+export const NOTICE_CATEGORIES = ["전체", "장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"];
 export const INTEREST_KEYWORD_POOL = [
   "인턴", "장학금", "캡스톤", "해커톤", "교환학생",
   "공모전", "근로장학", "특강", "동아리", "취업박람회",
 ];
 export const MAX_INTERESTS = 6;
-
-// 홈 추천공지·마감은 집계 API 미구현 — 목업 유지(TODO: 백엔드 집계 엔드포인트)
-export const MOCK = {
-  recommended: [
-    { d: "D-5", warm: false, title: "Global Exchange Scholarship Program", body: "가을학기 교환학생 프로그램 신청이 시작되었습니다.", tags: ["#Scholarship", "#Global"] },
-    { d: "D-2", warm: true, active: true, title: "AI Research Lab Assistant Recruitment", body: "NLP·컴퓨터비전 팀 학부 연구원을 모집합니다.", tags: ["#Research", "#AI"] },
-    { d: "D-12", warm: false, title: "Spring Festival Volunteer Registration", body: "봄 축제 운영 자원봉사자를 모집합니다.", tags: ["#Volunteer", "#CampusLife"] },
-  ],
-  deadlines: [
-    { d: "D-1", warm: true, title: "자료구조 과제 #3", sub: "LMS 제출", cat: "전공" },
-    { d: "D-2", warm: false, title: "수강 정정 마감", sub: "포털", cat: "학사" },
-    { d: "D-5", warm: false, title: "교환학생 장학금", sub: "포털 신청", cat: "장학" },
-  ],
-};
 
 export const chatSuggestions = [
   { icon: "coins", label: "장학금 정보 알려줘" },

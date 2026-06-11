@@ -1,24 +1,28 @@
 import React, { useEffect } from "react";
 import { Icon, Crest } from "../icons.jsx";
-import { MOCK } from "../api.js";
 import { useApp } from "../store.jsx";
 import { todayClasses, parseCell } from "../timetable.js";
 
 function RecCard({ n }) {
-  return (
-    <div className={"rec-card" + (n.active ? " active" : "")}>
-      <span className={"badge-d " + (n.warm ? "warm" : "cool")}>{n.d}</span>
+  const card = (
+    <>
+      {n.d && <span className={"badge-d " + (n.warm ? "warm" : "cool")}>{n.d}</span>}
       <div className="rec-title">{n.title}</div>
       <div className="rec-body">{n.body}</div>
       <div className="rec-tags">{n.tags.map((t) => <span key={t} className="tag">{t}</span>)}</div>
-    </div>
+    </>
   );
+  return n.url
+    ? <a className="rec-card" href={n.url} target="_blank" rel="noreferrer">{card}</a>
+    : <div className="rec-card">{card}</div>;
 }
 
 export function HomePage() {
-  const { profile, timetable, loadTimetable } = useApp();
-  useEffect(() => { loadTimetable(); }, [loadTimetable]);
+  const { profile, timetable, loadTimetable, home, loadHome } = useApp();
+  useEffect(() => { loadTimetable(); loadHome(); }, [loadTimetable, loadHome]);
   const today = todayClasses(timetable);
+  const recommended = home?.recommended || [];
+  const deadlines = home?.deadlines || [];
 
   return (
     <div className="main-inner wide">
@@ -35,24 +39,28 @@ export function HomePage() {
       <div className="row-between" style={{ marginTop: 30 }}>
         <h2 className="section-title">추천 공지</h2>
       </div>
-      <div className="rec-grid">
-        {MOCK.recommended.map((n, i) => <RecCard key={i} n={n} />)}
-      </div>
+      {recommended.length === 0
+        ? <div className="tt-empty">{home ? "아직 추천할 공지가 충분히 모이지 않았어요. 설정에서 관심사를 등록해보세요." : "불러오는 중..."}</div>
+        : <div className="rec-grid">
+            {recommended.map((n, i) => <RecCard key={n.url || i} n={n} />)}
+          </div>}
 
       <div className="card panel" style={{ marginTop: 22 }}>
         <div className="panel-head"><span style={{ display: "flex", alignItems: "center", gap: 9 }}><Icon name="clock" size={18} /> 다가오는 마감</span></div>
-        <div className="dl-scroll">
-          {MOCK.deadlines.map((d, i) => (
-            <div className="dl-row" key={i}>
-              <span className={"dl-d " + (d.warm ? "warm" : "cool")}>{d.d}</span>
-              <div className="dl-main">
-                <div className="dl-title">{d.title}</div>
-                <div className="dl-sub">{d.sub}</div>
-              </div>
-              <span className="tag">{d.cat}</span>
-            </div>
-          ))}
-        </div>
+        {deadlines.length === 0
+          ? <div className="tt-empty">{home ? "30일 안에 마감되는 공지가 없어요." : "불러오는 중..."}</div>
+          : <div className="dl-scroll">
+              {deadlines.map((d, i) => (
+                <a className="dl-row" key={d.url || i} href={d.url} target="_blank" rel="noreferrer">
+                  <span className={"dl-d " + (d.warm ? "warm" : "cool")}>{d.d}</span>
+                  <div className="dl-main">
+                    <div className="dl-title">{d.title}</div>
+                    <div className="dl-sub">{d.sub}</div>
+                  </div>
+                  {d.cat && <span className="tag">{d.cat}</span>}
+                </a>
+              ))}
+            </div>}
       </div>
 
       <div className="card panel" style={{ marginTop: 18 }}>

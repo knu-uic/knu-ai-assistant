@@ -28,14 +28,14 @@ function NoticeCard({ n }) {
 
 export function NoticesPage() {
   const { notices, loadNotices } = useApp();
-  const [cat, setCat] = useState("All");
+  const [cat, setCat] = useState("전체");
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
   useEffect(() => { loadNotices().catch((e) => setErr(e.message)); }, [loadNotices]);
 
   const list = notices || [];
   const filtered = list.filter((n) => {
-    if (cat !== "All" && n.category !== cat) return false;
+    if (cat !== "전체" && n.category !== cat) return false;
     if (q && !(n.title + n.body).toLowerCase().includes(q.toLowerCase())) return false;
     return true;
   });
