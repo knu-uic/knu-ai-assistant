@@ -7,7 +7,7 @@ const NAV = [
   { id: "lms", icon: "book", label: "LMS" },
   { id: "portal", icon: "landmark", label: "포털" },
   { id: "chatbot", icon: "bot", label: "AI 챗봇" },
-  { id: "settings", icon: "settings", label: "설정" },
+  { id: "settings", icon: "user", label: "프로필" },
 ];
 
 export function Sidebar({ page, onNav }) {
@@ -31,12 +31,6 @@ export function Sidebar({ page, onNav }) {
           </button>
         ))}
       </nav>
-      <div className="sidebar-foot">
-        <button className="foot-user" onClick={() => onNav("settings")}>
-          <Icon name="user" />
-          <span>내 프로필</span>
-        </button>
-      </div>
     </aside>
   );
 }
