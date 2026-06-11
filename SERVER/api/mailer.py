@@ -26,6 +26,10 @@ def _body(code: str) -> str:
 def send_verification_email(to: str, code: str) -> None:
     if MAIL_PROVIDER == "resend":
         _send_resend(to, code)
+    elif MAIL_PROVIDER == "console" or not (GMAIL_USER and GMAIL_APP_PASSWORD):
+        # 로컬 개발: 메일 설정이 없으면 실패시키지 않고 코드를 서버 로그에 출력.
+        # (gmail/resend 설정이 있으면 자동으로 실제 발송 경로를 탄다)
+        print(f"📧 [console mailer] {to} 인증 코드: {code}", flush=True)
     else:
         _send_gmail(to, code)
 

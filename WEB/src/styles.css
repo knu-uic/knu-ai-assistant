@@ -442,17 +442,46 @@ a { color: inherit; text-decoration: none; }
 }
 .auth-card {
   width: 100%;
-  max-width: 380px;
-  padding: 28px;
+  max-width: 460px;
+  padding: 44px 40px;
+  box-shadow: 0 10px 40px rgba(20, 40, 80, 0.08);
 }
 .auth-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
+  margin-bottom: 6px;
+}
+/* 로그인 화면은 필드·버튼을 크게 — 첫 화면이라 시인성 우선 */
+.auth-card .field-label {
+  font-size: 13.5px;
+  margin-bottom: 7px;
+}
+.auth-card .field-input {
+  font-size: 15px;
+  padding: 13px 14px;
+  border-radius: 11px;
+}
+.auth-card .btn-save,
+.auth-card .btn {
+  font-size: 15px;
+  padding: 13px 16px;
+  border-radius: 11px;
+}
+.auth-card .page-title {
+  font-size: 26px !important;
+  margin-bottom: 18px;
+}
+.auth-card .link-btn {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font-size: 14px;
+  padding: 6px;
 }
 .auth-err {
   margin-top: 12px;
   color: #d23b4a;
-  font-size: 13px;
+  font-size: 13.5px;
   line-height: 1.4;
 }
