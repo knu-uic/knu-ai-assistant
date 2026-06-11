@@ -298,6 +298,17 @@ RATE_LIMIT_READ = os.getenv("RATE_LIMIT_READ", "30/minute")
 # 잡 상태 폴링(2초 간격 폴링 허용 여유)
 RATE_LIMIT_POLL = os.getenv("RATE_LIMIT_POLL", "120/minute")
 
+# 공지 목록·홈 추천에서 숨길 정적 안내 페이지 소스 코드.
+# (커리큘럼표·장학 안내 같은 상시 정적문서 — 검색(search_chunks)에서는 노출 유지)
+HIDDEN_NOTICE_SOURCE_CODES = frozenset(
+    c.strip()
+    for c in os.getenv(
+        "HIDDEN_NOTICE_SOURCE_CODES",
+        "cse_curriculum,business_curriculum,scholarship_info",
+    ).split(",")
+    if c.strip()
+)
+
 # -----------------------------
 # validation
 # -----------------------------

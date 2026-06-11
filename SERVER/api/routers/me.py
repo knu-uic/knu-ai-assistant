@@ -10,8 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.deps import require_user
 from api.ratelimit import limiter, user_or_ip
+from api.recommend import build_home
 from api.schemas.me import (
     FavoritesRequest,
+    HomeResponse,
     InterestsRequest,
     LmsCoursesResponse,
     LmsTasksResponse,
@@ -20,8 +22,9 @@ from api.schemas.me import (
     TaskDoneRequest,
     TimetableResponse,
 )
-from config import RATE_LIMIT_READ
+from config import HIDDEN_NOTICE_SOURCE_CODES, RATE_LIMIT_READ
 from db.accounts import get_account
+from db.documents import get_documents
 from db.lms import delete_lms_task, get_lms_courses, get_lms_tasks, set_lms_task_done
 from db.users import get_user, set_favorite_courses, set_interests
 
@@ -151,6 +154,32 @@ async def me_lms_tasks(request: Request, username: str = Depends(require_user)) 
     for r in rows:
         r["due_date"] = _iso(r.get("due_date"))
     return LmsTasksResponse(tasks=rows)
+
+
+@router.get("/me/home", response_model=HomeResponse)
+@limiter.limit(RATE_LIMIT_READ, key_func=user_or_ip)
+async def me_home(request: Request, username: str = Depends(require_user)) -> HomeResponse:
+    # 비연동 유저는 관심사·학과 없음 → 마감·전체 기반으로 degrade (빈 화면 방지)
+    student_id = await _linked_student_id(username)
+    interests: list[str] = []
+    major = year = None
+    if student_id:
+        user = await anyio.to_thread.run_sync(partial(get_user, student_id)) or {}
+        interests = user.get("interests") or []
+        major = user.get("major")
+        year = user.get("year")
+    rows = await anyio.to_thread.run_sync(
+        partial(
+            get_documents,
+            major=major if major else None,
+            limit=60,
+            exclude_codes=HIDDEN_NOTICE_SOURCE_CODES,
+        )
+    )
+    data = await anyio.to_thread.run_sync(
+        partial(build_home, rows, interests, major, year)
+    )
+    return HomeResponse(**data)
 
 
 @router.get("/me/lms/courses", response_model=LmsCoursesResponse)

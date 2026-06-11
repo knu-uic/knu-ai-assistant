@@ -461,6 +461,7 @@ def get_documents(
     limit: int = 30,
     cursor_ts=None,
     cursor_url: str | None = None,
+    exclude_codes=None,
 ):
     """cursor_ts/cursor_url이 주어지면 그 지점보다 정렬상 뒤(더 오래된) 행만 반환.
     정렬 키 = (COALESCE(posted_at, crawled_at) DESC, url DESC) — url은 동점 처리용."""
@@ -485,25 +486,35 @@ def get_documents(
         params.extend(base_params)
 
     union = sql.SQL(" UNION ALL ").join(subs)
+
+    # merged 결과에 대한 최종 필터(커서 + 숨김 소스). LIMIT 전에 적용해야
+    # 페이지네이션(limit+1) 정확도가 유지된다.
+    final_conditions: list[sql.Composable] = []
+    final_params: list = []
     if cursor_ts is not None and cursor_url is not None:
         # (DESC, DESC) 정렬에서 "커서 다음"은 행값 비교로 (sort_ts, url) < (커서값)
-        cursor_where = sql.SQL(
-            "WHERE (COALESCE(posted_at::timestamp, crawled_at), url) < (%s, %s)"
+        final_conditions.append(
+            sql.SQL("(COALESCE(posted_at::timestamp, crawled_at), url) < (%s, %s)")
         )
-    else:
-        cursor_where = sql.SQL("")
+        final_params.extend([cursor_ts, cursor_url])
+    if exclude_codes:
+        final_conditions.append(sql.SQL("code <> ALL(%s)"))
+        final_params.append(list(exclude_codes))
+    final_where = (
+        sql.SQL(" WHERE ") + sql.SQL(" AND ").join(final_conditions)
+        if final_conditions else sql.SQL("")
+    )
     final_q = sql.SQL("""
         SELECT url, title, content, posted_at, start_date, end_date,
                category, target, keywords,
                code, name, kind, department, summary,
                COALESCE(posted_at::timestamp, crawled_at) AS sort_ts
         FROM ({union}) merged
-        {cursor_where}
+        {final_where}
         ORDER BY sort_ts DESC NULLS LAST, url DESC
         LIMIT %s
-    """).format(union=union, cursor_where=cursor_where)
-    if cursor_ts is not None and cursor_url is not None:
-        params.extend([cursor_ts, cursor_url])
+    """).format(union=union, final_where=final_where)
+    params.extend(final_params)
     params.append(limit)
 
     with sync_pool.connection() as conn:

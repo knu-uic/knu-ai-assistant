@@ -59,3 +59,27 @@ class FavoritesRequest(BaseModel):
 
 class TaskDoneRequest(BaseModel):
     is_done: bool
+
+
+class RecItem(BaseModel):
+    title: str
+    url: str
+    summary: Optional[str] = None
+    category: Optional[str] = None
+    d_label: Optional[str] = None
+    days_left: Optional[int] = None
+    matched_keywords: List[str] = []
+
+
+class DeadlineItem(BaseModel):
+    title: str
+    url: str
+    category: Optional[str] = None
+    end_date: str
+    d_label: Optional[str] = None
+    days_left: int
+
+
+class HomeResponse(BaseModel):
+    recommended: List[RecItem] = []
+    deadlines: List[DeadlineItem] = []
