@@ -26,6 +26,7 @@ from retrieval.prompts import (
     ANSWERER_SYSTEM,
     BROAD_ANSWERER_SYSTEM,
     ROUTER_SYSTEM,
+    SMALLTALK_SYSTEM,
     VERIFIER_SYSTEM,
 )
 from retrieval.rerank import rerank_scores
@@ -35,10 +36,11 @@ Category = Literal["장학", "수강", "취업(진로)", "행사(공모전)", "�
 
 
 class RouteDecision(BaseModel):
-    query_mode: Literal["precise", "broad"] = Field(
+    query_mode: Literal["precise", "broad", "smalltalk"] = Field(
         description=(
             "precise=특정 공지 1건의 구체 사실을 묻는 질문. "
-            "broad=여러 공지를 한눈에 훑는 집계/목록형 질문. 애매하면 precise."
+            "broad=여러 공지를 한눈에 훑는 집계/목록형 질문. "
+            "smalltalk=검색이 불필요한 인사·잡담·감사·챗봇 자체 질문. 애매하면 precise."
         )
     )
     categories: List[Category] = Field(
@@ -321,8 +323,22 @@ def verifier_node(state: ChatState) -> dict:
     }
 
 
+def smalltalk_node(state: ChatState) -> dict:
+    # 검색 없이 바로 답하는 가벼운 응답(인사·잡담·감사·자기소개).
+    resp = get_llm().invoke(
+        [
+            SystemMessage(content=SMALLTALK_SYSTEM),
+            HumanMessage(content=state["question"]),
+        ]
+    )
+    return {"answer": resp.content, "contexts": [], "evidence_chunks": []}
+
+
 def _route_by_mode(state: ChatState) -> str:
-    return "broad" if state.get("query_mode") == "broad" else "precise"
+    mode = state.get("query_mode")
+    if mode == "smalltalk":
+        return "smalltalk"
+    return "broad" if mode == "broad" else "precise"
 
 
 def build_graph():
@@ -332,16 +348,18 @@ def build_graph():
     g.add_node("answerer", answerer_node)
     g.add_node("broad_retriever", broad_retriever_node)
     g.add_node("broad_answerer", broad_answerer_node)
+    g.add_node("smalltalk", smalltalk_node)
 
     g.set_entry_point("router")
     g.add_conditional_edges(
         "router",
         _route_by_mode,
-        {"precise": "retriever", "broad": "broad_retriever"},
+        {"precise": "retriever", "broad": "broad_retriever", "smalltalk": "smalltalk"},
     )
     g.add_edge("retriever", "answerer")
     g.add_edge("broad_retriever", "broad_answerer")
     g.add_edge("broad_answerer", END)
+    g.add_edge("smalltalk", END)
 
     if ENABLE_VERIFIER:
         g.add_node("verifier", verifier_node)
