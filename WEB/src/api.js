@@ -14,6 +14,18 @@ export function setToken(t) {
 export function isAuthed() {
   return !!getToken();
 }
+// JWT payload의 sub(=username)을 클라이언트에서 디코드. 대화 기록 localStorage
+// 키를 사용자별로 분리하는 데만 쓴다(인증 판단 아님). 토큰 없거나 깨지면 null.
+export function currentUsername() {
+  const t = getToken();
+  if (!t) return null;
+  try {
+    const p = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return p.sub || null;
+  } catch {
+    return null;
+  }
+}
 
 async function req(method, path, body) {
   const headers = { "Content-Type": "application/json" };
