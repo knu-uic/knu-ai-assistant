@@ -70,6 +70,65 @@ export async function askChatbot(question, major) {
   };
 }
 
+// 노드 "완료" → 다음 단계 진행 문구. step은 노드가 끝날 때 오므로
+// 방금 끝난 노드가 아니라 "이제 할 일"을 보여줘야 자연스럽다.
+const STEP_LABEL = {
+  router: "관련 공지를 찾고 있어요...",   // 분석 끝 → 검색 시작
+  retriever: "답변을 생성하고 있어요...",
+  broad_retriever: "답변을 생성하고 있어요...",
+  verifier: "답변을 검토하고 있어요...",
+};
+
+// 스트리밍 챗봇. SSE를 fetch+ReadableStream으로 수동 파싱(EventSource는
+// Authorization 헤더를 못 실어서 토큰 인증과 함께 쓸 수 없음).
+// 콜백: onStep(상태문구) / onToken(누적텍스트) / 반환값=최종 {grounded}
+export async function streamChatbot(question, major, { onStep, onToken } = {}) {
+  const params = new URLSearchParams({ question });
+  if (major) params.set("major", major);
+  const res = await fetch(`/api/chat/stream?${params}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (res.status === 401) {
+    setToken(null);
+    throw new Error("세션이 만료되었습니다. 다시 로그인해주세요.");
+  }
+  if (!res.ok || !res.body) throw new Error(`요청 실패 (${res.status})`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let text = "";
+  let meta = {};
+
+  // "event: X\ndata: {...}\n\n" 블록 단위 파싱
+  const handle = (block) => {
+    const ev = /event:\s*(.+)/.exec(block)?.[1]?.trim();
+    const dataLine = /data:\s*([\s\S]*)/.exec(block)?.[1]?.trim();
+    if (!ev || dataLine == null) return;
+    let data = {};
+    try { data = JSON.parse(dataLine); } catch { return; }
+    if (ev === "step") { if (STEP_LABEL[data.node]) onStep?.(STEP_LABEL[data.node]); }
+    else if (ev === "token") { text += data.text || ""; onToken?.(text); }
+    else if (ev === "answer") meta = data;
+    else if (ev === "error") throw new Error(data.detail || "답변 생성에 실패했습니다.");
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) !== -1) {
+      handle(buf.slice(0, i));
+      buf = buf.slice(i + 2);
+    }
+  }
+  return {
+    intro: text,
+    outro: meta.grounded === false ? "근거 문서를 찾지 못했습니다." : "",
+  };
+}
+
 // ── 공지 ──────────────────────────────────────────────
 // 백엔드 category는 한글 그대로("장학"/"수강"/"취업(진로)"/"행사(공모전)"/"일반(기타)").
 export async function getNotices() {
