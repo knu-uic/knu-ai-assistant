@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Icon } from "../icons.jsx";
-import { getLmsTasks, getLmsCourses, syncLms } from "../api.js";
+import { useApp } from "../store.jsx";
 
 const TASK_TYPES = {
   lecture: { label: "남은 수강", icon: "play", color: "#15539c", bg: "#e8f1fb" },
@@ -9,15 +9,12 @@ const TASK_TYPES = {
 };
 const SECTION_ORDER = ["lecture", "assignment", "notice"];
 
-function TaskRow({ t, onToggle, onDelete }) {
+function TaskRow({ t }) {
   const spec = TASK_TYPES[t.type] || TASK_TYPES.notice;
   return (
     <div className="lms-task">
-      <button className={"lt-check" + (t.done ? " on" : "")} onClick={() => onToggle(t.id)}>
-        {t.done && <Icon name="check" size={13} />}
-      </button>
       <div className="lt-main">
-        <div className={"lt-title" + (t.done ? " done" : "")}>{t.title}</div>
+        <div className="lt-title">{t.title}</div>
         <div className="lt-meta">
           <span className="lt-d">{t.due}</span>
           {t.progress != null && (
@@ -28,12 +25,11 @@ function TaskRow({ t, onToggle, onDelete }) {
           )}
         </div>
       </div>
-      <button className="lt-del" onClick={() => onDelete(t.id)}>삭제</button>
     </div>
   );
 }
 
-function CourseAccordion({ course, tasks, open, onToggleOpen, onToggle, onDelete }) {
+function CourseAccordion({ course, tasks, open, onToggleOpen }) {
   const counts = {
     lecture: tasks.filter((t) => t.type === "lecture").length,
     assignment: tasks.filter((t) => t.type === "assignment").length,
@@ -43,7 +39,6 @@ function CourseAccordion({ course, tasks, open, onToggleOpen, onToggle, onDelete
   return (
     <div className={"course-acc" + (open ? " open" : "")}>
       <button className="acc-head" onClick={onToggleOpen}>
-        <Icon name={course.fav ? "starFill" : "star"} size={16} className={"acc-star" + (course.fav ? " on" : "")} />
         <span className="acc-name">{course.course_name}</span>
         <div className="acc-counts">
           {SECTION_ORDER.map((k) => counts[k] > 0 && (
@@ -68,7 +63,7 @@ function CourseAccordion({ course, tasks, open, onToggleOpen, onToggle, onDelete
                       <Icon name={TASK_TYPES[k].icon} size={13} /> {TASK_TYPES[k].label} <span className="acc-sec-n">{items.length}</span>
                     </div>
                     <div className="acc-tasks">
-                      {items.map((t) => <TaskRow key={t.id} t={t} onToggle={onToggle} onDelete={onDelete} />)}
+                      {items.map((t) => <TaskRow key={t.id} t={t} />)}
                     </div>
                   </div>
                 );
@@ -79,47 +74,34 @@ function CourseAccordion({ course, tasks, open, onToggleOpen, onToggle, onDelete
   );
 }
 
-export function LmsPage({ user }) {
-  const [tasks, setTasks] = useState([]);
-  const [courses, setCourses] = useState([]);
+export function LmsPage() {
+  const { profile, lmsTasks, lmsCourses, loadLms, syncLms } = useApp();
   const [openId, setOpenId] = useState(null);
-  const [showDone, setShowDone] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [syncStep, setSyncStep] = useState("");
+  const [msg, setMsg] = useState("");
 
-  function load() {
-    getLmsTasks().then(setTasks);
-    getLmsCourses().then(setCourses);
-  }
-  useEffect(load, []);
+  useEffect(() => { loadLms(); }, [loadLms]);
 
+  const tasks = lmsTasks || [];
+  const courses = lmsCourses || [];
   const counts = {
     lecture: tasks.filter((t) => t.type === "lecture" && !t.done).length,
     assignment: tasks.filter((t) => t.type === "assignment" && !t.done).length,
     notice: tasks.filter((t) => t.type === "notice" && !t.done).length,
   };
-  const toggle = (id) => setTasks((ts) => ts.map((t) => t.id === id ? { ...t, done: !t.done } : t));
-  const del = (id) => setTasks((ts) => ts.filter((t) => t.id !== id));
 
   async function doSync() {
-    if (!user?.student_id) {
-      setSyncStep("설정에서 포털을 먼저 연결해주세요.");
-      return;
-    }
-    setSyncing(true);
-    setSyncStep("");
+    if (!profile?.student_id) { setMsg("설정에서 포털을 먼저 연결해주세요."); return; }
+    setSyncing(true); setMsg("");
     try {
-      // 세션 재사용 우선(비번 없이). 만료 시 needs_reconnect → 설정에서 재연결 안내.
-      await syncLms(user.student_id, undefined, setSyncStep);
-      load();
+      await syncLms(profile.student_id, undefined, setMsg);
+      setMsg("");
     } catch (e) {
-      setSyncStep(e.needsReconnect ? "포털 재연결이 필요해요(설정)." : e.message);
+      setMsg(e.needsReconnect ? "포털 재연결이 필요해요(설정 화면)." : e.message);
     } finally {
       setSyncing(false);
     }
   }
-
-  const ordered = [...courses].sort((a, b) => (b.fav - a.fav));
 
   return (
     <div className="main-inner wide">
@@ -130,10 +112,10 @@ export function LmsPage({ user }) {
         </div>
         <button className="btn" onClick={doSync} disabled={syncing}>
           <Icon name="refresh" size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />
-          {syncing ? (syncStep || "동기화 중...") : "LMS 동기화"}
+          {syncing ? (msg || "동기화 중...") : "LMS 동기화"}
         </button>
       </div>
-      {syncStep && !syncing && <div className="caption" style={{ marginTop: 6 }}>{syncStep}</div>}
+      {msg && !syncing && <div className="caption" style={{ marginTop: 6 }}>{msg}</div>}
 
       <div className="lms-metrics">
         {Object.entries(TASK_TYPES).map(([k, spec]) => (
@@ -147,17 +129,10 @@ export function LmsPage({ user }) {
         ))}
       </div>
 
-      <div className="lms-tabs-row" style={{ justifyContent: "flex-end" }}>
-        <label className="done-toggle">
-          <input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />
-          <span>완료된 작업 표시</span>
-        </label>
-      </div>
-
       <div className="acc-list">
-        {ordered.length === 0 && <div className="caption" style={{ textAlign: "center", padding: 40 }}>LMS를 동기화하면 과목이 표시됩니다.</div>}
-        {ordered.map((c) => {
-          const courseTasks = tasks.filter((t) => t.course === c.course_name && (showDone || !t.done));
+        {courses.length === 0 && <div className="caption" style={{ textAlign: "center", padding: 40 }}>{lmsCourses ? "LMS를 동기화하면 과목이 표시됩니다." : "불러오는 중..."}</div>}
+        {courses.map((c) => {
+          const courseTasks = tasks.filter((t) => t.course === c.course_name && !t.done);
           return (
             <CourseAccordion
               key={c.course_id}
@@ -165,8 +140,6 @@ export function LmsPage({ user }) {
               tasks={courseTasks}
               open={openId === c.course_id}
               onToggleOpen={() => setOpenId(openId === c.course_id ? null : c.course_id)}
-              onToggle={toggle}
-              onDelete={del}
             />
           );
         })}

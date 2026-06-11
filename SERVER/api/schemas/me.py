@@ -3,6 +3,10 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 
+class InterestsRequest(BaseModel):
+    interests: List[str] = []
+
+
 class MeProfile(BaseModel):
     student_id: Optional[str] = None
     name: Optional[str] = None

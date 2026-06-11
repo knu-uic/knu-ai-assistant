@@ -116,4 +116,20 @@ def set_favorite_courses(student_id: str, courses: list[str]) -> None:
         conn.commit()
 
 
-__all__ = ["ensure_users_schema", "get_user", "upsert_user", "set_favorite_courses"]
+def set_interests(student_id: str, interests: list[str]) -> None:
+    """관심 키워드만 갱신. 이름·학과 등 다른 컬럼은 보존한다.
+    users row가 없으면 최소 row를 만든다(포털 연동 전에도 저장 가능)."""
+    interests_csv = ",".join(interests or [])
+    with sync_pool.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO users (student_id, name, major, year, interests)
+            VALUES (%s, '', '', NULL, %s)
+            ON CONFLICT (student_id) DO UPDATE SET interests = EXCLUDED.interests;
+            """,
+            (student_id, interests_csv),
+        )
+        conn.commit()
+
+
+__all__ = ["ensure_users_schema", "get_user", "upsert_user", "set_favorite_courses", "set_interests"]

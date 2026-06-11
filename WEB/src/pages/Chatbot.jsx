@@ -1,72 +1,47 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Icon } from "../icons.jsx";
 import { askChatbot, chatSuggestions } from "../api.js";
+import { useApp } from "../store.jsx";
 
 function AnswerCard({ a }) {
-  const [open, setOpen] = useState(false);
   return (
     <div className="bot-msg">
       <div className="bot-ico"><Icon name="bot" size={17} /></div>
       <div className="bot-bubble">
-        <p className="ans-intro">{a.intro}</p>
-        {a.bullets.length > 0 && (
-          <ul className="ans-list">
-            {a.bullets.map(([h, t], i) => (
-              <li key={i}><strong>{h}:</strong> {t}</li>
-            ))}
-          </ul>
-        )}
+        <p className="ans-intro" style={{ whiteSpace: "pre-wrap" }}>{a.intro}</p>
         {a.outro && <p className="ans-outro">{a.outro}</p>}
-        {a.citations.length > 0 && (
-          <>
-            <button className={"cite-toggle" + (open ? " open" : "")} onClick={() => setOpen(!open)}>
-              <Icon name="citation" size={14} />
-              <span>출처 ({a.citations.length})</span>
-              <Icon name="chevron" size={14} />
-            </button>
-            {open && (
-              <div className="cite-list">
-                {a.citations.map((c, i) => (
-                  <a key={i} className="cite-item" href={c.url}>
-                    <Icon name="fileText" size={14} /> {c.title}
-                  </a>
-                ))}
-              </div>
-            )}
-          </>
-        )}
       </div>
     </div>
   );
 }
 
-export function ChatbotPage({ user }) {
-  const [msgs, setMsgs] = useState([]);
+export function ChatbotPage() {
+  const { profile, chatMsgs, setChatMsgs } = useApp();
   const [thinking, setThinking] = useState(false);
   const [input, setInput] = useState("");
   const scrollRef = useRef(null);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [msgs, thinking]);
+  }, [chatMsgs, thinking]);
 
   async function send(text) {
     const q = (text ?? input).trim();
     if (!q || thinking) return;
-    setMsgs((m) => [...m, { role: "user", content: q }]);
+    setChatMsgs((m) => [...m, { role: "user", content: q }]);
     setInput("");
     setThinking(true);
     try {
-      const answer = await askChatbot(q, user?.major);
-      setMsgs((m) => [...m, { role: "assistant", answer }]);
+      const answer = await askChatbot(q, profile?.major);
+      setChatMsgs((m) => [...m, { role: "assistant", answer }]);
     } catch (e) {
-      setMsgs((m) => [...m, { role: "assistant", answer: { intro: e.message, bullets: [], outro: "", citations: [] } }]);
+      setChatMsgs((m) => [...m, { role: "assistant", answer: { intro: e.message, outro: "" } }]);
     } finally {
       setThinking(false);
     }
   }
 
-  const empty = msgs.length === 0 && !thinking;
+  const empty = chatMsgs.length === 0 && !thinking;
 
   return (
     <div className="chat-wrap">
@@ -86,9 +61,8 @@ export function ChatbotPage({ user }) {
             <div className="welcome-sub">KNU 학사·캠퍼스·규정에 대해 무엇이든 물어보세요.</div>
           </div>
         )}
-
         <div className="chat-msgs">
-          {msgs.map((m, i) =>
+          {chatMsgs.map((m, i) =>
             m.role === "user"
               ? <div key={i} className="user-msg">{m.content}</div>
               : <AnswerCard key={i} a={m.answer} />
@@ -101,7 +75,6 @@ export function ChatbotPage({ user }) {
 
       <div className="chat-input-area">
         <div className="chat-input">
-          <button className="attach-btn"><Icon name="paperclip" size={18} /></button>
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}

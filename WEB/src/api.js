@@ -121,6 +121,9 @@ export async function getLmsTasks() {
     done: t.is_done,
   }));
 }
+export async function saveInterests(interests) {
+  return req("POST", "/api/me/interests", { interests });
+}
 export async function getLmsCourses() {
   const r = await req("GET", "/api/me/lms/courses");
   return (r.courses || []).map((c) => ({

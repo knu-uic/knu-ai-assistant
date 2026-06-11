@@ -485,3 +485,52 @@ a { color: inherit; text-decoration: none; }
   font-size: 13.5px;
   line-height: 1.4;
 }
+
+/* ══════════════════════════════════════════════════════════
+   전체 스케일 업 (가독성·여백 강화) — 원본보다 크게
+   ══════════════════════════════════════════════════════════ */
+body { font-size: 16px; }
+
+/* 사이드바 넓게 + 메뉴 크게 */
+.sidebar { width: 232px; padding: 22px 16px; }
+.brand-name { font-size: 18px; }
+.brand-sub { font-size: 11px; }
+.nav-item { font-size: 15.5px !important; padding: 11px 13px !important; gap: 12px; }
+.foot-user { font-size: 14.5px; }
+
+/* 본문 폭·여백 키움 */
+.main-inner { max-width: 960px; padding: 40px 44px 64px; }
+.main-inner.wide { max-width: 1120px; }
+.main-inner.portal-wide { max-width: 1280px; }
+.page-title { font-size: 32px; }
+.page-sub { font-size: 15.5px; margin-top: 9px; }
+.section-title { font-size: 19px; }
+.sub-h { font-size: 20px; }
+
+/* 카드·패널 여백 */
+.card { border-radius: 14px; }
+.panel-head { font-size: 15.5px; }
+
+/* 공지 카드 크게 */
+.notice-card { padding: 20px 22px; }
+.nc-title { font-size: 16.5px; }
+.nc-body { font-size: 14px; }
+
+/* 챗봇 가독성 */
+.chat-input input { font-size: 15.5px; }
+.user-msg, .bot-bubble { font-size: 15px; line-height: 1.65; }
+.quick-chip { font-size: 14px; padding: 9px 14px; }
+
+/* 버튼·입력 기본 키움 */
+.btn { font-size: 14.5px; padding: 10px 18px; }
+.field-input { font-size: 14.5px; padding: 11px 13px; }
+
+/* 관심사·LMS 칩 */
+.kw-pill { font-size: 14px; padding: 9px 15px; }
+.lm-count { font-size: 26px; }
+.acc-name { font-size: 16px; }
+.lt-title { font-size: 15px; }
+
+/* 학적 정보 */
+.rec-v { font-size: 15.5px; }
+.record-grid { gap: 18px; }

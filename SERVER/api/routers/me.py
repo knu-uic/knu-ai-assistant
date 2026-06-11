@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from api.deps import require_user
 from api.ratelimit import limiter, user_or_ip
 from api.schemas.me import (
+    InterestsRequest,
     LmsCoursesResponse,
     LmsTasksResponse,
     MeProfile,
@@ -20,7 +21,7 @@ from api.schemas.me import (
 from config import RATE_LIMIT_READ
 from db.accounts import get_account
 from db.lms import get_lms_courses, get_lms_tasks
-from db.users import get_user
+from db.users import get_user, set_interests
 
 router = APIRouter()
 
@@ -54,6 +55,21 @@ async def me(request: Request, username: str = Depends(require_user)) -> MeProfi
         portal_linked=bool(user.get("timetable") or user.get("grade_distribution")),
         lms_linked=len(courses) > 0,
     )
+
+
+@router.post("/me/interests", response_model=MeProfile)
+@limiter.limit(RATE_LIMIT_READ, key_func=user_or_ip)
+async def update_interests(
+    request: Request,
+    body: InterestsRequest,
+    username: str = Depends(require_user),
+) -> MeProfile:
+    student_id = await _linked_student_id(username)
+    if not student_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="포털을 먼저 연결해주세요.")
+    await anyio.to_thread.run_sync(partial(set_interests, student_id, body.interests))
+    return await me(request, username)
 
 
 @router.get("/me/timetable", response_model=TimetableResponse)

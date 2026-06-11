@@ -1,32 +1,34 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Icon } from "../icons.jsx";
-import { syncPortal, syncLms, INTEREST_KEYWORD_POOL, MAX_INTERESTS } from "../api.js";
+import { INTEREST_KEYWORD_POOL, MAX_INTERESTS } from "../api.js";
+import { useApp } from "../store.jsx";
 
-/* 프로필/설정 — 포털 연결(동기화)로 학적 데이터 채움. */
-export function SettingsPage({ user, onRefresh }) {
-  const linked = !!user?.portal_linked;
-  const [sid, setSid] = useState(user?.student_id || "");
+export function SettingsPage() {
+  const { profile, logout, saveInterests, syncPortal, syncLms } = useApp();
+  const linked = !!profile?.portal_linked;
+
+  const [sid, setSid] = useState(profile?.student_id || "");
   const [pw, setPw] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [linking, setLinking] = useState(false);
   const [step, setStep] = useState("");
   const [err, setErr] = useState("");
 
-  const [interests, setInterests] = useState(user?.interests?.slice() || []);
-  const [savedKw, setSavedKw] = useState(user?.interests?.slice() || []);
-  const dirty = JSON.stringify(interests) !== JSON.stringify(savedKw);
+  // 관심사: 프로필이 갱신되면 동기화
+  const [interests, setInterests] = useState(profile?.interests || []);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState("");
+  useEffect(() => { setInterests(profile?.interests || []); }, [profile]);
+  const dirty = JSON.stringify(interests) !== JSON.stringify(profile?.interests || []);
 
   async function doLink() {
     setErr("");
     if (!sid || !pw) { setErr("학번과 비밀번호를 입력해주세요."); return; }
     setLinking(true);
     try {
-      // 포털 동기화 = 연결. 성공 시 학번이 계정에 링크되고 학적 데이터가 채워짐.
       await syncPortal(sid, pw, setStep);
-      // LMS도 같은 자격증명으로 세션 발급(이후 비번 없이 재사용)
       try { await syncLms(sid, pw, setStep); } catch (_) { /* LMS 실패는 비치명 */ }
       setPw("");
-      onRefresh?.();
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -42,12 +44,21 @@ export function SettingsPage({ user, onRefresh }) {
       return [...cur, kw];
     });
   }
-  function save() {
-    // TODO: 관심사 저장 엔드포인트 연결 (현재 로컬 상태만)
-    setSavedKw(interests.slice());
+  async function save() {
+    setSaving(true);
+    try {
+      await saveInterests(interests);
+      setToast("관심 키워드가 저장됐어요.");
+      setTimeout(() => setToast(""), 2200);
+    } catch (e) {
+      setToast(e.message);
+      setTimeout(() => setToast(""), 3000);
+    } finally {
+      setSaving(false);
+    }
   }
 
-  const initial = (user?.name || "U").charAt(0);
+  const initial = (profile?.name || "U").charAt(0);
 
   return (
     <div className="main-inner">
@@ -57,11 +68,11 @@ export function SettingsPage({ user, onRefresh }) {
       <div className="card profile-head">
         <div className="ph-avatar">{initial}</div>
         <div className="ph-info">
-          <div className="ph-name">{user?.name || "학생"}</div>
+          <div className="ph-name">{profile?.name || "학생"}</div>
           <div className="ph-meta">
-            <span>{user?.major || "학과 미연동"}</span>
-            {user?.year && <><span className="ph-dot">·</span><span>{user.year}학년</span></>}
-            {user?.student_id && <><span className="ph-dot">·</span><span className="ph-sid">{user.student_id}</span></>}
+            <span>{profile?.major || "학과 미연동"}</span>
+            {profile?.year != null && <><span className="ph-dot">·</span><span>{profile.year}학년</span></>}
+            {profile?.student_id && <><span className="ph-dot">·</span><span className="ph-sid">{profile.student_id}</span></>}
           </div>
         </div>
         {linked
@@ -74,11 +85,10 @@ export function SettingsPage({ user, onRefresh }) {
         {linked ? (
           <>
             <div className="link-badges">
-              <div className="lb"><span className="lb-name">LMS</span><span className={user?.lms_linked ? "badge-link" : "badge-off"}>{user?.lms_linked ? <><Icon name="check" size={12} /> 연동됨</> : <><span className="dot-off"></span> 미연동</>}</span></div>
+              <div className="lb"><span className="lb-name">LMS</span><span className={profile?.lms_linked ? "badge-link" : "badge-off"}>{profile?.lms_linked ? <><Icon name="check" size={12} /> 연동됨</> : <><span className="dot-off"></span> 미연동</>}</span></div>
               <div className="lb"><span className="lb-name">포털</span><span className="badge-link"><Icon name="check" size={12} /> 연동됨</span></div>
             </div>
             <p className="caption" style={{ marginTop: 12 }}>공주대 통합 계정으로 연동되어 있어요. 비밀번호는 저장하지 않아요.</p>
-            <button className="btn" style={{ marginTop: 14 }} onClick={() => setSid(user?.student_id || "")}>다시 동기화</button>
           </>
         ) : (
           <>
@@ -92,9 +102,9 @@ export function SettingsPage({ user, onRefresh }) {
                 <button className="pw-eye" onClick={() => setShowPw(!showPw)}><Icon name="eye" size={16} /></button>
               </div>
               {err && <div className="auth-err">{err}</div>}
-              <button className="btn-save" style={{ marginTop: 16 }} onClick={doLink} disabled={linking}>연동</button>
+              <button className="btn-save" style={{ marginTop: 16 }} onClick={doLink} disabled={linking}>{linking ? (step || "연동 중...") : "연동"}</button>
             </div>
-            {linking && <div className="linking-row"><span className="spinner"></span> {step || "연동 중이에요..."}</div>}
+            {linking && <div className="linking-row"><span className="spinner"></span> {step || "연동 중이에요... (수십 초 소요)"}</div>}
           </>
         )}
       </div>
@@ -103,10 +113,10 @@ export function SettingsPage({ user, onRefresh }) {
         <div className="card set-card">
           <div className="set-h plain">학적 정보</div>
           <div className="record-grid">
-            <div><div className="rec-k">이름</div><div className="rec-v">{user?.name}</div></div>
-            <div><div className="rec-k">학번</div><div className="rec-v">{user?.student_id}</div></div>
-            <div><div className="rec-k">학과</div><div className="rec-v">{user?.major}</div></div>
-            <div><div className="rec-k">학년</div><div className="rec-v">{user?.year}학년</div></div>
+            <div><div className="rec-k">이름</div><div className="rec-v">{profile?.name}</div></div>
+            <div><div className="rec-k">학번</div><div className="rec-v">{profile?.student_id}</div></div>
+            <div><div className="rec-k">학과</div><div className="rec-v">{profile?.major}</div></div>
+            <div><div className="rec-k">학년</div><div className="rec-v">{profile?.year}학년</div></div>
           </div>
         </div>
       )}
@@ -116,6 +126,7 @@ export function SettingsPage({ user, onRefresh }) {
           <div className="set-h plain">관심 키워드</div>
           <span className="kw-counter">{interests.length} / {MAX_INTERESTS}</span>
         </div>
+        {!linked && <p className="caption" style={{ marginTop: 2 }}>포털을 연결하면 관심 키워드를 저장할 수 있어요.</p>}
         <div className="kw-grid">
           {INTEREST_KEYWORD_POOL.map((kw) => {
             const on = interests.includes(kw);
@@ -129,11 +140,15 @@ export function SettingsPage({ user, onRefresh }) {
         </div>
         <div className="kw-foot">
           <span className="caption">{dirty ? "변경사항이 저장되지 않았어요." : "최신 상태예요."}</span>
-          <button className="btn-save kw-save" onClick={save} disabled={!dirty}>
-            <Icon name="check" size={15} /> 저장
+          <button className="btn-save kw-save" onClick={save} disabled={!dirty || saving || !linked}>
+            <Icon name="check" size={15} /> {saving ? "저장 중..." : "저장"}
           </button>
         </div>
       </div>
+
+      <button className="btn" style={{ marginTop: 4 }} onClick={logout}>로그아웃</button>
+
+      {toast && <div className="toast"><Icon name="check" size={15} /> {toast}</div>}
     </div>
   );
 }

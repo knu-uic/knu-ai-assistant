@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect } from "react";
 import { Icon } from "../icons.jsx";
-import { MOCK, getMeTimetable } from "../api.js";
+import { MOCK } from "../api.js";
+import { useApp } from "../store.jsx";
 
 function RecCard({ n }) {
   return (
@@ -34,37 +35,32 @@ function TtRow({ t }) {
   return (
     <div className={"tt-row" + (t.now ? " now" : "")}>
       <div className="tt-time">
-        <div className="tt-start">{t.start}</div>
-        <div className="tt-end">{t.end}</div>
+        <div className="tt-start">{t.start || ""}</div>
+        <div className="tt-end">{t.end || ""}</div>
       </div>
       <div className="tt-body">
-        <div className="tt-title">{t.title}</div>
+        <div className="tt-title">{t.title || t.subject || ""}</div>
         <div className="tt-meta">
-          <span><Icon name="landmark" size={13} /> {t.room}</span>
-          <span><Icon name="user" size={13} /> {t.prof}</span>
+          {t.room && <span><Icon name="landmark" size={13} /> {t.room}</span>}
+          {t.prof && <span><Icon name="user" size={13} /> {t.prof}</span>}
         </div>
       </div>
     </div>
   );
 }
 
-export function HomePage({ user }) {
-  // 추천공지·마감은 집계 API 미구현 → 목업. 시간표는 실 /api/me/timetable.
-  const [tt, setTt] = useState([]);
-  useEffect(() => {
-    getMeTimetable().then((rows) => setTt(Array.isArray(rows) ? rows : []));
-  }, []);
-
-  const greeting = user?.name ? `${user.name}님, 안녕하세요!` : "안녕하세요!";
+export function HomePage() {
+  const { profile, timetable, loadTimetable } = useApp();
+  useEffect(() => { loadTimetable(); }, [loadTimetable]);
+  const tt = Array.isArray(timetable) ? timetable : [];
 
   return (
     <div className="main-inner wide">
-      <h1 className="page-title" style={{ fontSize: 34 }}>{greeting}</h1>
-      <p className="page-sub" style={{ fontSize: 15 }}>오늘도 좋은 하루 되세요.</p>
+      <h1 className="page-title" style={{ fontSize: 36 }}>{profile?.name ? `${profile.name}님, 안녕하세요!` : "안녕하세요!"}</h1>
+      <p className="page-sub" style={{ fontSize: 16 }}>오늘도 좋은 하루 되세요.</p>
 
-      <div className="row-between" style={{ marginTop: 30 }}>
+      <div className="row-between" style={{ marginTop: 32 }}>
         <h2 className="section-title">추천 공지</h2>
-        <button className="link-btn">전체 보기</button>
       </div>
 
       <div className="rec-grid">
@@ -81,11 +77,11 @@ export function HomePage({ user }) {
 
         <div className="card panel">
           <div className="panel-head">
-            <span style={{ display: "flex", alignItems: "center", gap: 9 }}><Icon name="calendar" size={18} /><span>오늘의 시간표</span></span>
+            <span style={{ display: "flex", alignItems: "center", gap: 9 }}><Icon name="calendar" size={18} /><span>시간표</span></span>
           </div>
           <div className="tt-list">
             {tt.length === 0
-              ? <div className="caption" style={{ padding: 24, textAlign: "center" }}>포털을 연결하면 시간표가 표시됩니다.</div>
+              ? <div className="caption" style={{ padding: 28, textAlign: "center" }}>포털을 연결하면 시간표가 표시됩니다.</div>
               : tt.map((t, i) => <TtRow key={i} t={t} />)}
           </div>
         </div>

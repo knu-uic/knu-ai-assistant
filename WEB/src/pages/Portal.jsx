@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect } from "react";
 import { Icon } from "../icons.jsx";
-import { getPortalData } from "../api.js";
+import { useApp } from "../store.jsx";
 
-// graduation_credits 중첩 dict → 22컬럼 (백엔드 GRAD_G4_MAP과 동일 순서·경로)
 const GRAD_PATHS = [
   ["교양", "기초교양", "필수"], ["교양", "기초교양", "선택"], ["교양", "균형교양", "선택"],
   ["교양", "소양교양", "필수"], ["교양", "소양교양", "선택"], ["교양", "계"],
@@ -78,7 +77,6 @@ function CreditTable({ grid }) {
   );
 }
 
-// 동기화 grid JSON({title, columns, rows}) → 제네릭 테이블
 function GenericGrids({ data }) {
   const grids = data?.grids || {};
   const entries = Object.entries(grids);
@@ -102,15 +100,12 @@ function GenericGrids({ data }) {
   ));
 }
 
-export function PortalPage({ user }) {
-  const [data, setData] = useState(null);
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    getPortalData().then((d) => { setData(d); setLoaded(true); });
-  }, []);
+export function PortalPage() {
+  const { profile, portalData, loadPortal } = useApp();
+  useEffect(() => { loadPortal(); }, [loadPortal]);
 
-  const grid = toGrid(data?.graduation_credits);
-  const linked = !!user?.portal_linked;
+  const grid = toGrid(portalData?.graduation_credits);
+  const linked = !!profile?.portal_linked;
 
   return (
     <div className="main-inner portal-wide">
@@ -121,7 +116,7 @@ export function PortalPage({ user }) {
         </div>
       </div>
 
-      {loaded && !linked && (
+      {portalData && !linked && (
         <div className="banner" style={{ marginTop: 20 }}>설정에서 포털을 연결하면 취득학점·성적이 표시됩니다.</div>
       )}
 
@@ -133,17 +128,17 @@ export function PortalPage({ user }) {
         </>
       )}
 
-      {data?.grade_distribution && (
+      {portalData?.grade_distribution && (
         <>
           <h2 className="sub-h" style={{ marginTop: 32 }}><Icon name="bars" size={19} /> 나의 성적분포</h2>
-          <GenericGrids data={data.grade_distribution} />
+          <GenericGrids data={portalData.grade_distribution} />
         </>
       )}
 
-      {data?.cumulative_grades && (
+      {portalData?.cumulative_grades && (
         <>
           <h2 className="sub-h" style={{ marginTop: 34 }}><Icon name="book" size={19} /> 누적 성적</h2>
-          <GenericGrids data={data.cumulative_grades} />
+          <GenericGrids data={portalData.cumulative_grades} />
         </>
       )}
     </div>
