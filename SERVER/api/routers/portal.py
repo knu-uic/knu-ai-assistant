@@ -31,15 +31,22 @@ async def portal_sync_start(
 ) -> PortalSyncStartResponse:
     pool = await get_arq_pool()
     job_id = _user_job_id(username)
+
+    # dedup은 "진행 중"일 때만 — 완료된 이전 잡 결과가 남아 있으면 지우고 새로 실행한다.
+    # (안 지우면 직전 동기화 결과가 keep_result 창 동안 재시도를 막는다. LMS와 동일 패턴)
+    status = await Job(job_id, redis=pool).status()
+    if status in (JobStatus.queued, JobStatus.deferred, JobStatus.in_progress):
+        return PortalSyncStartResponse(job_id=job_id)
+    await pool.delete(f"arq:result:{job_id}")
+
     # 비밀번호는 암호문으로만 잡 페이로드에 실린다 (저장·로그 없음).
-    enqueued = await pool.enqueue_job(
+    await pool.enqueue_job(
         "portal_sync",
         username,
         req.student_id,
         encrypt_secret(req.password),
         _job_id=job_id,
     )
-    # enqueued=None → 같은 잡이 이미 대기/실행/완료(결과 보존창) 상태 — 그 잡을 그대로 사용
     return PortalSyncStartResponse(job_id=job_id)
 
 
