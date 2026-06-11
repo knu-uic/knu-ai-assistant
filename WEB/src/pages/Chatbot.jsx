@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Icon } from "../icons.jsx";
 import { streamChatbot, chatSuggestions } from "../api.js";
 import { useApp } from "../store.jsx";
+import { ChatHistory } from "./ChatHistory.jsx";
 
 // [텍스트](url)·맨 URL을 클릭 가능한 링크로. 나머지는 평문(줄바꿈은 pre-wrap).
 const LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s)]+)/g;
@@ -39,6 +40,7 @@ export function ChatbotPage() {
   const [thinking, setThinking] = useState(false);
   const [status, setStatus] = useState("");
   const [input, setInput] = useState("");
+  const [panelOpen, setPanelOpen] = useState(false);  // 대화목록 패널 기본 접힘
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -99,6 +101,10 @@ export function ChatbotPage() {
 
   return (
     <div className="chat-wrap">
+      <button className="chat-hist-toggle" onClick={() => setPanelOpen(true)} aria-label="대화 목록 열기">
+        <Icon name="menu" size={20} />
+      </button>
+      <ChatHistory open={panelOpen} onClose={() => setPanelOpen(false)} />
       <div className="chat-scroll" ref={scrollRef}>
         {empty && (
           <div className="chat-welcome">

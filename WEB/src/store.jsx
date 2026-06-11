@@ -6,6 +6,15 @@ import * as api from "./api.js";
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
 
+const chatKey = (u) => `knu_chat_${u}`;
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+// 첫 사용자 질문 앞 20자로 대화 제목 자동 생성.
+function deriveTitle(messages) {
+  const first = messages.find((m) => m.role === "user");
+  const t = (first?.content || "새 대화").trim();
+  return t.length > 20 ? t.slice(0, 20) + "…" : t;
+}
+
 export function AppProvider({ children }) {
   const [authed, setAuthed] = useState(api.isAuthed());
   const [profile, setProfile] = useState(null);
@@ -18,7 +27,60 @@ export function AppProvider({ children }) {
   const [portalData, setPortalData] = useState(null);
   const [timetable, setTimetable] = useState(null);
   const [home, setHome] = useState(null);
-  const [chatMsgs, setChatMsgs] = useState([]);
+
+  // 대화 기록 — username별 localStorage에 영속화. currentId는 항상 유효한 id를
+  // 가리키되, 해당 대화는 첫 메시지가 생기기 전엔 conversations에 안 들어간다
+  // (= 빈 새 대화는 목록에 안 보임).
+  const [conversations, setConversations] = useState([]);
+  const [currentId, setCurrentId] = useState(newId);
+
+  // 로그인/계정 전환 시 그 username 키에서 로드. 로그아웃이면 비움.
+  useEffect(() => {
+    const u = api.currentUsername();
+    if (!authed || !u) {
+      setConversations([]);
+      setCurrentId(newId());
+      return;
+    }
+    const raw = localStorage.getItem(chatKey(u));
+    const convs = raw ? JSON.parse(raw) : [];
+    setConversations(convs);
+    setCurrentId(convs[0]?.id ?? newId());
+  }, [authed]);
+
+  // conversations 변경 시 현재 username 키로 flush. 로그아웃 상태(!authed)에선
+  // 쓰지 않아 기존 기록을 빈 배열로 덮어쓰지 않는다(로그아웃해도 기록 유지).
+  useEffect(() => {
+    const u = api.currentUsername();
+    if (!authed || !u) return;
+    localStorage.setItem(chatKey(u), JSON.stringify(conversations));
+  }, [conversations, authed]);
+
+  const chatMsgs = conversations.find((c) => c.id === currentId)?.messages ?? [];
+
+  // 기존 Chatbot.jsx 인터페이스 유지: setChatMsgs(updater). 현재 대화가 아직
+  // 목록에 없으면 첫 메시지에서 새 대화로 생성한다.
+  const setChatMsgs = useCallback((updater) => {
+    setConversations((convs) => {
+      const idx = convs.findIndex((c) => c.id === currentId);
+      const prev = idx >= 0 ? convs[idx].messages : [];
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      const now = Date.now();
+      if (idx < 0) {
+        return [{ id: currentId, title: deriveTitle(next), messages: next, createdAt: now, updatedAt: now }, ...convs];
+      }
+      const out = [...convs];
+      out[idx] = { ...out[idx], messages: next, updatedAt: now, title: out[idx].title || deriveTitle(next) };
+      return out;
+    });
+  }, [currentId]);
+
+  const newConversation = useCallback(() => setCurrentId(newId()), []);
+  const loadConversation = useCallback((id) => setCurrentId(id), []);
+  const deleteConversation = useCallback((id) => {
+    setConversations((convs) => convs.filter((c) => c.id !== id));
+    setCurrentId((cur) => (cur === id ? newId() : cur));
+  }, []);
 
   const refreshProfile = useCallback(async () => {
     if (!api.isAuthed()) return;
@@ -138,6 +200,7 @@ export function AppProvider({ children }) {
     syncPortal, syncLms,
     setLmsTasks,
     chatMsgs, setChatMsgs,
+    conversations, currentId, newConversation, loadConversation, deleteConversation,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
