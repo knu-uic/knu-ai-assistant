@@ -39,6 +39,15 @@ class ApiService {
     _dio.options.baseUrl = url;
   }
 
+  /// 로그인 후 받은 JWT를 모든 요청의 Authorization 헤더에 싣는다. null이면 해제.
+  void setAuthToken(String? token) {
+    if (token == null) {
+      _dio.options.headers.remove('Authorization');
+    } else {
+      _dio.options.headers['Authorization'] = 'Bearer $token';
+    }
+  }
+
   String get baseUrl => _baseUrl;
 
   // ── 에러 핸들링 ──────────────────────────────────────────────
