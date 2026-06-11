@@ -286,6 +286,11 @@ PORTAL_SYNC_TIMEOUT_SECONDS = _env_int("PORTAL_SYNC_TIMEOUT_SECONDS", 180)
 # LMS 세션(쿠키+토큰) Redis 보관 기간(일). 만료 시 다음 동기화에 비번 재제출 필요.
 LMS_SESSION_TTL_DAYS = _env_int("LMS_SESSION_TTL_DAYS", 7)
 
+# 웹 SPA CORS 허용 오리진(콤마 구분). 비면 CORS 미들웨어 미적용(개발=vite proxy).
+WEB_CORS_ORIGINS = [
+    o.strip() for o in os.getenv("WEB_CORS_ORIGINS", "").split(",") if o.strip()
+]
+
 RATE_LIMIT_SIGNUP_REQUEST = os.getenv("RATE_LIMIT_SIGNUP_REQUEST", "3/minute")
 RATE_LIMIT_AUTH = os.getenv("RATE_LIMIT_AUTH", "10/minute")
 RATE_LIMIT_CHAT = os.getenv("RATE_LIMIT_CHAT", "5/minute;150/day")
