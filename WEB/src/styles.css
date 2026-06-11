@@ -468,3 +468,29 @@ body { font-size: 15px; }
 /* 홈 세로 스택 — 마감도 많으면 스크롤 */
 .dl-scroll { max-height: 320px; overflow-y: auto; }
 .dl-scroll .dl-row:first-child { border-top: none; }
+
+/* ============================================================
+   학교 로고 반영 — 크레스트 + 홈 히어로 + 그린 보조색
+   ============================================================ */
+:root { --green-knu: #1a7a4f; }
+.brand { align-items: center; gap: 12px; }
+.brand-crest { flex: 0 0 auto; }
+
+/* 홈 히어로 — 블루 그라데이션 + 크레스트 워터마크 */
+.hero {
+  position: relative; overflow: hidden;
+  background: linear-gradient(120deg, #15539c 0%, #1d63b4 60%, #1a7a4f 160%);
+  border-radius: 18px; padding: 30px 32px; margin-bottom: 6px;
+  box-shadow: 0 8px 26px rgba(21,83,156,.22);
+}
+.hero-crest { position: absolute; right: -18px; top: 50%; transform: translateY(-50%); opacity: .16; }
+.hero-text { position: relative; }
+.hero-greet { font-size: 30px; font-weight: 800; color: #fff; margin: 0; letter-spacing: -.3px; }
+.hero-sub { font-size: 15px; color: #d6e6f8; margin: 8px 0 0; font-weight: 500; }
+
+/* 사이드바 액티브 메뉴 좌측 그린 강조선 */
+.nav-item.active { box-shadow: inset 3px 0 0 var(--green-knu); }
+
+/* 섹션 타이틀 앞 그린 악센트 바 */
+.section-title { position: relative; padding-left: 13px; }
+.section-title::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 4px; height: 18px; border-radius: 3px; background: var(--green-knu); }

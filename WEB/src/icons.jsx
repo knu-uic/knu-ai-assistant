@@ -47,26 +47,30 @@ function Icon({ name, size = 18, stroke = 2, style, className }) {
   );
 }
 
-/* KNU crest — circular seal echoing the university emblem (pavilion + ring + gold) */
-function Crest({ size = 34 }) {
+/* KNU crest — 공주대 엠블럼을 단순화(블루 링 + 그린 보조 + 정자각 + KNU + 1948) */
+function Crest({ size = 36 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" className="brand-crest">
-      {/* rings */}
+      {/* 링 */}
       <circle cx="24" cy="24" r="23" fill="#15539c"/>
-      <circle cx="24" cy="24" r="19.4" fill="#ffffff"/>
-      <circle cx="24" cy="24" r="19.4" fill="none" stroke="#0f4380" strokeWidth="0.8"/>
-      <circle cx="24" cy="24" r="16.4" fill="none" stroke="#c2a04e" strokeWidth="1"/>
-      {/* pavilion / hall */}
-      <g stroke="#15539c" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M24 12.4 33 19.2 15 19.2 Z" fill="#15539c"/>
-        <path d="M16.4 19.4 H31.6"/>
-        <path d="M18 20 V26.4 M22 20 V26.4 M26 20 V26.4 M30 20 V26.4"/>
-        <path d="M15.4 27 H32.6"/>
-        <path d="M14.3 29.2 H33.7"/>
+      <circle cx="24" cy="24" r="22" fill="none" stroke="#1a7a4f" strokeWidth="1"/>
+      <circle cx="24" cy="24" r="18.6" fill="#ffffff"/>
+      <circle cx="24" cy="24" r="18.6" fill="none" stroke="#0f4380" strokeWidth="0.7"/>
+      {/* 정자각(지붕 + 기둥 + 단) */}
+      <g fill="#15539c" stroke="#15539c" strokeWidth="0.6" strokeLinejoin="round">
+        <path d="M24 11.6 32.4 18.2 15.6 18.2 Z"/>
+        <rect x="15.4" y="18.8" width="17.2" height="1.6" rx="0.5"/>
+        <rect x="17.6" y="21" width="1.7" height="6.2"/>
+        <rect x="21.2" y="21" width="1.7" height="6.2"/>
+        <rect x="25.1" y="21" width="1.7" height="6.2"/>
+        <rect x="28.7" y="21" width="1.7" height="6.2"/>
+        <rect x="14.6" y="27.8" width="18.8" height="1.5" rx="0.5"/>
+        <rect x="13.4" y="30.1" width="21.2" height="1.5" rx="0.5"/>
       </g>
-      {/* gold accents */}
-      <circle cx="24" cy="11.6" r="1.35" fill="#c2a04e"/>
-      <path d="M19 32.4 H29" stroke="#c2a04e" strokeWidth="1.5" strokeLinecap="round"/>
+      {/* KNU */}
+      <text x="24" y="38.4" textAnchor="middle" fontSize="5.4" fontWeight="800" fill="#15539c" fontFamily="Georgia, serif">KNU</text>
+      {/* 1948 */}
+      <text x="24" y="14.3" textAnchor="middle" fontSize="3" fontWeight="700" fill="#1a7a4f">1948</text>
     </svg>
   );
 }

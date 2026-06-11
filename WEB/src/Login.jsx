@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Crest } from "./icons.jsx";
 import { auth } from "./api.js";
 
 export function Login({ onAuthed }) {
@@ -27,6 +28,7 @@ export function Login({ onAuthed }) {
     <div className="auth-wrap">
       <div className="card auth-card">
         <div className="auth-brand">
+          <Crest size={46} />
           <div>
             <div className="brand-name" style={{ fontSize: 22 }}>KNU PICK</div>
             <div className="brand-sub">Academic Intelligence</div>

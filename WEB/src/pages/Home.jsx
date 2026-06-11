@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { Icon } from "../icons.jsx";
+import { Icon, Crest } from "../icons.jsx";
 import { MOCK } from "../api.js";
 import { useApp } from "../store.jsx";
 import { todayClasses, parseCell } from "../timetable.js";
@@ -22,8 +22,15 @@ export function HomePage() {
 
   return (
     <div className="main-inner wide">
-      <h1 className="greet">{profile?.name ? `${profile.name}님, 안녕하세요` : "안녕하세요"}</h1>
-      <p className="page-sub" style={{ fontSize: 15.5 }}>오늘도 좋은 하루 되세요.</p>
+      <div className="hero">
+        <div className="hero-crest"><Crest size={120} /></div>
+        <div className="hero-text">
+          <h1 className="hero-greet">{profile?.name ? `${profile.name}님, 안녕하세요` : "안녕하세요"}</h1>
+          <p className="hero-sub">
+            {profile?.major ? `${profile.major}${profile.year ? ` · ${profile.year}학년` : ""}` : "공주대학교 학사 어시스턴트"}
+          </p>
+        </div>
+      </div>
 
       <div className="row-between" style={{ marginTop: 30 }}>
         <h2 className="section-title">추천 공지</h2>

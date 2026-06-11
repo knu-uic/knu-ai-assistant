@@ -1,5 +1,5 @@
 import React from "react";
-import { Icon } from "./icons.jsx";
+import { Icon, Crest } from "./icons.jsx";
 
 const NAV = [
   { id: "home", icon: "home", label: "홈" },
@@ -14,6 +14,7 @@ export function Sidebar({ page, onNav }) {
   return (
     <aside className="sidebar">
       <div className="brand">
+        <Crest size={38} />
         <div>
           <div className="brand-name">KNU PICK</div>
           <div className="brand-sub">Academic Intelligence</div>
