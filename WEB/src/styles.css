@@ -489,8 +489,8 @@ body { font-size: 15px; }
 .hero-sub { font-size: 15px; color: #d6e6f8; margin: 8px 0 0; font-weight: 500; }
 
 /* 사이드바 액티브 메뉴 좌측 그린 강조선 */
-.nav-item.active { box-shadow: inset 3px 0 0 var(--green-knu); }
+.nav-item.active { box-shadow: inset 3px 0 0 var(--blue); }
 
 /* 섹션 타이틀 앞 그린 악센트 바 */
 .section-title { position: relative; padding-left: 13px; }
-.section-title::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 4px; height: 18px; border-radius: 3px; background: var(--green-knu); }
+.section-title::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 4px; height: 18px; border-radius: 3px; background: var(--blue); }

@@ -46,13 +46,13 @@ function TaskCard({ t, onToggle, onDelete }) {
   );
 }
 
-function Expander({ name, count, doneCount, children }) {
+function Expander({ name, count, children }) {
   const [open, setOpen] = useState(false);
   return (
     <div className={"expander" + (open ? " open" : "")}>
       <button className="exp-head" onClick={() => setOpen(!open)}>
         <span className="exp-name">{name}</span>
-        {count > 0 && <span className="exp-count">{count}건{doneCount > 0 ? ` · 완료 ${doneCount}` : ""}</span>}
+        {count > 0 && <span className="exp-count">{count}건</span>}
         <Icon name="chevron" size={16} className="exp-chev" />
       </button>
       {open && <div className="exp-body">{children}</div>}
@@ -66,7 +66,6 @@ export function LmsPage() {
     saveFavorites, toggleTaskDone, removeTask,
   } = useApp();
   const [tab, setTab] = useState("courses");
-  const [showDone, setShowDone] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -97,18 +96,14 @@ export function LmsPage() {
     saveFavorites(next);
   }
 
-  const visible = (ts) => ts.filter((t) => showDone || !t.done);
-
   function favSection(type, empty) {
     if (favorites.length === 0)
       return <div className="empty-msg">즐겨찾기한 과목이 없어요. '과목' 탭에서 별표를 눌러 추가하세요.</div>;
     return [...favorites].sort().map((cname) => {
-      const courseTasks = tasks.filter((t) => t.type === type && t.course === cname);
-      let items = visible(courseTasks);
+      let items = tasks.filter((t) => t.type === type && t.course === cname && !t.done);
       if (type === "notice") items = items.sort((a, b) => (b.due_date || "").localeCompare(a.due_date || ""));
-      const doneCount = courseTasks.filter((t) => t.done).length;
       return (
-        <Expander key={cname} name={cname} count={items.length} doneCount={showDone ? doneCount : 0}>
+        <Expander key={cname} name={cname} count={items.length}>
           {items.length === 0
             ? <div className="caption" style={{ padding: "8px 4px" }}>{empty}</div>
             : items.map((t) => <TaskCard key={t.id} t={t} onToggle={toggleTaskDone} onDelete={removeTask} />)}
@@ -152,13 +147,6 @@ export function LmsPage() {
           <button key={t.id} className={"tab" + (tab === t.id ? " on" : "")} onClick={() => setTab(t.id)}>{t.label}</button>
         ))}
       </div>
-
-      {tab !== "courses" && (
-        <label className="toggle-row" style={{ marginBottom: 14 }}>
-          <input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />
-          완료된 작업 표시
-        </label>
-      )}
 
       {tab === "courses" && (
         courses.length === 0
