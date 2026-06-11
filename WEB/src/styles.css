@@ -460,3 +460,7 @@ body { font-size: 15px; }
 /* 연도 선택 드롭다운 */
 .year-select { font-size: 13.5px; font-weight: 600; color: var(--ink-2); border: 1px solid var(--line-2); border-radius: 9px; padding: 7px 12px; background: var(--card); outline: none; cursor: pointer; }
 .year-select:focus { border-color: var(--blue); }
+
+/* 오늘 시간표 — 수업 많으면 스크롤 (패널 높이 일정) */
+.tt-scroll { max-height: 360px; overflow-y: auto; }
+.tt-scroll .tt-item:first-child { border-top: none; }
