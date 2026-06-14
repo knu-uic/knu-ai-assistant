@@ -1,0 +1,79 @@
+# prod 배포용 compose.
+# 기존 docker-compose.yml(스트림릿 개발용)은 건드리지 않고 별도 파일로 둔다.
+#
+# 원칙: 외부로 열리는 문은 다음 PR의 web(caddy) 하나뿐.
+#   지금은 db·redis·api·worker 모두 컨테이너 네트워크 안에서만 통신(호스트 포트 미노출).
+#   그래서 api 검증은 호스트가 아니라 컨테이너 안에서:
+#     docker compose -f docker-compose.prod.yml exec api curl -s localhost:8000/api/health
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-knu-uic}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-knu-uic}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-knu-uic} -d ${DB_NAME:-knu-uic}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - bot_network
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    networks:
+      - bot_network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: always
+    env_file:
+      - .env
+    environment:
+      # .env는 네이티브 개발용(local)이라, 컨테이너에서만 docker로 덮어쓴다.
+      # (config.py: load_dotenv override=False라 이 OS env가 우선)
+      RUNTIME_ENV: docker                # → DB_HOST=db
+      REDIS_URL: redis://redis:6379      # 코드 기본값(localhost) 대신 redis 서비스로
+    depends_on:
+      db:
+        condition: service_healthy       # pg_isready 통과 후 기동
+      redis:
+        condition: service_started
+    networks:
+      - bot_network
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile             # 기존 헤비 이미지 재사용(playwright·libreoffice 등)
+    restart: always
+    command: arq workers.arq_worker.WorkerSettings   # 스트림릿 CMD를 워커로 덮어씀
+    env_file:
+      - .env
+    environment:
+      RUNTIME_ENV: docker
+      REDIS_URL: redis://redis:6379
+    # 볼륨 없음: LMS 로그인 세션(storage_state+토큰)은 Redis에 저장된다
+    # (api/sessions.py save_session/load_session). 워커는 동기화 때 임시 디렉터리에
+    # 세션을 풀어 쓰고 갱신분을 다시 Redis에 저장하므로 .secrets 영속이 불필요하다.
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - bot_network
+
+volumes:
+  pgdata:
+
+networks:
+  bot_network:
+    driver: bridge
