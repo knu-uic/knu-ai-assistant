@@ -1,0 +1,9 @@
+# 빌드 컨텍스트에서 제외(이미지 작게 + 비밀 비노출).
+# 주의: Caddyfile은 Dockerfile 2단계에서 COPY하므로 제외하지 않는다.
+node_modules
+dist
+.env
+.env.*
+.git
+*.log
+npm-debug.log*
