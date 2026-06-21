@@ -52,4 +52,4 @@ docker compose stop db redis    # 데이터는 pgdata 볼륨에 남는다
 - **동기화(포털/LMS)가 큐에서 안 빠짐** → worker(4번)가 안 떠 있는 경우. redis도 필요.
 - **웹에서 API 호출 401/실패** → api(3번)가 안 떠 있거나, 토큰 만료(재로그인).
 - **worker가 Ctrl+C로 안 죽음** → `kill -9` 필요할 때가 있음 (`pgrep -fl "arq workers"`로 PID 확인).
-- 도커로 띄우는 prod 구성은 별도 설계 진행 중 — 이 문서는 네이티브 개발용.
+- 도커로 전체 스택을 한 번에 띄우는 prod 배포는 [prod-run.md](prod-run.md) 참고 — 이 문서는 네이티브 개발용.
