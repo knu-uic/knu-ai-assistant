@@ -76,3 +76,4 @@ docs/superpowers/
 # SERVER 테스트·참조앱
 SERVER/.vscode/
 SERVER/test_streamlit/
+.agents/
