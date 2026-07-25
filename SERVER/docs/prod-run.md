@@ -28,6 +28,8 @@
 - `AUTH_JWT_SECRET` — 로그인 토큰 서명 키
 - `PORTAL_SYNC_ENC_KEY` — 포털 비번 전달용 Fernet 키
   (생성: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`)
+- `MCP_AUTH_TOKEN` — 내부 데모의 공지 근거 MCP Bearer token
+  (생성: `python -c "import secrets; print(secrets.token_urlsafe(32))"`)
 - provider 키 — `EMBEDDING_PROVIDER`/`LLM_MODEL` 등 토글에 맞는 API 키
   (prod 기본 OpenAI: `OPENAI_API_KEY`)
 
@@ -49,6 +51,34 @@ docker compose -f docker-compose.prod.yml exec api curl -s localhost:8000/api/he
 ```
 
 확인: 브라우저 `http://localhost` (80포트) 접속 → 로그인 → 공지/챗봇 동작하면 정상.
+
+## 내부 MCP 공지 근거 조회
+
+`/api/mcp`는 기존 web(80)의 `/api/*` 프록시를 통해서만 제공되는 내부 데모용
+stateless Streamable HTTP MCP 경로다. `Authorization: Bearer $MCP_AUTH_TOKEN` 헤더가
+없으면 요청은 거부된다. token을 tool 인자나 모델 대화에 넣지 않는다.
+
+제공 도구는 `search_knu_notices`와 `get_knu_notice_detail` 두 개뿐이다. 서버는 공지
+검색·상세 근거만 반환하며, 요청자 모델이 검색 반복과 최종 답변을 만든다.
+
+```bash
+cd ~/knu_ai_assistant/SERVER
+../.venv/bin/python - <<'PY'
+import asyncio
+import os
+from fastmcp import Client
+
+async def main():
+    async with Client("http://localhost/api/mcp", auth=os.environ["MCP_AUTH_TOKEN"]) as client:
+        print([tool.name for tool in await client.list_tools()])
+        print(await client.call_tool("search_knu_notices", {"query": "수강 철회", "limit": 3}))
+
+asyncio.run(main())
+PY
+```
+
+검색 결과의 `category`와 `url`로 `get_knu_notice_detail`을 호출해 본문과 출처 URL을
+대조한다. 이 경로는 일반 공개 인증·사용량 보호가 추가되기 전까지 외부에 공개하지 않는다.
 
 ## 상태 · 로그
 

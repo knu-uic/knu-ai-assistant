@@ -3,6 +3,7 @@ psycopg[binary,pool]
 pgvector
 fastapi
 uvicorn[standard]
+fastmcp==2.14.7
 python-dotenv
 pydantic
 
@@ -64,4 +65,3 @@ pdf2image
 
 # 이미지/OCR 처리
 pillow
-

@@ -8,6 +8,7 @@ from slowapi.errors import RateLimitExceeded
 from config import WEB_CORS_ORIGINS
 from db.pool import pool
 from api.deps import require_user
+from api.mcp_server import _create_mcp_app, mcp_asgi_app
 from api.ratelimit import limiter
 from api.routers import auth, health, chat, lms, me, notices, portal, search
 
@@ -16,8 +17,12 @@ from api.routers import auth, health, chat, lms, me, notices, portal, search
 async def lifespan(app: FastAPI):
     await pool.open()
     try:
-        yield
+        mcp_app = _create_mcp_app()
+        mcp_asgi_app.app = mcp_app
+        async with mcp_app.router.lifespan_context(mcp_app):
+            yield
     finally:
+        mcp_asgi_app.app = None
         await pool.close()
 
 
@@ -53,3 +58,4 @@ app.include_router(search.router, prefix="/api", dependencies=[Depends(require_u
 app.include_router(portal.router, prefix="/api", dependencies=[Depends(require_user)])
 app.include_router(lms.router, prefix="/api", dependencies=[Depends(require_user)])
 app.include_router(me.router, prefix="/api", dependencies=[Depends(require_user)])
+app.mount("/api/mcp", mcp_asgi_app)
