@@ -232,6 +232,8 @@ AUTH_TOKEN_TTL_DAYS = _env_int(
     30,
 )
 
+MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN")
+
 # -----------------------------
 # mail (가입 인증)
 # -----------------------------

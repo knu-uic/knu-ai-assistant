@@ -13,6 +13,7 @@
 # 웹/서버
 fastapi
 uvicorn[standard]
+fastmcp==2.14.7
 python-multipart
 python-dotenv
 pydantic
