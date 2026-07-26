@@ -10,13 +10,15 @@ fixture_token="gateway-test-token"
 created_env=false
 
 cleanup() {
+  local exit_code=$1
   docker rm -f "$gateway_name" "$api_name" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   if "$created_env"; then
     rm -f "$server_dir/.env"
   fi
+  exit "$exit_code"
 }
-trap cleanup EXIT
+trap 'cleanup "$?"' EXIT
 
 if [[ ! -e "$server_dir/.env" ]]; then
   umask 077
@@ -45,6 +47,8 @@ for _ in {1..20}; do
   sleep 0.25
 done
 
-[[ -n "${endpoint:-}" ]]
-[[ $(curl --silent --fail --max-time 2 -H 'Authorization: Bearer client-token' "http://$endpoint/api/mcp") == "Bearer $fixture_token" ]]
-[[ $(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 "http://$endpoint/api/health") == 404 ]]
+[[ -n "${endpoint:-}" ]] || exit 1
+[[ $(curl --silent --fail --max-time 2 -H 'Authorization: Bearer client-token' "http://$endpoint/api/mcp") == "Bearer $fixture_token" ]] || exit 1
+[[ $(curl --silent --fail --max-time 2 "http://$endpoint/api/mcp/nested") == "Bearer $fixture_token" ]] || exit 1
+[[ $(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 "http://$endpoint/api/mcp-unrelated") == 404 ]] || exit 1
+[[ $(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 "http://$endpoint/api/health") == 404 ]] || exit 1
