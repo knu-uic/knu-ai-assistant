@@ -18,6 +18,11 @@ def _mcp_request(client, payload, token=None):
 
 
 def _tool_call(client, token, name, arguments):
+    result = _tool_call_result(client, token, name, arguments)
+    return json.loads(result["content"][0]["text"])
+
+
+def _tool_call_result(client, token, name, arguments):
     response = _mcp_request(
         client,
         {
@@ -29,7 +34,7 @@ def _tool_call(client, token, name, arguments):
         token,
     )
     assert response.status_code == 200
-    return json.loads(response.json()["result"]["content"][0]["text"])
+    return response.json()["result"]
 
 
 @pytest.mark.parametrize(
@@ -73,39 +78,140 @@ def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
         )
 
     assert response.status_code == 200
-    assert {tool["name"] for tool in response.json()["result"]["tools"]} == {
+    tools = response.json()["result"]["tools"]
+    assert {tool["name"] for tool in tools} == {
         "search_knu_notices",
         "get_knu_notice_detail",
     }
+    search_tool = next(tool for tool in tools if tool["name"] == "search_knu_notices")
+    assert "수강/학사/장학 공지" in search_tool["description"]
 
 
 def test_search_knu_notices_clamps_result_limit_and_returns_safe_fields(monkeypatch):
     import api.mcp_server as mcp_mod
 
-    fake_rows = [(
-        "https://x/9", "검색결과 공지", "스니펫 본문", 0.87,
-        datetime.date(2026, 6, 2), None, None,
-        "학사", ["전체"], ["수강"],
-        "KNU", "학사과", "notice", None, "요약문", "비공개 본문", ["비공개.pdf"],
-    )]
-
-    async def fake_search(**kwargs):
-        assert kwargs == {"q": "수강 철회", "major": None, "category": None, "limit": 10}
-        from api.mappers import result_from_search_row
-        return [result_from_search_row(row) for row in fake_rows]
+    def fake_retrieve(query, major, category_override):
+        assert (query, major, category_override) == ("수강 철회", None, None)
+        return {
+            "query_mode": "precise",
+            "original_query": query,
+            "expanded_query": "2026학년도 수강 철회 신청 기간",
+            "categories": ["수강"],
+            "routing_fallback": False,
+            "contexts": [
+                {
+                    "url": "https://x/9",
+                    "title": "검색결과 공지",
+                    "category": "수강",
+                    "posted_at": datetime.date(2026, 6, 2),
+                    "start_date": None,
+                    "end_date": None,
+                    "summary": "요약문",
+                    "body_content": "가" * (mcp_mod._EVIDENCE_TEXT_LIMIT + 1),
+                    "attachment_names": ["안내.pdf"],
+                    "matched_chunk": "수강 철회 근거",
+                    "vector_score": 0.87,
+                    "rerank_score": 0.96,
+                    "private_db_value": "노출 금지",
+                }
+            ],
+            "evidence_chunks": [
+                {
+                    "url": "https://x/9",
+                    "title": "검색결과 공지",
+                    "category": "수강",
+                    "content": "수강 철회 근거",
+                    "vector_score": 0.87,
+                    "rerank_score": 0.96,
+                    "private_db_value": "노출 금지",
+                }
+            ],
+        }
 
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
-    monkeypatch.setattr(mcp_mod, "search_notice_results", fake_search)
+    monkeypatch.setattr(mcp_mod, "retrieve_mcp_evidence", fake_retrieve)
     with TestClient(app) as client:
-        result = _tool_call(
+        result = _tool_call_result(
             client, "unit-mcp-token", "search_knu_notices", {"query": "수강 철회", "limit": 99}
         )
 
-    assert list(result[0]) == [
+    legacy = json.loads(result["content"][0]["text"])
+    assert list(legacy[0]) == [
         "url", "title", "snippet", "score", "posted_at", "start_date", "end_date", "category", "summary",
     ]
-    assert result[0]["url"] == "https://x/9"
-    assert result[0]["summary"] == "요약문"
+    assert legacy[0]["url"] == "https://x/9"
+    assert legacy[0]["score"] == 0.96
+
+    package = result["structuredContent"]
+    assert package["schema_version"] == 2
+    assert package["status"] == "ok"
+    assert package["query_mode"] == "precise"
+    assert package["expanded_query"] == "2026학년도 수강 철회 신청 기간"
+    assert package["categories"] == ["수강"]
+    assert package["evidence_chunks"] == [
+        {
+            "url": "https://x/9",
+            "title": "검색결과 공지",
+            "category": "수강",
+            "content": "수강 철회 근거",
+            "vector_score": 0.87,
+            "rerank_score": 0.96,
+        }
+    ]
+    assert len(package["documents"][0]["body_content"]) <= mcp_mod._EVIDENCE_TEXT_LIMIT
+    assert package["documents"][0]["truncated"] is True
+    assert "private_db_value" not in json.dumps(package, ensure_ascii=False)
+
+
+@pytest.mark.parametrize(
+    ("query_mode", "contexts", "expected_status"),
+    [
+        ("smalltalk", [], "search_not_required"),
+        ("precise", [], "no_results"),
+        (
+            "broad",
+            [
+                {
+                    "url": "https://x/broad",
+                    "title": "수강 공지 목록",
+                    "category": "수강",
+                    "matched_chunk": "여러 수강 공지 요약",
+                    "vector_score": 0.7,
+                    "rerank_score": 0.8,
+                }
+            ],
+            "ok",
+        ),
+    ],
+)
+def test_search_knu_notices_returns_mode_status(monkeypatch, query_mode, contexts, expected_status):
+    import api.mcp_server as mcp_mod
+
+    monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
+    monkeypatch.setattr(
+        mcp_mod,
+        "retrieve_mcp_evidence",
+        lambda query, major, category: {
+            "query_mode": query_mode,
+            "original_query": query,
+            "expanded_query": query,
+            "categories": [],
+            "routing_fallback": False,
+            "contexts": contexts,
+            "evidence_chunks": [],
+        },
+    )
+
+    with TestClient(app) as client:
+        result = _tool_call_result(
+            client,
+            "unit-mcp-token",
+            "search_knu_notices",
+            {"query": "질문"},
+        )
+
+    assert result["structuredContent"]["status"] == expected_status
+    assert result["structuredContent"]["query_mode"] == query_mode
 
 
 def test_get_knu_notice_detail_limits_content_and_returns_source_url(monkeypatch):
