@@ -66,8 +66,12 @@ docker compose -f docker-compose.prod.yml exec api curl -s localhost:8000/api/he
 
 두 경로 모두 tool 인자나 모델 대화에 token을 넣지 않는다.
 
-제공 도구는 `search_knu_notices`와 `get_knu_notice_detail` 두 개뿐이다. 서버는 공지
-검색·상세 근거만 반환하며, 요청자 모델이 검색 반복과 최종 답변을 만든다.
+제공 도구는 `search_knu_notices`와 `get_knu_notice_detail` 두 개뿐이다.
+`search_knu_notices`는 Chat과 같은 router·precise/broad 검색·reranking·근거 선별을
+거치되 answerer와 verifier는 실행하지 않는다. 기존 MCP client용 결과 목록은
+`content`에 유지하고, query mode·확장 검색어·점수·제한된 본문을 포함한 근거 패키지는
+`structuredContent`로 반환한다. 첨부파일은 이름만 제공하며 요청자 모델이 근거 URL을
+인용해 최종 답변을 만든다.
 
 ```bash
 cd ~/knu_ai_assistant/SERVER

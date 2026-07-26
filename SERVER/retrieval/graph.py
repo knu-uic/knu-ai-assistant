@@ -154,7 +154,19 @@ def _retrieve_with_rerank(
     ranked = _rerank(query, rows)
     evidence_ranked = ranked[:EVIDENCE_TOP_K]
     evidence_chunks: List[Dict[str, Any]] = [
-        {"url": r[0], "title": r[1], "chunk": r[2], "score": s}
+        {
+            "url": r[0],
+            "title": r[1],
+            "chunk": r[2],
+            "score": s,
+            "vector_score": r[3],
+            "rerank_score": s,
+            "posted_at": r[4],
+            "start_date": r[5],
+            "end_date": r[6],
+            "category": r[7],
+            "summary": r[14] if len(r) > 14 else None,
+        }
         for r, s in evidence_ranked
     ]
 
@@ -185,11 +197,14 @@ def _retrieve_with_rerank(
                 "attachment_names": r[16] if len(r) > 16 else [],
                 "snippet": deduped_full,
                 "score": s,
+                "vector_score": r[3],
+                "rerank_score": s,
                 "matched_chunk": r[2],
                 "summary": r[14] if len(r) > 14 else None,
                 "posted_at": r[4],
                 "start_date": r[5],
                 "end_date": r[6],
+                "category": r[7],
             }
         )
 
@@ -232,9 +247,13 @@ def _retrieve_broad(
             "title": r[1],
             "matched_chunk": r[2],
             "summary": r[14] if len(r) > 14 else None,
+            "posted_at": r[4],
             "start_date": r[5],
             "end_date": r[6],
+            "category": r[7],
             "score": s,
+            "vector_score": r[3],
+            "rerank_score": s,
         }
         for r, s in top
     ]
@@ -245,6 +264,55 @@ def broad_retriever_node(state: ChatState) -> dict:
     categories = list(state.get("categories") or []) or None
     contexts = _retrieve_broad(query, state.get("major"), categories)
     return {"contexts": contexts, "evidence_chunks": []}
+
+
+def retrieve_mcp_evidence(
+    question: str,
+    major: str | None = None,
+    category_override: str | None = None,
+) -> dict:
+    routing_fallback = False
+    try:
+        route = router_node({"question": question, "major": major})
+    except Exception:
+        # MCP still searches the original query when the router provider is unavailable.
+        route = {
+            "query_mode": "precise",
+            "categories": [],
+            "expanded_query": question,
+        }
+        routing_fallback = True
+
+    query_mode = route.get("query_mode") or "precise"
+    categories = (
+        [category_override]
+        if category_override
+        else list(route.get("categories") or [])
+    )
+    query = route.get("expanded_query") or question
+
+    if query_mode == "smalltalk":
+        contexts, evidence_chunks = [], []
+    elif query_mode == "broad":
+        contexts = _retrieve_broad(query, major, categories or None)
+        evidence_chunks = []
+    else:
+        query_mode = "precise"
+        contexts, evidence_chunks = _retrieve_with_rerank(
+            query,
+            major,
+            categories or None,
+        )
+
+    return {
+        "query_mode": query_mode,
+        "original_query": question,
+        "expanded_query": query,
+        "categories": categories,
+        "routing_fallback": routing_fallback,
+        "contexts": contexts,
+        "evidence_chunks": evidence_chunks,
+    }
 
 
 def answerer_node(state: ChatState) -> dict:
