@@ -1,6 +1,7 @@
 import datetime
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
@@ -31,7 +32,17 @@ def _tool_call(client, token, name, arguments):
     return json.loads(response.json()["result"]["content"][0]["text"])
 
 
-def test_mcp_requires_bearer_token_before_initialize():
+@pytest.mark.parametrize(
+    ("token", "expected_status"),
+    [
+        (None, 401),
+        ("wrong-mcp-token", 401),
+        ("unit-mcp-token", 200),
+    ],
+)
+def test_mcp_accepts_only_configured_bearer_token(monkeypatch, token, expected_status):
+    import api.mcp_server as mcp_mod
+
     payload = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -43,10 +54,11 @@ def test_mcp_requires_bearer_token_before_initialize():
         },
     }
 
+    monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
     with TestClient(app) as client:
-        response = _mcp_request(client, payload)
+        response = _mcp_request(client, payload, token)
 
-    assert response.status_code == 401
+    assert response.status_code == expected_status
 
 
 def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
@@ -67,7 +79,7 @@ def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
     }
 
 
-def test_search_knu_notices_returns_only_safe_search_fields(monkeypatch):
+def test_search_knu_notices_clamps_result_limit_and_returns_safe_fields(monkeypatch):
     import api.mcp_server as mcp_mod
 
     fake_rows = [(
