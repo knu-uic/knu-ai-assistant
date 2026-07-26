@@ -26,10 +26,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # playwright 브라우저 + 시스템 의존성 설치 (크롬리움만)
 RUN python -m playwright install --with-deps chromium
 
-# 앱 소스 복사 (docker-compose에서 bind mount로 덮어쓰지만, mount 없이 단독 실행해도 동작하게)
+# 앱 소스 복사. 기본 이미지는 Playwright·문서 변환이 필요한 ARQ 워커용이다.
 COPY . .
 
-EXPOSE 8501
-
-# Streamlit 웹 서버 실행
-CMD ["streamlit", "run", "test_streamlit/main.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# ARQ 워커 실행
+CMD ["arq", "workers.arq_worker.WorkerSettings"]
