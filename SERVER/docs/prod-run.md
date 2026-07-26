@@ -54,9 +54,17 @@ docker compose -f docker-compose.prod.yml exec api curl -s localhost:8000/api/he
 
 ## 내부 MCP 공지 근거 조회
 
-`/api/mcp`는 기존 web(80)의 `/api/*` 프록시를 통해서만 제공되는 내부 데모용
-stateless Streamable HTTP MCP 경로다. `Authorization: Bearer $MCP_AUTH_TOKEN` 헤더가
-없으면 요청은 거부된다. token을 tool 인자나 모델 대화에 넣지 않는다.
+`/api/mcp`는 두 경로로 나뉜다.
+
+- 공개 web 진입점(`http://<host>/api/mcp`, :80)은 API로 그대로 프록시되며,
+  호출자가 `Authorization: Bearer $MCP_AUTH_TOKEN`을 보내야 한다. 토큰이 없거나
+  틀리면 API가 거부한다.
+- MCP 전용 loopback 게이트웨이(`http://127.0.0.1:8000/api/mcp`)는 호스트에서만
+  접근할 수 있다. Caddy가 서버의 `MCP_AUTH_TOKEN`을 upstream Bearer 헤더로
+  주입하므로 호출자는 토큰을 보내지 않는다. 이 게이트웨이에는 `/api/mcp` 외
+  경로가 없다(404).
+
+두 경로 모두 tool 인자나 모델 대화에 token을 넣지 않는다.
 
 제공 도구는 `search_knu_notices`와 `get_knu_notice_detail` 두 개뿐이다. 서버는 공지
 검색·상세 근거만 반환하며, 요청자 모델이 검색 반복과 최종 답변을 만든다.
@@ -65,11 +73,10 @@ stateless Streamable HTTP MCP 경로다. `Authorization: Bearer $MCP_AUTH_TOKEN`
 cd ~/knu_ai_assistant/SERVER
 ../.venv/bin/python - <<'PY'
 import asyncio
-import os
 from fastmcp import Client
 
 async def main():
-    async with Client("http://localhost/api/mcp", auth=os.environ["MCP_AUTH_TOKEN"]) as client:
+    async with Client("http://127.0.0.1:8000/api/mcp") as client:
         print([tool.name for tool in await client.list_tools()])
         print(await client.call_tool("search_knu_notices", {"query": "수강 철회", "limit": 3}))
 
