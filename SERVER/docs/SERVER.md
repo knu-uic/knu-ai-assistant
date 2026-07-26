@@ -1,8 +1,8 @@
 # KNU AI Assistant
 
-공주대학교 공지와 학과 자료를 크롤링해 PostgreSQL/pgvector에 저장하고, 서버 테스트용 Streamlit UI와 LangGraph 기반 RAG 챗봇으로 제공하는 학생 맞춤형 안내 서비스입니다.
+공주대학교 공지와 학과 자료를 크롤링해 PostgreSQL/pgvector에 저장하고, FastAPI와 LangGraph 기반 RAG 챗봇으로 제공하는 학생 맞춤형 안내 서비스입니다.
 
-실제 제품 앱은 Flutter로 별도 구현 중이며, 이 저장소의 Streamlit 화면은 백엔드와 동기화 흐름을 검증하기 위한 테스트 UI입니다.
+실제 웹 제품은 `WEB/`의 React/Vite 클라이언트이고, `SERVER/`는 FastAPI HTTP API와 Redis/ARQ 백그라운드 작업을 제공합니다. Flutter 앱은 별도 클라이언트입니다.
 
 ## 현재 기능
 
@@ -26,16 +26,9 @@
 
 ```text
 .
-├── test_streamlit/                # 서버 테스트용 Streamlit UI
-│   ├── main.py                    # 서버 테스트용 Streamlit 진입점 (Flutter 앱과 분리)
-│   ├── ui.py                      # 공용 UI 컴포넌트 (상수, 헬퍼, 렌더러)
-│   └── pages/                     # 페이지 모듈
-│       ├── home.py                # 홈 (추천 공지, 마감 임박)
-│       ├── notices.py             # 공지사항 목록/검색
-│       ├── chatbot.py             # AI 챗봇
-│       ├── lms.py                 # LMS 할 일
-│       ├── portal.py              # 포털 성적/시간표
-│       └── profile.py             # 프로필 / 설정
+├── api/                           # FastAPI HTTP API와 인증/동기화 잡 등록
+├── workers/
+│   └── arq_worker.py              # Redis/ARQ 워커와 공지 폴링
 │
 ├── db/                            # 데이터베이스 패키지 모듈
 │   ├── __init__.py                # DB façade (공개 API 재export)
@@ -97,18 +90,17 @@
 
 ## 실행 시작점과 실제 흐름
 
-실제 테스트 UI는 `test_streamlit/main.py`가 시작점입니다.
+로컬 개발은 DB·Redis를 Compose로 실행한 뒤 FastAPI, ARQ 워커, WEB/Vite를 각각 시작합니다.
 
 ```text
-streamlit run test_streamlit/main.py
-  → test_streamlit/main.py
-     → LMS 연동 상태 확인 / 필요 시 sync/lms_sync.py 백그라운드 실행
-     → 페이지 선택 (홈/공지/챗봇/설정 / LMS·포털)
-        → test_streamlit/pages/chatbot.py
-           → retrieval/graph.py (router → retriever → answerer)
+WEB/Vite
+  → /api 프록시
+  → api/main.py (FastAPI)
+     → db/retrieval
+     → Redis → workers/arq_worker.py (ARQ: LMS·포털 동기화, 공지 폴링)
 ```
 
-즉, 문서에서 "서버 테스트용 Streamlit UI"라고 한 것은 실제 실행 경로와 일치합니다. 다만 `pipelines/ingest.py`는 별도 배치 실행용이며, Chatbot의 답변 생성과 검색은 `retrieval/graph.py`가 담당합니다.
+FastAPI는 `Dockerfile.api`를 사용하고, 무거운 `Dockerfile`은 ARQ 워커를 기본 실행합니다. `pipelines/ingest.py`는 별도 배치 실행용이며, 답변 생성과 검색은 `retrieval/graph.py`가 담당합니다.
 
 ### 1. 크롤링 → 저장 (pipelines/ingest.py)
 
@@ -597,25 +589,28 @@ provider 설정:
 - `EMBEDDING_PROVIDER`: `lmstudio`, `google`, `openai` 중 선택
 - `RERANKER_PROVIDER`: `local`(BGE CrossEncoder), `jina`(Jina API) 중 선택
 
-Docker Compose에서 앱 컨테이너가 호스트의 LM Studio에 접근할 때는 기본값으로 `http://host.docker.internal:1234/v1`을 사용합니다.
+Docker 환경에서 워커가 호스트의 LM Studio에 접근해야 하면 `http://host.docker.internal:1234/v1`을 사용합니다.
 
 ## 로컬 실행
 
-PostgreSQL/pgvector만 Docker로 띄우고 앱은 로컬에서 실행하는 방식입니다.
+DB·Redis만 Docker로 띄우고 FastAPI, ARQ 워커, WEB/Vite는 로컬에서 실행하는 방식입니다.
 
 ```bash
-docker compose up -d db
+docker compose up -d db redis
 
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python3 -m playwright install chromium
 
-# 크롤링/적재
-python3 -m pipelines.ingest
+# FastAPI HTTP API
+python3 -m uvicorn api.main:app --port 8000
 
-# Streamlit 서버 테스트 UI 실행
-streamlit run test_streamlit/main.py
+# 별도 터미널: Redis 잡 처리와 공지 폴링
+arq workers.arq_worker.WorkerSettings
+
+# 별도 터미널: WEB/Vite
+cd ../WEB && npm run dev
 
 # LMS 동기화 (Canvas 계정 필요)
 python3 -m sync.lms_login --auto           # 세션 저장
@@ -636,16 +631,16 @@ brew install --cask libreoffice
 
 ## Docker 실행
 
+기본 Compose는 로컬 의존 서비스(DB·Redis)만 실행합니다.
+
 ```bash
-docker compose up --build
+docker compose up -d db redis
 ```
 
-앱: `http://localhost:8501`
-
-컨테이너 안에서 크롤링/적재:
+제품 컨테이너 구성은 별도의 프로덕션 Compose를 사용합니다. API는 `Dockerfile.api`, 워커는 `Dockerfile`, 웹은 `WEB/`의 Caddy 이미지를 사용합니다.
 
 ```bash
-docker compose exec app python -m pipelines.ingest
+docker compose -f docker-compose.prod.yml up --build
 ```
 
 ## 단일 URL 테스트
@@ -680,9 +675,7 @@ OR s.department IS NULL
 
 ```bash
 python3 -m py_compile \
-  test_streamlit/main.py test_streamlit/ui.py \
-  test_streamlit/pages/home.py test_streamlit/pages/notices.py test_streamlit/pages/chatbot.py \
-  test_streamlit/pages/lms.py test_streamlit/pages/portal.py test_streamlit/pages/profile.py \
+  api/main.py workers/arq_worker.py \
   pipelines/ingest.py pipelines/refine.py \
   config.py model.py schema.py integrations.py sitecustomize.py \
   db/__init__.py db/schema.py db/documents.py db/users.py db/lms.py \
@@ -706,7 +699,9 @@ python3 -m pip install --dry-run -r requirements.txt
 - `.xls`도 `xlrd`로 텍스트화하지만, 서식/병합 셀 복원은 제한적입니다.
 - `document_asset.extracted_text`는 디버깅/재처리용이고, 검색은 `document.content`에서 만들어진 chunk를 사용합니다.
 - Docker에서 LM Studio를 쓰려면 호스트 LM Studio 서버가 켜져 있어야 합니다.
-- Streamlit 서버 테스트 UI 실행은 `streamlit run test_streamlit/main.py`
+- FastAPI 실행은 `python3 -m uvicorn api.main:app --port 8000`
+- ARQ 워커 실행은 `arq workers.arq_worker.WorkerSettings`
+- 웹 개발 서버 실행은 `cd ../WEB && npm run dev`
 - 크롤링/적재 실행은 `python3 -m pipelines.ingest`
 - LMS 동기화 실행은 `python3 -m sync.lms_sync`
 - KNUIS 동기화 실행은 `python3 -m sync.knuis_sync`
