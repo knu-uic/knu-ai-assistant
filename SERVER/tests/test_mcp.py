@@ -6,6 +6,12 @@ from fastapi.testclient import TestClient
 from api.main import app
 
 
+def test_mcp_loopback_mode_is_limited_to_loopback_peers():
+    import api.mcp_server as mcp_mod
+
+    assert mcp_mod.MCP_ALLOW_LOOPBACK_UNAUTHENTICATED is True
+
+
 def _mcp_request(client, payload, token=None):
     headers = {
         "Accept": "application/json, text/event-stream",

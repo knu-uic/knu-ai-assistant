@@ -233,6 +233,7 @@ AUTH_TOKEN_TTL_DAYS = _env_int(
 )
 
 MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN")
+MCP_ALLOW_LOOPBACK_UNAUTHENTICATED = RUNTIME_ENV == "local"
 
 # -----------------------------
 # mail (가입 인증)

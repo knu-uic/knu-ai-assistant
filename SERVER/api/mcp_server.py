@@ -6,7 +6,7 @@ from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
 
 from api.routers.search import search_notice_results
-from config import MCP_AUTH_TOKEN
+from config import MCP_ALLOW_LOOPBACK_UNAUTHENTICATED, MCP_AUTH_TOKEN
 from db.documents import get_document_content
 
 
@@ -19,6 +19,10 @@ class _StaticBearerMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
+            peer = (scope.get("client") or ("", 0))[0]
+            if MCP_ALLOW_LOOPBACK_UNAUTHENTICATED and peer in {"127.0.0.1", "::1"}:
+                await self.app(scope, receive, send)
+                return
             headers = dict(scope["headers"])
             authorization = headers.get(b"authorization", b"").decode()
             expected = f"Bearer {MCP_AUTH_TOKEN}" if MCP_AUTH_TOKEN else ""
