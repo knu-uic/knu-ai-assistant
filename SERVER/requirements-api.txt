@@ -18,6 +18,7 @@ python-multipart
 python-dotenv
 pydantic
 httpx
+playwright
 
 # DB / 벡터
 psycopg[binary,pool]

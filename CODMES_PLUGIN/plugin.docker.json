@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "id": "kr.ac.kongju.knu",
+  "version": "0.1.0",
+  "name": "KNU",
+  "description": "공주대학교 공지 Surface와 Codmes용 검색 도구를 함께 제공합니다.",
+  "publisher": "KNU AI Assistant",
+  "platforms": [
+    "macos",
+    "ios",
+    "ipados"
+  ],
+  "permissions": [
+    "network:127.0.0.1"
+  ],
+  "surface": {
+    "id": "knu",
+    "type": "declarative",
+    "title": "KNU",
+    "description": "공주대학교 공지사항",
+    "icon": "graduationcap",
+    "upstreamUrl": "http://127.0.0.1",
+    "entryPath": "/api/codmes/surface",
+    "navigation": [
+      {
+        "id": "notices",
+        "title": "공지",
+        "icon": "bell",
+        "path": "/api/codmes/surface/notices"
+      },
+      {
+        "id": "lms",
+        "title": "LMS",
+        "icon": "checklist",
+        "path": "/api/codmes/surface/lms",
+        "requiresAuth": true
+      },
+      {
+        "id": "portal",
+        "title": "포털",
+        "icon": "person.text.rectangle",
+        "path": "/api/codmes/surface/portal",
+        "requiresAuth": true
+      },
+      {
+        "id": "settings",
+        "title": "설정",
+        "icon": "gearshape",
+        "path": "/api/codmes/surface/settings",
+        "requiresAuth": true
+      }
+    ],
+    "auth": {
+      "type": "password",
+      "credentialId": "knu-user-session",
+      "loginPath": "/api/auth/portal-login",
+      "statusPath": "/api/me",
+      "usernameField": "student_id",
+      "passwordField": "password",
+      "tokenField": "access_token"
+    },
+    "order": 100
+  },
+  "mcp": {
+    "name": "knu",
+    "transport": "streamable_http",
+    "url": "http://127.0.0.1:8000/api/mcp",
+    "surfaces": [
+      "knu"
+    ],
+    "credentialId": "knu",
+    "requiresApproval": true
+  }
+}

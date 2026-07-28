@@ -146,6 +146,7 @@ def _login_with_credentials(
     password: str,
     timeout: int,
     debug_dir: Path,
+    generate_access_token: bool,
 ) -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -219,6 +220,11 @@ def _login_with_credentials(
             pass
 
         if _wait_for_canvas_session(context, page, lms_url, timeout):
+            if not generate_access_token:
+                context.storage_state(path=str(state_path))
+                browser.close()
+                return
+
             print("[Token AutoGen] Canvas 설정 페이지로 이동하여 액세스 토큰 발급 시도 중...", flush=True)
             try:
                 page.goto(build_url(lms_url, "/profile/settings"), wait_until="networkidle", timeout=20000)
@@ -268,6 +274,7 @@ def login_with_credentials(
     state: str = DEFAULT_STATE_PATH,
     timeout: int = 60,
     debug_dir: str = DEFAULT_DEBUG_DIR,
+    generate_access_token: bool = True,
 ) -> None:
     """앱에서 받은 계정정보로 headless 로그인 검증 후 세션만 저장한다."""
     state_path = Path(state)
@@ -280,6 +287,7 @@ def login_with_credentials(
         password=password,
         timeout=timeout,
         debug_dir=Path(debug_dir),
+        generate_access_token=generate_access_token,
     )
 
 

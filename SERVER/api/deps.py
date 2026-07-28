@@ -1,13 +1,13 @@
 """API 인증 의존성 — 자체 계정(JWT Bearer) 검증."""
-from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from config import AUTH_JWT_SECRET, AUTH_TOKEN_TTL_DAYS
+from config import AUTH_JWT_SECRET
 
 _bearer = HTTPBearer(auto_error=False)
+_PORTAL_SUBJECT_PREFIX = "portal:"
 
 
 def _secret() -> str:
@@ -21,11 +21,19 @@ def _secret() -> str:
 
 
 def create_access_token(username: str) -> str:
-    payload = {
-        "sub": username,
-        "exp": datetime.now(timezone.utc) + timedelta(days=AUTH_TOKEN_TTL_DAYS),
-    }
-    return jwt.encode(payload, _secret(), algorithm="HS256")
+    return jwt.encode({"sub": username}, _secret(), algorithm="HS256")
+
+
+def create_portal_access_token(student_id: str) -> str:
+    """Create a non-expiring token for a portal-verified student."""
+    return create_access_token(f"{_PORTAL_SUBJECT_PREFIX}{student_id}")
+
+
+def portal_student_id(principal: str) -> str | None:
+    if not principal.startswith(_PORTAL_SUBJECT_PREFIX):
+        return None
+    student_id = principal[len(_PORTAL_SUBJECT_PREFIX):].strip()
+    return student_id or None
 
 
 def require_user(
@@ -41,3 +49,12 @@ def require_user(
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
     return payload["sub"]
+
+
+def optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> str | None:
+    """Return the authenticated username when present; allow public read-only routes."""
+    if credentials is None:
+        return None
+    return require_user(credentials)

@@ -42,8 +42,13 @@ export function AppProvider({ children }) {
       setCurrentId(newId());
       return;
     }
-    const raw = localStorage.getItem(chatKey(u));
-    const convs = raw ? JSON.parse(raw) : [];
+    const raw = api.getStoredItem(chatKey(u));
+    let convs = [];
+    try {
+      convs = raw ? JSON.parse(raw) : [];
+    } catch {
+      // 손상된 로컬 대화 기록은 무시하고 새 기록으로 시작한다.
+    }
     setConversations(convs);
     setCurrentId(convs[0]?.id ?? newId());
   }, [authed]);
@@ -53,7 +58,7 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const u = api.currentUsername();
     if (!authed || !u) return;
-    localStorage.setItem(chatKey(u), JSON.stringify(conversations));
+    api.setStoredItem(chatKey(u), JSON.stringify(conversations));
   }, [conversations, authed]);
 
   const chatMsgs = conversations.find((c) => c.id === currentId)?.messages ?? [];

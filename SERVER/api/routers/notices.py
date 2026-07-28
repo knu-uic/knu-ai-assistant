@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from db.accounts import get_account
 from db.documents import get_documents
 from db.users import get_user
-from api.deps import require_user
+from api.deps import optional_user
 from api.ratelimit import limiter, user_or_ip
 from api.schemas.notices import NoticeListResponse
 from api.mappers import notice_from_list_row
@@ -49,7 +49,7 @@ async def notices(
     major: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     cursor: str | None = Query(None),
-    username: str = Depends(require_user),
+    username: str | None = Depends(optional_user),
 ) -> NoticeListResponse:
     cursor_ts, cursor_url = None, None
     if cursor:
@@ -62,7 +62,7 @@ async def notices(
     # 없으면 로그인 유저 학과로 스코프. 연동 유저=내학과+공통, 비연동=공통만.
     department = None
     if major is None:
-        resolved = await _resolve_major(username)
+        resolved = await _resolve_major(username) if username else None
         if resolved:
             major = resolved
         else:

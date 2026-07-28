@@ -227,11 +227,6 @@ ATTACHMENT_NAME_RESERVE_RATIO = _env_float(
 
 AUTH_JWT_SECRET = os.getenv("AUTH_JWT_SECRET")
 
-AUTH_TOKEN_TTL_DAYS = _env_int(
-    "AUTH_TOKEN_TTL_DAYS",
-    30,
-)
-
 MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN")
 
 # -----------------------------

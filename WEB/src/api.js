@@ -3,13 +3,39 @@
    포털 졸업표 변환 미구현분)은 목업을 유지하고 주석으로 표시한다. */
 
 const TOKEN_KEY = "knu_pick_token";
+const memoryStorage = new Map();
+
+// WKWebView나 보안이 강화된 임베드 브라우저에서는 localStorage가 없거나
+// 접근 자체가 예외를 던질 수 있다. 이 경우 현재 웹 세션 동안만 유지되는
+// 메모리 저장소를 사용해 앱의 첫 렌더가 중단되지 않도록 한다.
+export function getStoredItem(key) {
+  try {
+    if (typeof localStorage !== "undefined") return localStorage.getItem(key);
+  } catch {
+    // Fall through to the in-memory store.
+  }
+  return memoryStorage.get(key) ?? null;
+}
+
+export function setStoredItem(key, value) {
+  try {
+    if (typeof localStorage !== "undefined") {
+      if (value == null) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+      return;
+    }
+  } catch {
+    // Fall through to the in-memory store.
+  }
+  if (value == null) memoryStorage.delete(key);
+  else memoryStorage.set(key, value);
+}
 
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+  return getStoredItem(TOKEN_KEY);
 }
 export function setToken(t) {
-  if (t) localStorage.setItem(TOKEN_KEY, t);
-  else localStorage.removeItem(TOKEN_KEY);
+  setStoredItem(TOKEN_KEY, t || null);
 }
 export function isAuthed() {
   return !!getToken();

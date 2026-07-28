@@ -127,7 +127,14 @@ def _vector_search(q_vec, major, categories):
 
 @traceable(name="rerank")
 def _rerank(query: str, rows):
-    scores = rerank_scores(query, [r[2] for r in rows])
+    try:
+        scores = rerank_scores(query, [r[2] for r in rows])
+    except Exception as error:
+        # MCP/search must remain usable when the optional local CrossEncoder or
+        # hosted reranker is unavailable. pgvector distance is already present
+        # at index 3 and is a safe, deterministic fallback ranking signal.
+        print(f"reranker unavailable; using vector scores: {error}")
+        scores = [float(r[3] or 0.0) for r in rows]
     return sorted(zip(rows, scores), key=lambda pair: pair[1], reverse=True)
 
 
@@ -271,33 +278,21 @@ def retrieve_mcp_evidence(
     major: str | None = None,
     category_override: str | None = None,
 ) -> dict:
-    routing_fallback = False
-    try:
-        route = router_node({"question": question, "major": major})
-    except Exception:
-        # MCP still searches the original query when the router provider is unavailable.
-        route = {
-            "query_mode": "precise",
-            "categories": [],
-            "expanded_query": question,
-        }
-        routing_fallback = True
+    """Retrieve MCP evidence without invoking a second LLM.
 
-    query_mode = route.get("query_mode") or "precise"
-    categories = (
-        [category_override]
-        if category_override
-        else list(route.get("categories") or [])
-    )
-    query = route.get("expanded_query") or question
+    The upstream Codmes model has already chosen this tool and supplied the
+    query/category arguments. Keeping routing deterministic avoids nested model
+    latency and lets the MCP work with only an embedding provider configured.
+    """
+    query = question.strip()
+    broad_markers = ("목록", "모아", "최근", "어떤", "여러", "전체", "한눈에")
+    query_mode = "broad" if any(marker in query for marker in broad_markers) else "precise"
+    categories = [category_override] if category_override else []
 
-    if query_mode == "smalltalk":
-        contexts, evidence_chunks = [], []
-    elif query_mode == "broad":
+    if query_mode == "broad":
         contexts = _retrieve_broad(query, major, categories or None)
         evidence_chunks = []
     else:
-        query_mode = "precise"
         contexts, evidence_chunks = _retrieve_with_rerank(
             query,
             major,
@@ -309,7 +304,7 @@ def retrieve_mcp_evidence(
         "original_query": question,
         "expanded_query": query,
         "categories": categories,
-        "routing_fallback": routing_fallback,
+        "routing_fallback": False,
         "contexts": contexts,
         "evidence_chunks": evidence_chunks,
     }

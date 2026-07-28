@@ -22,16 +22,6 @@ def test_unknown_defaults_to_precise():
 def test_retrieve_mcp_evidence_uses_precise_retrieval_without_answerer(monkeypatch):
     monkeypatch.setattr(
         graph,
-        "router_node",
-        lambda state: {
-            "query_mode": "precise",
-            "categories": ["수강"],
-            "expanded_query": "확장된 수강 철회",
-            "route_rationale": "구체 질문",
-        },
-    )
-    monkeypatch.setattr(
-        graph,
         "_retrieve_with_rerank",
         lambda query, major, categories: ([{"title": "공지"}], [{"chunk": "근거"}]),
     )
@@ -41,12 +31,16 @@ def test_retrieve_mcp_evidence_uses_precise_retrieval_without_answerer(monkeypat
         lambda *args: (_ for _ in ()).throw(AssertionError("broad retrieval called")),
     )
 
-    result = graph.retrieve_mcp_evidence("수강 철회", major="컴퓨터학부")
+    result = graph.retrieve_mcp_evidence(
+        "수강 철회",
+        major="컴퓨터학부",
+        category_override="수강",
+    )
 
     assert result == {
         "query_mode": "precise",
         "original_query": "수강 철회",
-        "expanded_query": "확장된 수강 철회",
+        "expanded_query": "수강 철회",
         "categories": ["수강"],
         "routing_fallback": False,
         "contexts": [{"title": "공지"}],
@@ -55,16 +49,6 @@ def test_retrieve_mcp_evidence_uses_precise_retrieval_without_answerer(monkeypat
 
 
 def test_retrieve_mcp_evidence_uses_broad_retrieval_and_category_override(monkeypatch):
-    monkeypatch.setattr(
-        graph,
-        "router_node",
-        lambda state: {
-            "query_mode": "broad",
-            "categories": ["일반(기타)"],
-            "expanded_query": "주요 수강 공지",
-            "route_rationale": "목록 질문",
-        },
-    )
     monkeypatch.setattr(
         graph,
         "_retrieve_broad",
@@ -79,44 +63,16 @@ def test_retrieve_mcp_evidence_uses_broad_retrieval_and_category_override(monkey
 
     assert result["query_mode"] == "broad"
     assert result["categories"] == ["수강"]
-    assert result["contexts"] == [{"title": "주요 수강 공지:컴퓨터학부:수강"}]
+    assert result["contexts"] == [{"title": "수강 공지 목록:컴퓨터학부:수강"}]
     assert result["evidence_chunks"] == []
 
 
-def test_retrieve_mcp_evidence_returns_smalltalk_without_search(monkeypatch):
+def test_retrieve_mcp_evidence_does_not_call_llm_router(monkeypatch):
     monkeypatch.setattr(
         graph,
         "router_node",
-        lambda state: {
-            "query_mode": "smalltalk",
-            "categories": [],
-            "expanded_query": "안녕",
-            "route_rationale": "검색 불필요",
-        },
+        lambda state: (_ for _ in ()).throw(AssertionError("LLM router called")),
     )
-    monkeypatch.setattr(
-        graph,
-        "_retrieve_with_rerank",
-        lambda *args: (_ for _ in ()).throw(AssertionError("precise retrieval called")),
-    )
-    monkeypatch.setattr(
-        graph,
-        "_retrieve_broad",
-        lambda *args: (_ for _ in ()).throw(AssertionError("broad retrieval called")),
-    )
-
-    result = graph.retrieve_mcp_evidence("안녕")
-
-    assert result["query_mode"] == "smalltalk"
-    assert result["contexts"] == []
-    assert result["evidence_chunks"] == []
-
-
-def test_retrieve_mcp_evidence_falls_back_to_original_precise_query(monkeypatch):
-    def fail_router(state):
-        raise RuntimeError("router unavailable")
-
-    monkeypatch.setattr(graph, "router_node", fail_router)
     monkeypatch.setattr(
         graph,
         "_retrieve_with_rerank",
@@ -131,8 +87,25 @@ def test_retrieve_mcp_evidence_falls_back_to_original_precise_query(monkeypatch)
     assert result["query_mode"] == "precise"
     assert result["expanded_query"] == "원본 질문"
     assert result["categories"] == []
-    assert result["routing_fallback"] is True
+    assert result["routing_fallback"] is False
     assert result["contexts"] == [{"title": "원본 질문:컴퓨터학부:None"}]
+
+
+def test_rerank_falls_back_to_vector_scores(monkeypatch):
+    rows = [
+        ("url-a", "A", "a", 0.2),
+        ("url-b", "B", "b", 0.8),
+    ]
+    monkeypatch.setattr(
+        graph,
+        "rerank_scores",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("reranker unavailable")),
+    )
+
+    ranked = graph._rerank("query", rows)
+
+    assert [row[0] for row, _ in ranked] == ["url-b", "url-a"]
+    assert [score for _, score in ranked] == [0.8, 0.2]
 
 
 def test_precise_retrieval_preserves_vector_and_rerank_scores(monkeypatch):

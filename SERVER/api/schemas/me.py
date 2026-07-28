@@ -15,6 +15,9 @@ class MeProfile(BaseModel):
     interests: List[str] = []
     favorite_courses: List[str] = []
     portal_linked: bool = False
+    portal_syncing: bool = False
+    sync_stage: Optional[str] = None
+    lms_sync_error: Optional[str] = None
     lms_linked: bool = False
 
 

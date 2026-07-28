@@ -8,7 +8,7 @@ from functools import partial
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from api.deps import require_user
+from api.deps import portal_student_id, require_user
 from api.ratelimit import limiter, user_or_ip
 from api.recommend import build_home
 from api.schemas.me import (
@@ -32,6 +32,8 @@ router = APIRouter()
 
 
 async def _linked_student_id(username: str) -> str | None:
+    if student_id := portal_student_id(username):
+        return student_id
     account = await anyio.to_thread.run_sync(partial(get_account, username))
     return account.get("student_id") if account else None
 
@@ -43,13 +45,23 @@ def _iso(d) -> str | None:
 @router.get("/me", response_model=MeProfile)
 @limiter.limit(RATE_LIMIT_READ, key_func=user_or_ip)
 async def me(request: Request, username: str = Depends(require_user)) -> MeProfile:
+    from sync.portal_auth import portal_sync_status
+
     student_id = await _linked_student_id(username)
     if not student_id:
         # 포털 미연결 — 빈 프로필 (앱은 "포털 연결" 유도)
         return MeProfile()
     user = await anyio.to_thread.run_sync(partial(get_user, student_id))
     if not user:
-        return MeProfile(student_id=student_id, portal_linked=True)
+        sync_status = portal_sync_status(student_id)
+        return MeProfile(
+            student_id=student_id,
+            portal_linked=True,
+            portal_syncing=sync_status["syncing"],
+            sync_stage=sync_status["stage"],
+            lms_sync_error=sync_status["lms_error"],
+        )
+    sync_status = portal_sync_status(student_id)
     courses = await anyio.to_thread.run_sync(partial(get_lms_courses, student_id))
     return MeProfile(
         student_id=student_id,
@@ -59,6 +71,9 @@ async def me(request: Request, username: str = Depends(require_user)) -> MeProfi
         interests=user.get("interests", []),
         favorite_courses=user.get("favorite_courses", []),
         portal_linked=bool(user.get("timetable") or user.get("grade_distribution")),
+        portal_syncing=sync_status["syncing"],
+        sync_stage=sync_status["stage"],
+        lms_sync_error=sync_status["lms_error"],
         lms_linked=len(courses) > 0,
     )
 

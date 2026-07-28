@@ -34,7 +34,6 @@ from db import (
     upsert_lms_task,
     upsert_user,
 )
-from test_streamlit.ui import MAJORS
 DEFAULT_STUDENT_ID = ""
 
 
@@ -251,38 +250,6 @@ def _extract_student_id(profile: dict[str, Any], fallback: str) -> str:
         if value:
             return value
     return fallback
-
-
-def _extract_name(profile: dict[str, Any]) -> str | None:
-    for key in ("name", "short_name", "sortable_name"):
-        value = str(profile.get(key) or "").strip()
-        if value:
-            return value
-    return None
-
-
-def _infer_major(profile: dict[str, Any], courses: dict[int, str]) -> str | None:
-    haystack = " ".join(
-        str(value)
-        for value in list(profile.values()) + list(courses.values())
-        if value is not None
-    )
-    for major in MAJORS:
-        if major != "전체" and major in haystack:
-            return major
-    return None
-
-
-def _infer_year(student_id: str) -> int | None:
-    if len(student_id) < 4 or not student_id[:4].isdigit():
-        return None
-
-    admission_year = int(student_id[:4])
-    current_year = date.today().year
-    if admission_year < 2000 or admission_year > current_year:
-        return None
-
-    return max(1, min(6, current_year - admission_year + 1))
 
 
 def _sync_user_profile(

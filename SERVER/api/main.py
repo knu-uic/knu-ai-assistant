@@ -10,7 +10,7 @@ from db.pool import pool
 from api.deps import require_user
 from api.mcp_server import _create_mcp_app, mcp_asgi_app
 from api.ratelimit import limiter
-from api.routers import auth, health, chat, lms, me, notices, portal, search
+from api.routers import auth, health, chat, codmes_surface, lms, me, notices, portal, search
 
 
 @asynccontextmanager
@@ -53,7 +53,8 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONRe
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(chat.router, prefix="/api", dependencies=[Depends(require_user)])
-app.include_router(notices.router, prefix="/api", dependencies=[Depends(require_user)])
+app.include_router(notices.router, prefix="/api")
+app.include_router(codmes_surface.router, prefix="/api")
 app.include_router(search.router, prefix="/api", dependencies=[Depends(require_user)])
 app.include_router(portal.router, prefix="/api", dependencies=[Depends(require_user)])
 app.include_router(lms.router, prefix="/api", dependencies=[Depends(require_user)])

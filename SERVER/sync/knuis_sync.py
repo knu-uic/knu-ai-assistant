@@ -423,17 +423,19 @@ def parse_timetable_data(context) -> list[dict] | None:
 
 def run_portal_sync(
     student_id: str,
-    password: str,
+    password: str | None = None,
     *,
+    storage_state: dict | None = None,
     headed: bool = False,
     slow_mo: int = 0,
     keep_open: int = 0,
     save_db: bool = True,
     on_step=None,
 ) -> dict:
-    """포털 로그인 → 시간표·성적·졸업정보 파싱 → users 저장. 결과 dict 반환.
+    """포털 로그인/검증 세션 → 시간표·성적·졸업정보 파싱 → users 저장.
 
     on_step: 진행 단계 문자열 콜백(잡 진행 표시용). 호출 실패는 동기화를 막지 않는다.
+    storage_state가 있으면 비밀번호를 다시 사용하지 않고 검증된 SSO 세션을 재사용한다.
     반환 키는 dart PortalSyncResult와 1:1 (success, message, *_synced).
     """
     def _step(msg: str) -> None:
@@ -451,45 +453,53 @@ def run_portal_sync(
         "cumulative_grades_synced": False,
         "graduation_synced": False,
     }
-    if not password:
+    if not password and storage_state is None:
         result["message"] = "비밀번호가 비어있습니다."
         return result
 
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=not headed, slow_mo=slow_mo)
-            context = browser.new_context(
+            context_options = dict(
                 viewport={"width": 1280, "height": 800},
                 user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
+            if storage_state is not None:
+                context_options["storage_state"] = storage_state
+            context = browser.new_context(**context_options)
             page = context.new_page()
             
             # 1. 로그인 단계
-            print("[1/7] 포털 로그인 시도 중...", flush=True)
-            _step("포털 로그인 중")
-            
-            # Dialog(알럿창 등) 이벤트 감지 추가
-            def handle_dialog(dialog):
-                print(f"[1/7] [브라우저 알림창 발생] 메시지: {dialog.message}", file=sys.stderr, flush=True)
-                dialog.accept()
-            page.on("dialog", handle_dialog)
-            
-            page.goto(KNUIS_URL)
-            id_selector = 'input[id="frmIlban.sg_uid"]'
-            pw_selector = 'input[id="frmIlban.sg_pwd"]'
-            btn_selector = 'input[id="frmIlban.pb_i_login"]'
-            
-            page.wait_for_selector(id_selector, timeout=15000)
-            page.fill(id_selector, student_id)
-            page.fill(pw_selector, password)
-            print(f"[1/7] 로그인 입력 폼 작성 완료 (ID: {student_id})", flush=True)
-            page.click(btn_selector)
-            
-            # 대기 및 새로고침 (포털 구조상 필수)
-            print("[1/7] 로그인 클릭 후 리다이렉트 대기 (4초)...", flush=True)
-            page.wait_for_timeout(4000)
-            print(f"[1/7] 대기 완료 후 현재 URL: {page.url}", flush=True)
-            
+            if storage_state is None:
+                print("[1/7] 포털 로그인 시도 중...", flush=True)
+                _step("포털 로그인 중")
+
+                # Dialog(알럿창 등) 이벤트 감지 추가
+                def handle_dialog(dialog):
+                    print(f"[1/7] [브라우저 알림창 발생] 메시지: {dialog.message}", file=sys.stderr, flush=True)
+                    dialog.accept()
+                page.on("dialog", handle_dialog)
+
+                page.goto(KNUIS_URL)
+                id_selector = 'input[id="frmIlban.sg_uid"]'
+                pw_selector = 'input[id="frmIlban.sg_pwd"]'
+                btn_selector = 'input[id="frmIlban.pb_i_login"]'
+
+                page.wait_for_selector(id_selector, timeout=15000)
+                page.fill(id_selector, student_id)
+                page.fill(pw_selector, password)
+                print(f"[1/7] 로그인 입력 폼 작성 완료 (ID: {student_id})", flush=True)
+                page.click(btn_selector)
+
+                # 대기 및 새로고침 (포털 구조상 필수)
+                print("[1/7] 로그인 클릭 후 리다이렉트 대기 (4초)...", flush=True)
+                page.wait_for_timeout(4000)
+                print(f"[1/7] 대기 완료 후 현재 URL: {page.url}", flush=True)
+            else:
+                print("[1/7] 검증된 포털 세션 재사용 중...", flush=True)
+                _step("검증된 포털 세션 연결 중")
+                page.goto(KNUIS_URL, wait_until="load", timeout=20000)
+
             print("[1/7] 통합정보시스템 진입을 위한 새로고침(Reload) 시도...", flush=True)
             page.reload()
             page.wait_for_load_state("load")

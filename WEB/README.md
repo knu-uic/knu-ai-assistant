@@ -20,6 +20,20 @@ cd WEB && npm install && npm run dev   # → http://localhost:5173
 
 `/api` 요청은 vite proxy로 8000(API)으로 전달된다(같은 오리진).
 
+### Codmes Surface에서 로컬 실행
+
+Codmes plugin proxy 아래에서는 production build의 상대 asset 경로를 사용한다.
+
+```bash
+cd WEB
+npm run build
+npm run preview -- --host 127.0.0.1 --port 5173
+```
+
+`npm run dev`는 KNU 웹 자체 개발용이다. Vite HMR이 root-absolute 경로를 사용하므로
+Codmes의 `/api/plugins/.../surface/` 아래에서 직접 여는 실행 방식으로는 사용하지
+않는다.
+
 ## 가입 인증 코드
 
 `MAIL_PROVIDER=console`(기본)이면 인증 코드가 **API 서버 터미널 로그**에 출력된다:

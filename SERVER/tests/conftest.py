@@ -36,11 +36,13 @@ def bypass_auth(request):
         yield
         return
     from api.main import app
-    from api.deps import require_user
+    from api.deps import optional_user, require_user
 
     app.dependency_overrides[require_user] = lambda: "testuser"
+    app.dependency_overrides[optional_user] = lambda: "testuser"
     yield
     app.dependency_overrides.pop(require_user, None)
+    app.dependency_overrides.pop(optional_user, None)
 
 
 @pytest.fixture(autouse=True)

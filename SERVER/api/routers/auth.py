@@ -4,13 +4,14 @@ from functools import partial
 
 import anyio
 import bcrypt
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from api.deps import create_access_token
+from api.deps import create_access_token, create_portal_access_token
 from api.mailer import send_verification_email
 from api.ratelimit import limiter
 from api.schemas.auth import (
     LoginRequest,
+    PortalLoginRequest,
     SignupCodeRequest,
     SignupVerifyRequest,
     TokenResponse,
@@ -108,3 +109,36 @@ async def login(request: Request, req: LoginRequest) -> TokenResponse:
     if not valid:
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
     return TokenResponse(access_token=create_access_token(req.username))
+
+
+@router.post("/auth/portal-login", response_model=TokenResponse)
+@limiter.limit(RATE_LIMIT_AUTH)
+async def portal_login(
+    request: Request,
+    req: PortalLoginRequest,
+    background_tasks: BackgroundTasks,
+) -> TokenResponse:
+    """Authenticate Codmes directly with the university portal account."""
+    from sync.portal_auth import (
+        authenticate_portal,
+        mark_portal_sync_started,
+        sync_university_data,
+    )
+
+    student_id = req.student_id.strip()
+    storage_state = await anyio.to_thread.run_sync(
+        partial(authenticate_portal, student_id, req.password)
+    )
+    if storage_state is None:
+        raise HTTPException(
+            status_code=401,
+            detail="공주대 포털 학번 또는 비밀번호를 확인해주세요.",
+        )
+    mark_portal_sync_started(student_id)
+    background_tasks.add_task(
+        sync_university_data,
+        student_id,
+        storage_state,
+        req.password,
+    )
+    return TokenResponse(access_token=create_portal_access_token(student_id))

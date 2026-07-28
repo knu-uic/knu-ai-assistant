@@ -124,6 +124,7 @@ def test_signup_verify_duplicate_username_409_before_code_consumed(monkeypatch):
 
 def test_login_success_and_wrong_password(monkeypatch):
     import bcrypt
+    import jwt
 
     import api.routers.auth as auth_mod
 
@@ -147,7 +148,9 @@ def test_login_success_and_wrong_password(monkeypatch):
         )
 
     assert ok.status_code == 200
-    assert ok.json()["access_token"]
+    token = ok.json()["access_token"]
+    assert token
+    assert "exp" not in jwt.decode(token, options={"verify_signature": False})
     assert bad.status_code == 401
 
 
@@ -165,8 +168,91 @@ def test_login_unknown_username_401(monkeypatch):
     assert r.status_code == 401
 
 
+def test_portal_login_issues_direct_student_token(monkeypatch):
+    import jwt
+    import sync.portal_auth as portal_auth
+
+    synced = []
+    monkeypatch.setattr(
+        portal_auth,
+        "authenticate_portal",
+        lambda sid, pw: {"cookies": [], "origins": []},
+    )
+    monkeypatch.setattr(portal_auth, "mark_portal_sync_started", lambda sid: None)
+    monkeypatch.setattr(
+        portal_auth,
+        "sync_university_data",
+        lambda sid, state, password: synced.append((sid, state, password)),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/auth/portal-login",
+            json={"student_id": "20260001", "password": "portal-password"},
+        )
+
+    assert response.status_code == 200
+    payload = jwt.decode(
+        response.json()["access_token"],
+        options={"verify_signature": False},
+    )
+    assert payload["sub"] == "portal:20260001"
+    assert "exp" not in payload
+    assert synced == [(
+        "20260001",
+        {"cookies": [], "origins": []},
+        "portal-password",
+    )]
+
+
+def test_portal_login_rejects_invalid_credentials(monkeypatch):
+    import sync.portal_auth as portal_auth
+
+    monkeypatch.setattr(portal_auth, "authenticate_portal", lambda sid, pw: None)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/auth/portal-login",
+            json={"student_id": "20260001", "password": "wrong-password"},
+        )
+
+    assert response.status_code == 401
+    assert "포털" in response.json()["detail"]
+
+
+def test_university_sync_runs_portal_and_lms_without_persisting_password(monkeypatch):
+    import sync.knuis_sync as knuis_sync
+    import sync.portal_auth as portal_auth
+
+    calls = []
+    monkeypatch.setattr(
+        knuis_sync,
+        "run_portal_sync",
+        lambda sid, **kwargs: calls.append(("portal", sid)) or {"success": True},
+    )
+    monkeypatch.setattr(
+        portal_auth,
+        "sync_lms_data",
+        lambda sid, password: calls.append(("lms", sid, password)) or {"success": True},
+    )
+
+    result = portal_auth.sync_university_data(
+        "20260001",
+        {"cookies": [], "origins": []},
+        "one-time-password",
+    )
+
+    assert result["portal"]["success"] is True
+    assert result["lms"]["success"] is True
+    assert calls == [
+        ("portal", "20260001"),
+        ("lms", "20260001", "one-time-password"),
+    ]
+    assert portal_auth.portal_sync_status("20260001")["syncing"] is False
+
+
 @pytest.mark.real_auth
-def test_protected_route_requires_token(monkeypatch):
+def test_public_notices_allow_anonymous_but_reject_invalid_token(monkeypatch):
     import api.routers.notices as notices_mod
 
     monkeypatch.setattr(notices_mod, "get_documents", lambda **kw: [])
@@ -177,7 +263,7 @@ def test_protected_route_requires_token(monkeypatch):
             "/api/notices", headers={"Authorization": "Bearer not-a-jwt"}
         )
 
-    assert no_token.status_code == 401
+    assert no_token.status_code == 200
     assert bad_token.status_code == 401
 
 

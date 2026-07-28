@@ -8,6 +8,7 @@ WORKDIR /app
 # 파이썬 패키지만 설치(시스템 패키지 없음).
 COPY requirements-api.txt .
 RUN pip install --no-cache-dir -r requirements-api.txt
+RUN playwright install --with-deps chromium
 
 # 앱 소스 복사. .env·.secrets·캐시·빌드 부산물은 .dockerignore로 제외된다.
 COPY . .
