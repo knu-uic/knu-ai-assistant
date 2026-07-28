@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
+from api.crypto import decrypt_secret
 
 
 SCHOOL_EMAIL = "student1@smail.kongju.ac.kr"
@@ -168,21 +169,39 @@ def test_login_unknown_username_401(monkeypatch):
     assert r.status_code == 401
 
 
-def test_portal_login_issues_direct_student_token(monkeypatch):
-    import jwt
+class _PortalLoginPool:
+    def __init__(self):
+        self.calls = []
+
+    async def enqueue_job(self, fn, *args, **kwargs):
+        self.calls.append((fn, args, kwargs))
+
+
+def _patch_portal_login_pool(monkeypatch, pool):
+    import api.routers.auth as auth_mod
+
+    async def fake_get_pool():
+        return pool
+
+    monkeypatch.setattr(auth_mod, "get_arq_pool", fake_get_pool)
+    return auth_mod
+
+
+def test_portal_login_enqueues_existing_worker_with_short_expiry(monkeypatch):
+    pool = _PortalLoginPool()
+    auth_mod = _patch_portal_login_pool(monkeypatch, pool)
+
     import sync.portal_auth as portal_auth
 
-    synced = []
     monkeypatch.setattr(
         portal_auth,
         "authenticate_portal",
-        lambda sid, pw: {"cookies": [], "origins": []},
+        lambda *_: (_ for _ in ()).throw(AssertionError("direct portal auth")),
     )
-    monkeypatch.setattr(portal_auth, "mark_portal_sync_started", lambda sid: None)
     monkeypatch.setattr(
         portal_auth,
         "sync_university_data",
-        lambda sid, state, password: synced.append((sid, state, password)),
+        lambda *_: (_ for _ in ()).throw(AssertionError("direct background sync")),
     )
 
     with TestClient(app) as client:
@@ -191,33 +210,146 @@ def test_portal_login_issues_direct_student_token(monkeypatch):
             json={"student_id": "20260001", "password": "portal-password"},
         )
 
-    assert response.status_code == 200
-    payload = jwt.decode(
-        response.json()["access_token"],
-        options={"verify_signature": False},
-    )
-    assert payload["sub"] == "portal:20260001"
-    assert "exp" not in payload
-    assert synced == [(
-        "20260001",
-        {"cookies": [], "origins": []},
-        "portal-password",
-    )]
+    assert response.status_code == 202
+    body = response.json()
+    assert set(body) == {"job_id"}
+    assert len(body["job_id"]) >= 32
+    assert "portal-password" not in response.text
+    fn, args, kwargs = pool.calls[0]
+    assert fn == "portal_sync"
+    assert args[0] == "portal:20260001"
+    assert args[1] == "20260001"
+    assert decrypt_secret(args[2]) == "portal-password"
+    assert args[2] != "portal-password"
+    assert kwargs["_job_id"] == body["job_id"]
+    assert kwargs["_expires"] <= 210
 
 
-def test_portal_login_rejects_invalid_credentials(monkeypatch):
-    import sync.portal_auth as portal_auth
+class _PortalJobInfo:
+    function = "portal_sync"
+    args = ("portal:20260001", "20260001", "encrypted-password")
+    success = True
+    result = {"success": True}
 
-    monkeypatch.setattr(portal_auth, "authenticate_portal", lambda sid, pw: None)
+
+class _PortalLoginJob:
+    status_value = None
+    info_value = _PortalJobInfo()
+
+    def __init__(self, job_id, redis=None):
+        self.job_id = job_id
+
+    async def status(self):
+        return self.status_value
+
+    async def info(self):
+        return self.info_value
+
+
+def _patch_portal_status(monkeypatch, status, info):
+    from arq.jobs import JobStatus
+
+    import api.routers.auth as auth_mod
+
+    pool = _PortalLoginPool()
+    _patch_portal_login_pool(monkeypatch, pool)
+    _PortalLoginJob.status_value = JobStatus(status)
+    _PortalLoginJob.info_value = info
+    monkeypatch.setattr(auth_mod, "Job", _PortalLoginJob)
+
+
+@pytest.mark.parametrize(
+    ("arq_status", "expected"),
+    [("deferred", "queued"), ("queued", "queued"), ("in_progress", "running")],
+)
+def test_portal_login_status_maps_queued_and_running(monkeypatch, arq_status, expected):
+    _patch_portal_status(monkeypatch, arq_status, _PortalJobInfo())
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/auth/portal-login",
-            json={"student_id": "20260001", "password": "wrong-password"},
+            "/api/auth/portal-login/status", json={"job_id": "known-job"}
         )
 
-    assert response.status_code == 401
-    assert "포털" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json() == {"status": expected}
+    assert "access_token" not in response.text
+
+
+def test_portal_login_status_maps_worker_failure_to_generic_failed(monkeypatch):
+    class FailedInfo(_PortalJobInfo):
+        success = False
+        result = RuntimeError("portal-password leaked")
+
+    _patch_portal_status(monkeypatch, "complete", FailedInfo())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/auth/portal-login/status", json={"job_id": "known-job"}
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "failed",
+        "detail": "포털 로그인에 실패했습니다. 잠시 후 다시 시도해주세요.",
+    }
+    assert "portal-password" not in response.text
+    assert "access_token" not in response.text
+
+
+def test_portal_login_status_maps_portal_failure_to_generic_failed(monkeypatch):
+    class FailedPortalInfo(_PortalJobInfo):
+        result = {"success": False, "message": "portal-password"}
+
+    _patch_portal_status(monkeypatch, "complete", FailedPortalInfo())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/auth/portal-login/status", json={"job_id": "known-job"}
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert "portal-password" not in response.text
+    assert "access_token" not in response.text
+
+
+def test_portal_login_status_issues_jwt_only_for_successful_matching_done_job(monkeypatch):
+    import jwt
+
+    _patch_portal_status(monkeypatch, "complete", _PortalJobInfo())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/auth/portal-login/status", json={"job_id": "known-job"}
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "done"
+    assert body["token_type"] == "bearer"
+    payload = jwt.decode(body["access_token"], options={"verify_signature": False})
+    assert payload["sub"] == "portal:20260001"
+
+
+@pytest.mark.parametrize(
+    "info",
+    [
+        None,
+        type("OtherJob", (), {"function": "lms_sync", "args": ("portal:20260001", "20260001")})(),
+        type("WrongUser", (), {"function": "portal_sync", "args": ("other", "20260001")})(),
+        type("WrongStudent", (), {"function": "portal_sync", "args": ("portal:20260001", "20260002")})(),
+    ],
+)
+def test_portal_login_status_rejects_unknown_expired_or_misidentified_jobs(monkeypatch, info):
+    _patch_portal_status(monkeypatch, "not_found" if info is None else "complete", info)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/auth/portal-login/status", json={"job_id": "unknown-job"}
+        )
+
+    assert response.status_code == 404
+    assert "access_token" not in response.text
 
 
 def test_university_sync_runs_portal_and_lms_without_persisting_password(monkeypatch):

@@ -4,19 +4,30 @@ from functools import partial
 
 import anyio
 import bcrypt
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from arq.jobs import Job, JobStatus
+from fastapi import APIRouter, HTTPException, Request
 
+from api.crypto import encrypt_secret
 from api.deps import create_access_token, create_portal_access_token
+from api.jobs import get_arq_pool
 from api.mailer import send_verification_email
 from api.ratelimit import limiter
 from api.schemas.auth import (
     LoginRequest,
     PortalLoginRequest,
+    PortalLoginStartResponse,
+    PortalLoginStatusRequest,
+    PortalLoginStatusResponse,
     SignupCodeRequest,
     SignupVerifyRequest,
     TokenResponse,
 )
-from config import RATE_LIMIT_AUTH, RATE_LIMIT_SIGNUP_REQUEST, SIGNUP_EMAIL_DOMAIN
+from config import (
+    RATE_LIMIT_AUTH,
+    RATE_LIMIT_POLL,
+    RATE_LIMIT_SIGNUP_REQUEST,
+    SIGNUP_EMAIL_DOMAIN,
+)
 from db.accounts import (
     consume_verification,
     create_account,
@@ -29,6 +40,8 @@ router = APIRouter()
 
 RESEND_COOLDOWN_SECONDS = 60
 CODE_TTL_MINUTES = 10
+PORTAL_LOGIN_JOB_EXPIRES_SECONDS = 210
+PORTAL_LOGIN_FAILED_DETAIL = "포털 로그인에 실패했습니다. 잠시 후 다시 시도해주세요."
 
 
 @router.post("/auth/signup/request")
@@ -111,34 +124,92 @@ async def login(request: Request, req: LoginRequest) -> TokenResponse:
     return TokenResponse(access_token=create_access_token(req.username))
 
 
-@router.post("/auth/portal-login", response_model=TokenResponse)
+@router.post(
+    "/auth/portal-login",
+    response_model=PortalLoginStartResponse,
+    response_model_exclude_none=True,
+    status_code=202,
+)
 @limiter.limit(RATE_LIMIT_AUTH)
 async def portal_login(
     request: Request,
     req: PortalLoginRequest,
-    background_tasks: BackgroundTasks,
-) -> TokenResponse:
-    """Authenticate Codmes directly with the university portal account."""
-    from sync.portal_auth import (
-        authenticate_portal,
-        mark_portal_sync_started,
-        sync_university_data,
+) -> PortalLoginStartResponse:
+    """Queue Codmes portal authentication in the existing ARQ worker."""
+    student_id = req.student_id.strip()
+    job_id = secrets.token_urlsafe(32)
+    pool = await get_arq_pool()
+    await pool.enqueue_job(
+        "portal_sync",
+        f"portal:{student_id}",
+        student_id,
+        encrypt_secret(req.password),
+        _job_id=job_id,
+        _expires=PORTAL_LOGIN_JOB_EXPIRES_SECONDS,
     )
 
-    student_id = req.student_id.strip()
-    storage_state = await anyio.to_thread.run_sync(
-        partial(authenticate_portal, student_id, req.password)
-    )
-    if storage_state is None:
+    return PortalLoginStartResponse(job_id=job_id)
+
+
+@router.post(
+    "/auth/portal-login/status",
+    response_model=PortalLoginStatusResponse,
+    response_model_exclude_none=True,
+)
+@limiter.limit(RATE_LIMIT_POLL)
+async def portal_login_status(
+    request: Request,
+    req: PortalLoginStatusRequest,
+) -> PortalLoginStatusResponse:
+    pool = await get_arq_pool()
+    job = Job(req.job_id, redis=pool)
+    status = await job.status()
+    if status == JobStatus.not_found:
         raise HTTPException(
-            status_code=401,
-            detail="공주대 포털 학번 또는 비밀번호를 확인해주세요.",
+            status_code=404,
+            detail="진행 중인 포털 로그인이 없습니다.",
         )
-    mark_portal_sync_started(student_id)
-    background_tasks.add_task(
-        sync_university_data,
-        student_id,
-        storage_state,
-        req.password,
+
+    info = await job.info()
+    args = getattr(info, "args", ())
+    if (
+        info is None
+        or getattr(info, "job_id", None) not in (None, req.job_id)
+        or getattr(info, "function", None) != "portal_sync"
+        or len(args) < 2
+        or not isinstance(args[0], str)
+        or not isinstance(args[1], str)
+        or args[0] != f"portal:{args[1]}"
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="진행 중인 포털 로그인이 없습니다.",
+        )
+
+    if status in (JobStatus.deferred, JobStatus.queued):
+        return PortalLoginStatusResponse(status="queued")
+    if status == JobStatus.in_progress:
+        return PortalLoginStatusResponse(status="running")
+
+    if status != JobStatus.complete or not getattr(info, "success", False):
+        return PortalLoginStatusResponse(
+            status="failed",
+            detail=PORTAL_LOGIN_FAILED_DETAIL,
+        )
+
+    result = getattr(info, "result", None)
+    student_id = info.args[1]
+    if (
+        not isinstance(result, dict)
+        or result.get("success") is not True
+        or result.get("student_id") not in (None, student_id)
+    ):
+        return PortalLoginStatusResponse(
+            status="failed",
+            detail=PORTAL_LOGIN_FAILED_DETAIL,
+        )
+    return PortalLoginStatusResponse(
+        status="done",
+        access_token=create_portal_access_token(student_id),
+        token_type="bearer",
     )
-    return TokenResponse(access_token=create_portal_access_token(student_id))

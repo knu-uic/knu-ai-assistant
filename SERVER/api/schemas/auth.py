@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -20,6 +22,21 @@ class LoginRequest(BaseModel):
 class PortalLoginRequest(BaseModel):
     student_id: str = Field(min_length=1, max_length=20)
     password: str = Field(min_length=1, max_length=128)
+
+
+class PortalLoginStartResponse(BaseModel):
+    job_id: str
+
+
+class PortalLoginStatusRequest(BaseModel):
+    job_id: str = Field(min_length=1, max_length=128)
+
+
+class PortalLoginStatusResponse(BaseModel):
+    status: Literal["queued", "running", "failed", "done"]
+    detail: str | None = None
+    access_token: str | None = None
+    token_type: str | None = None
 
 
 class TokenResponse(BaseModel):

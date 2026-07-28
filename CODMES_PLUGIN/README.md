@@ -35,18 +35,34 @@ enters its native content hierarchy.
 
 The sidebar shows only Kongju portal connection status and compact
 login/logout controls. Login opens the native plugin settings screen and sends
-the portal student ID and password once to `/api/auth/portal-login`. The KNU
-server verifies them against the university SSO without creating or looking up
-a KNU PICK account. The verified browser session is then reused by a server
-background task to fetch and persist the student's name, major, year, weekly
-timetable, graduation credits, grade distribution, and cumulative grades.
-The same background task uses the one-time password to create a temporary
-Canvas/LearningX session and synchronize LMS courses, assignments,
-announcements, and incomplete lectures. The password and temporary browser
-session are discarded after synchronization, and Codmes stores only the
-KNU-issued JWT in its server-side credential store. KNU JWTs intentionally
-have no `exp` claim; logging out removes the local credential. Server-side
-token revocation should be added before treating logout as remote invalidation.
+the portal student ID and password once to `POST /api/auth/portal-login`. KNU
+returns HTTP 202 with only a random `job_id`:
+
+```json
+{"job_id":"<random-id>"}
+```
+
+Codmes polls `POST /api/auth/portal-login/status` with that job ID. The status
+response is one of `queued`, `running`, `failed`, or `done`. A successful
+`done` response is the only response that contains `access_token` and
+`token_type: "bearer"`; failed responses use one generic message and never
+return portal error details. Unknown, expired, or non-portal job IDs return
+HTTP 404. The job expires after at most 210 seconds, so a worker that is not
+running remains queued only during the polling window.
+
+The API process only encrypts the password and enqueues the existing ARQ
+`portal_sync` worker with username `portal:<student_id>`. Portal login and
+portal data synchronization therefore run in the worker's Playwright
+environment; the API process does not run Playwright or a background sync.
+After receiving `done`, Codmes stores the JWT in its server-side credential
+store and calls the existing `POST /api/lms/sync/start` separately with the
+same student ID and password plus `Authorization: Bearer <access_token>`.
+That request uses the existing `lms_sync` worker; KNU's `portal_sync` job does
+not run LMS synchronization a second time. The password and worker-side
+temporary session are discarded according to the existing worker contract.
+KNU JWTs intentionally have no `exp` claim; logging out removes the local
+credential. Server-side token revocation should be added before treating
+logout as remote invalidation.
 
 The `portal` route returns a declarative `dashboard` document. Codmes renders
 its key-value and table sections natively on macOS, iPadOS, and iOS; the plugin
