@@ -14,9 +14,11 @@ printf '%s' "$MCP_AUTH_TOKEN" | codmes mcp credential set knu \
 codmes plugin install ./CODMES_PLUGIN --root /path/to/CodmesWorkspace
 ```
 
-The default manifest expects the declarative Surface API and MCP at
+The default manifest expects the KNU domain data API and MCP at
 `http://127.0.0.1:8000`. Codmes does not load the KNU website in a WebView.
-FastAPI returns a Surface document and Codmes renders it with native SwiftUI.
+`surface.json` in this package owns navigation, presentation, filters, icons,
+and data bindings. FastAPI returns only KNU data; Codmes combines both inputs
+and renders the resulting document with native SwiftUI.
 The manifest contains only the credential id `knu`;
 the actual token remains in Codmes `.codmes/config/auth.json` and KNU
 `SERVER/.env`.
@@ -48,6 +50,6 @@ KNU-issued JWT in its server-side credential store. KNU JWTs intentionally
 have no `exp` claim; logging out removes the local credential. Server-side
 token revocation should be added before treating logout as remote invalidation.
 
-The `portal` route returns a declarative `dashboard` document. Codmes renders
-its key-value and table sections natively on macOS, iPadOS, and iOS; the plugin
-does not embed the legacy KNU web application.
+The `portal` route binds `/api/codmes/data/portal` domain JSON to a declarative
+`dashboard`. Codmes renders its key-value and table sections natively on macOS,
+iPadOS, and iOS; the plugin does not embed the legacy KNU web application.

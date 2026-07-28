@@ -1,0 +1,280 @@
+{
+  "schemaVersion": 1,
+  "routes": [
+    {
+      "id": "notices",
+      "title": "공지",
+      "icon": "bell",
+      "requiresAuth": false,
+      "dataSources": [
+        {
+          "id": "notices",
+          "path": "/api/notices?limit=100"
+        }
+      ],
+      "document": {
+        "schemaVersion": 1,
+        "presentation": "collection",
+        "title": "공지사항",
+        "subtitle": {
+          "literal": "최신 학사·일반 공지를 확인하세요."
+        },
+        "search": {
+          "placeholder": "제목·내용으로 검색",
+          "fields": ["title", "body", "subtitle", "tags"]
+        },
+        "filters": [
+          {
+            "id": "category",
+            "label": "카테고리",
+            "style": "chips",
+            "options": [
+              {"value": "__all__", "label": "전체"},
+              {"value": "장학", "label": "장학"},
+              {"value": "수강", "label": "수강"},
+              {"value": "취업(진로)", "label": "취업"},
+              {"value": "행사(공모전)", "label": "행사"},
+              {"value": "일반(기타)", "label": "일반"}
+            ]
+          }
+        ],
+        "emptyState": {
+          "title": "표시할 공지사항이 없어요.",
+          "systemImage": "bell.slash"
+        },
+        "collection": {
+          "source": "notices.notices",
+          "item": {
+            "id": "url",
+            "title": "title",
+            "subtitle": {
+              "join": ["source_name", "posted_at"],
+              "separator": " · "
+            },
+            "body": {
+              "coalesce": ["summary", "content"]
+            },
+            "tags": ["category", "target"],
+            "filterValues": {
+              "category": "category"
+            },
+            "action": {
+              "type": "openURL",
+              "url": "url"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "lms",
+      "title": "LMS",
+      "icon": "checklist",
+      "requiresAuth": true,
+      "dataSources": [
+        {
+          "id": "profile",
+          "path": "/api/me"
+        },
+        {
+          "id": "lms",
+          "path": "/api/me/lms/tasks"
+        }
+      ],
+      "document": {
+        "schemaVersion": 1,
+        "presentation": "collection",
+        "title": "LMS",
+        "subtitle": {
+          "literal": "과제와 학습 일정을 확인하세요."
+        },
+        "search": {
+          "placeholder": "과제 검색",
+          "fields": ["title", "subtitle", "tags"]
+        },
+        "filters": [
+          {
+            "id": "status",
+            "label": "상태",
+            "style": "chips",
+            "options": [
+              {"value": "__all__", "label": "전체"},
+              {"value": "pending", "label": "진행 중"},
+              {"value": "done", "label": "완료"}
+            ]
+          }
+        ],
+        "emptyState": {
+          "title": "연결된 LMS 작업이 없어요.",
+          "systemImage": "checklist"
+        },
+        "collection": {
+          "source": "lms.tasks",
+          "item": {
+            "id": "id",
+            "title": "title",
+            "subtitle": {
+              "join": ["course_name", "due_date"],
+              "separator": " · "
+            },
+            "tags": ["task_type"],
+            "filterValues": {
+              "status": {
+                "path": "is_done",
+                "trueValue": "done",
+                "falseValue": "pending"
+              }
+            },
+            "action": {
+              "type": "openURL",
+              "url": "url"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "portal",
+      "title": "포털",
+      "icon": "person.text.rectangle",
+      "requiresAuth": true,
+      "dataSources": [
+        {
+          "id": "portal",
+          "path": "/api/codmes/data/portal"
+        }
+      ],
+      "document": {
+        "schemaVersion": 1,
+        "presentation": "dashboard",
+        "title": "포털",
+        "subtitle": {
+          "literal": "통합정보시스템에서 동기화한 시간표·학점·성적 정보입니다."
+        },
+        "filters": [],
+        "emptyState": {
+          "title": "연결된 포털 정보가 없어요.",
+          "systemImage": "person.text.rectangle"
+        },
+        "sections": [
+          {
+            "id": {"literal": "profile"},
+            "title": {"literal": "학적 정보"},
+            "systemImage": "person.text.rectangle",
+            "kind": "keyValue",
+            "fields": [
+              {"id": "student-id", "label": "학번", "value": {"path": "$.portal.profile.student_id"}},
+              {"id": "name", "label": "이름", "value": {"path": "$.portal.profile.name"}},
+              {"id": "major", "label": "학과", "value": {"path": "$.portal.profile.major"}},
+              {"id": "year", "label": "학년", "value": {"path": "$.portal.profile.year", "suffix": "학년"}}
+            ]
+          },
+          {
+            "id": {"literal": "timetable"},
+            "title": {"literal": "주간 시간표"},
+            "subtitle": {"literal": "수업이 있는 교시만 표시합니다."},
+            "systemImage": "calendar",
+            "kind": "table",
+            "columns": {"path": "$.portal.timetable.columns"},
+            "rows": {"path": "$.portal.timetable.rows"}
+          },
+          {
+            "id": {"literal": "graduation"},
+            "title": {"literal": "취득학점 현황"},
+            "systemImage": "graduationcap",
+            "kind": "table",
+            "columns": {"path": "$.portal.graduation.columns"},
+            "rows": {"path": "$.portal.graduation.rows"}
+          },
+          {
+            "kind": "keyValueGroup",
+            "source": "portal.grade_distribution.summaries",
+            "id": "id",
+            "title": "title",
+            "fields": "fields",
+            "systemImage": "chart.bar"
+          },
+          {
+            "kind": "tableGroup",
+            "source": "portal.grade_distribution.tables",
+            "id": "id",
+            "title": "title",
+            "columns": "columns",
+            "rows": "rows",
+            "systemImage": "chart.bar"
+          },
+          {
+            "kind": "keyValueGroup",
+            "source": "portal.cumulative_grades.summaries",
+            "id": "id",
+            "title": "title",
+            "fields": "fields",
+            "systemImage": "book.closed"
+          },
+          {
+            "kind": "tableGroup",
+            "source": "portal.cumulative_grades.tables",
+            "id": "id",
+            "title": "title",
+            "columns": "columns",
+            "rows": "rows",
+            "systemImage": "book.closed"
+          }
+        ]
+      }
+    },
+    {
+      "id": "settings",
+      "title": "설정",
+      "icon": "gearshape",
+      "requiresAuth": true,
+      "dataSources": [
+        {
+          "id": "profile",
+          "path": "/api/me"
+        }
+      ],
+      "document": {
+        "schemaVersion": 1,
+        "presentation": "collection",
+        "title": "KNU 설정",
+        "subtitle": {
+          "join": [
+            {"path": "profile.student_id"},
+            {"literal": "학번으로 포털에 연결했습니다."}
+          ],
+          "separator": " "
+        },
+        "filters": [],
+        "emptyState": {
+          "title": "설정할 항목이 없어요.",
+          "systemImage": "gearshape"
+        },
+        "collection": {
+          "staticItems": [
+            {
+              "id": {"literal": "account"},
+              "title": {"literal": "공주대 포털 계정"},
+              "subtitle": {"path": "profile.student_id"},
+              "body": {"literal": "포털 인증 토큰은 Codmes 서버에만 저장되며 비밀번호는 저장하지 않습니다."},
+              "tags": [{"literal": "로그인됨"}]
+            },
+            {
+              "id": {"literal": "student"},
+              "title": {"literal": "학교 서비스"},
+              "subtitle": {"path": "profile.student_id"},
+              "body": {"literal": "검증된 학번으로 포털 및 LMS 데이터를 사용합니다."},
+              "tags": [
+                {
+                  "path": "profile.portal_linked",
+                  "trueValue": "연결됨",
+                  "falseValue": "동기화 중"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

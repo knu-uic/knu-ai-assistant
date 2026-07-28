@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "kr.ac.kongju.knu",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": "KNU",
   "description": "공주대학교 공지 Surface와 Codmes용 검색 도구를 함께 제공합니다.",
   "publisher": "KNU AI Assistant",
@@ -20,36 +20,8 @@
     "description": "공주대학교 공지사항",
     "icon": "graduationcap",
     "upstreamUrl": "http://127.0.0.1",
-    "entryPath": "/api/codmes/surface",
-    "navigation": [
-      {
-        "id": "notices",
-        "title": "공지",
-        "icon": "bell",
-        "path": "/api/codmes/surface/notices"
-      },
-      {
-        "id": "lms",
-        "title": "LMS",
-        "icon": "checklist",
-        "path": "/api/codmes/surface/lms",
-        "requiresAuth": true
-      },
-      {
-        "id": "portal",
-        "title": "포털",
-        "icon": "person.text.rectangle",
-        "path": "/api/codmes/surface/portal",
-        "requiresAuth": true
-      },
-      {
-        "id": "settings",
-        "title": "설정",
-        "icon": "gearshape",
-        "path": "/api/codmes/surface/settings",
-        "requiresAuth": true
-      }
-    ],
+    "entryPath": "/api/notices",
+    "ui": "surface.json",
     "auth": {
       "type": "password",
       "credentialId": "knu-user-session",
