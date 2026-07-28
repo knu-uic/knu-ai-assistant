@@ -10,6 +10,8 @@
   받아 복호화해 쓰고 폐기. 진행 단계는 redis 키(portal-sync:step:{job_id})로 노출.
 """
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 import redis as redis_sync
 from arq import cron
@@ -19,6 +21,18 @@ from config import NOTICE_POLL_MINUTES, PORTAL_SYNC_TIMEOUT_SECONDS, REDIS_URL
 
 STEP_KEY_PREFIX = "portal-sync:step:"
 STEP_TTL_SECONDS = 600
+
+
+async def _run_sync_fresh_thread(func, *args, **kwargs):
+    """Run one sync Playwright call on a non-reused thread."""
+    loop = asyncio.get_running_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        return await loop.run_in_executor(executor, partial(func, *args, **kwargs))
+    finally:
+        # The callable has completed (or was cancelled); don't retain the executor
+        # or wait on its worker from the event loop.
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def step_key(job_id: str) -> str:
@@ -40,7 +54,7 @@ async def portal_sync(ctx: dict, username: str, student_id: str, enc_password: s
 
     password = decrypt_secret(enc_password)
     try:
-        result = await asyncio.to_thread(
+        result = await _run_sync_fresh_thread(
             run_portal_sync, student_id, password, on_step=on_step
         )
     finally:
@@ -115,7 +129,7 @@ async def lms_sync(ctx: dict, username: str, student_id: str, enc_password: str 
 
     password = decrypt_secret(enc_password) if enc_password else None
     try:
-        return await asyncio.to_thread(
+        return await _run_sync_fresh_thread(
             _run_lms_sync_blocking, username, student_id, password, on_step
         )
     finally:

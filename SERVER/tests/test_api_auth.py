@@ -313,6 +313,33 @@ def test_portal_login_status_maps_portal_failure_to_generic_failed(monkeypatch):
     assert "access_token" not in response.text
 
 
+def test_portal_login_status_maps_invalid_credentials_without_leaking_result(monkeypatch):
+    import api.routers.auth as auth_mod
+
+    class InvalidCredentialsInfo(_PortalJobInfo):
+        result = {
+            "success": False,
+            "error_code": "invalid_credentials",
+            "message": "아이디/비밀번호 불일치: portal-password; dialog=credential mismatch",
+        }
+
+    _patch_portal_status(monkeypatch, "complete", InvalidCredentialsInfo())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/auth/portal-login/status", json={"job_id": "known-job"}
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "failed",
+        "detail": auth_mod.PORTAL_LOGIN_INVALID_CREDENTIALS_DETAIL,
+    }
+    assert "portal-password" not in response.text
+    assert "credential mismatch" not in response.text
+    assert "아이디/비밀번호 불일치" not in response.text
+
+
 def test_portal_login_status_issues_jwt_only_for_successful_matching_done_job(monkeypatch):
     import jwt
 

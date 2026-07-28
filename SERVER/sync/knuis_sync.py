@@ -18,6 +18,15 @@ from sync.common import DEFAULT_PORTAL_URL
 from db import upsert_user
 
 KNUIS_URL = DEFAULT_PORTAL_URL
+INVALID_CREDENTIALS_MESSAGE = "학교 포털 아이디 또는 비밀번호를 확인해주세요."
+
+
+def _is_credential_rejection(message: str) -> bool:
+    normalized = message.casefold()
+    return any(
+        keyword in normalized
+        for keyword in ("비밀번호", "아이디", "로그인 실패", "invalid", "incorrect", "password")
+    )
 
 def wait_and_click_in_any_frame(page, selector, timeout_sec=15) -> bool:
     """모든 iframe을 탐색하며 지정된 요소를 찾아 화면에 나타나면 클릭합니다."""
@@ -473,10 +482,12 @@ def run_portal_sync(
             if storage_state is None:
                 print("[1/7] 포털 로그인 시도 중...", flush=True)
                 _step("포털 로그인 중")
+                credential_rejected = False
 
                 # Dialog(알럿창 등) 이벤트 감지 추가
                 def handle_dialog(dialog):
-                    print(f"[1/7] [브라우저 알림창 발생] 메시지: {dialog.message}", file=sys.stderr, flush=True)
+                    nonlocal credential_rejected
+                    credential_rejected = credential_rejected or _is_credential_rejection(dialog.message)
                     dialog.accept()
                 page.on("dialog", handle_dialog)
 
@@ -488,13 +499,20 @@ def run_portal_sync(
                 page.wait_for_selector(id_selector, timeout=15000)
                 page.fill(id_selector, student_id)
                 page.fill(pw_selector, password)
-                print(f"[1/7] 로그인 입력 폼 작성 완료 (ID: {student_id})", flush=True)
+                print("[1/7] 로그인 입력 폼 작성 완료", flush=True)
                 page.click(btn_selector)
 
                 # 대기 및 새로고침 (포털 구조상 필수)
                 print("[1/7] 로그인 클릭 후 리다이렉트 대기 (4초)...", flush=True)
                 page.wait_for_timeout(4000)
                 print(f"[1/7] 대기 완료 후 현재 URL: {page.url}", flush=True)
+                if credential_rejected:
+                    result.update(
+                        error_code="invalid_credentials",
+                        message=INVALID_CREDENTIALS_MESSAGE,
+                    )
+                    browser.close()
+                    return result
             else:
                 print("[1/7] 검증된 포털 세션 재사용 중...", flush=True)
                 _step("검증된 포털 세션 연결 중")

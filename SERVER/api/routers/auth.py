@@ -42,6 +42,7 @@ RESEND_COOLDOWN_SECONDS = 60
 CODE_TTL_MINUTES = 10
 PORTAL_LOGIN_JOB_EXPIRES_SECONDS = 210
 PORTAL_LOGIN_FAILED_DETAIL = "포털 로그인에 실패했습니다. 잠시 후 다시 시도해주세요."
+PORTAL_LOGIN_INVALID_CREDENTIALS_DETAIL = "학교 포털에서 아이디 또는 비밀번호를 거부했습니다."
 
 
 @router.post("/auth/signup/request")
@@ -198,6 +199,11 @@ async def portal_login_status(
         )
 
     result = getattr(info, "result", None)
+    if isinstance(result, dict) and result.get("error_code") == "invalid_credentials":
+        return PortalLoginStatusResponse(
+            status="failed",
+            detail=PORTAL_LOGIN_INVALID_CREDENTIALS_DETAIL,
+        )
     student_id = info.args[1]
     if (
         not isinstance(result, dict)
