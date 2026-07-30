@@ -248,6 +248,32 @@ def test_portal_login_rejects_invalid_credentials(monkeypatch):
     assert "포털" in response.json()["detail"]
 
 
+def test_portal_login_surfaces_password_lock_reason(monkeypatch):
+    import sync.portal_auth as portal_auth
+
+    def reject_locked_account(_student_id, _password):
+        raise portal_auth.PortalLoginRejected(
+            "공주대 포털의 비밀번호 오류 횟수가 5회 이상입니다. "
+            "포털에서 비밀번호를 변경한 후 다시 시도해주세요."
+        )
+
+    monkeypatch.setattr(
+        portal_auth,
+        "authenticate_portal",
+        reject_locked_account,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/auth/portal-login",
+            json={"student_id": "20260001", "password": "locked-password"},
+        )
+
+    assert response.status_code == 401
+    assert "5회 이상" in response.json()["detail"]
+    assert "변경한 후" in response.json()["detail"]
+
+
 def test_university_sync_runs_portal_and_lms_without_persisting_password(monkeypatch):
     import sync.knuis_sync as knuis_sync
     import sync.portal_auth as portal_auth

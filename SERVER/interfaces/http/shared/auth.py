@@ -122,6 +122,7 @@ async def portal_login(
 ) -> TokenResponse:
     """Authenticate Codmes directly with the university portal account."""
     from sync.portal_auth import (
+        PortalLoginRejected,
         authenticate_portal,
         mark_portal_sync_started,
         save_portal_identity,
@@ -129,9 +130,12 @@ async def portal_login(
     )
 
     student_id = req.student_id.strip()
-    portal_auth = await anyio.to_thread.run_sync(
-        partial(authenticate_portal, student_id, req.password)
-    )
+    try:
+        portal_auth = await anyio.to_thread.run_sync(
+            partial(authenticate_portal, student_id, req.password)
+        )
+    except PortalLoginRejected as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
     if portal_auth is None:
         raise HTTPException(
             status_code=401,

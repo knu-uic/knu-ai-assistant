@@ -17,6 +17,33 @@ _lms_error_by_student: dict[str, str] = {}
 _syncing_lock = Lock()
 
 
+class PortalLoginRejected(RuntimeError):
+    """Safe user-facing rejection returned by the university SSO."""
+
+
+def portal_login_error_message(message: str) -> str | None:
+    """Convert portal dialogs into bounded messages safe to show in Codmes."""
+    normalized = " ".join((message or "").split())
+    lowered = normalized.lower()
+    if (
+        ("오류횟수" in normalized or "오류 횟수" in normalized)
+        and "5회" in normalized
+        and "비밀번호" in normalized
+    ):
+        return (
+            "공주대 포털의 비밀번호 오류 횟수가 5회 이상입니다. "
+            "포털에서 비밀번호를 변경한 후 다시 시도해주세요."
+        )
+    if "비밀번호" in normalized and "변경" in normalized:
+        return "공주대 포털에서 비밀번호를 변경한 후 다시 시도해주세요."
+    if any(
+        keyword in lowered
+        for keyword in ("비밀번호", "아이디", "로그인", "invalid", "password")
+    ):
+        return "공주대 포털 학번 또는 비밀번호를 확인해주세요."
+    return None
+
+
 def mark_portal_sync_started(student_id: str) -> None:
     with _syncing_lock:
         _syncing_student_ids.add(student_id)
@@ -161,15 +188,13 @@ def authenticate_portal(student_id: str, password: str) -> dict | None:
         try:
             context = browser.new_context(**_browser_context_options())
             page = context.new_page()
-            rejected = False
+            rejection_message = None
 
             def handle_dialog(dialog) -> None:
-                nonlocal rejected
-                message = dialog.message.lower()
-                rejected = any(
-                    keyword in message
-                    for keyword in ("비밀번호", "아이디", "로그인", "invalid", "password")
-                )
+                nonlocal rejection_message
+                mapped_message = portal_login_error_message(dialog.message)
+                if mapped_message:
+                    rejection_message = mapped_message
                 dialog.accept()
 
             page.on("dialog", handle_dialog)
@@ -185,8 +210,8 @@ def authenticate_portal(student_id: str, password: str) -> dict | None:
             deadline = time.monotonic() + 15
             reloaded = False
             while time.monotonic() < deadline:
-                if rejected:
-                    return None
+                if rejection_message:
+                    raise PortalLoginRejected(rejection_message)
                 if _has_visible_system_button(page):
                     return {
                         "storage_state": context.storage_state(),
@@ -205,7 +230,10 @@ def authenticate_portal(student_id: str, password: str) -> dict | None:
 
 def verify_portal_credentials(student_id: str, password: str) -> bool:
     """Compatibility wrapper used by focused authentication tests."""
-    return authenticate_portal(student_id, password) is not None
+    try:
+        return authenticate_portal(student_id, password) is not None
+    except PortalLoginRejected:
+        return False
 
 
 def sync_portal_data(student_id: str, storage_state: dict) -> dict:

@@ -1,7 +1,7 @@
 import pytest
 
 from sync.knuis_sync import parse_knuis_identity, parse_profile_data
-from sync.portal_auth import parse_portal_identity
+from sync.portal_auth import parse_portal_identity, portal_login_error_message
 
 
 class FakeFrame:
@@ -58,6 +58,15 @@ def test_portal_home_identity_rejects_another_student():
             "다른사람(202600001)님 환영합니다.",
             "컴퓨터공학과 / 학부생",
         )
+
+
+def test_portal_password_lock_dialog_becomes_actionable_message():
+    message = portal_login_error_message(
+        "비밀번호 오류횟수가 5회 이상입니다.\n 비밀번호 변경 후 다시 시도해주세요!"
+    )
+
+    assert "5회 이상" in message
+    assert "비밀번호를 변경" in message
 
 
 def test_knuis_header_identity_supports_graduate_status():
