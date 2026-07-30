@@ -155,7 +155,12 @@ def get_llm():
             base_url=OPENAI_COMPAT_BASE_URL,
             api_key="lm-studio",
             temperature=0,
-            max_tokens=None,
+            # OpenAI-compatible local models do not always emit a stop token
+            # reliably for OCR/structured-output requests. Without a limit,
+            # one malformed response can occupy LM Studio until its full
+            # context window is exhausted and stall the entire ingest worker.
+            max_tokens=_env_int("LOCAL_LLM_MAX_TOKENS", 1024),
+            timeout=_env_int("LOCAL_LLM_TIMEOUT_SECONDS", 180),
         )
 
     raise ValueError(f"지원하지 않는 provider: {VLM_PROVIDER}")

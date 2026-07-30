@@ -4,12 +4,13 @@ from typing import Any, List, Tuple, cast
 import httpx
 from langchain_core.messages import SystemMessage, HumanMessage
 from model import get_llm
-from schema import MetadataSchema
+from schema import MetadataSchema, RefinementSchema
 from dotenv import load_dotenv
 from config import (
     REFINE_FULL_CONTENT_LIMIT,
     BODY_MIN_FOR_ATTACHMENT_SKIP,
     ATTACHMENT_REFINE_FALLBACK_CHARS,
+    VLM_PROVIDER,
 )
 
 
@@ -341,7 +342,19 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
             needs_llm.append((idx, _llm_item(item)))
 
     if needs_llm:
-        model = get_llm().with_structured_output(MetadataSchema)
+        # LM Studio's OpenAI-compatible endpoint handles native JSON Schema
+        # more reliably than emulated function calling. In function-calling
+        # mode some local models keep generating until max_tokens and leave an
+        # unparseable, truncated tool call.
+        structured_kwargs = (
+            {"method": "json_schema"}
+            if VLM_PROVIDER == "local"
+            else {}
+        )
+        model = get_llm().with_structured_output(
+            RefinementSchema,
+            **structured_kwargs,
+        )
         prompts = [
             [system_msg, HumanMessage(content=_user_prompt(item))]
             for _, item in needs_llm
@@ -360,11 +373,13 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
                 out = _invoke_with_retry(model, system_msg, llm_item)
                 if out is None:
                     continue  # 끝까지 실패 → 이 항목만 드롭
-            result = cast(MetadataSchema, out)
-            # LLM이 content를 요약/축약하면 RAG 청크화 시 정보 손실 → 항상 원본 덮어쓰기.
-            result.content = original_item["content"]
-            result.title = original_item["title"]
-            result.url = original_item["url"]
+            extracted = cast(RefinementSchema, out)
+            result = MetadataSchema(
+                title=original_item["title"],
+                content=original_item["content"],
+                url=original_item["url"],
+                **extracted.model_dump(),
+            )
             result.summary = (result.summary or "").strip()
             results[idx] = result
 
@@ -378,12 +393,12 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
     return refined
 
 
-def _invoke_with_retry(model, system_msg: SystemMessage, item: dict) -> MetadataSchema | None:
+def _invoke_with_retry(model, system_msg: SystemMessage, item: dict) -> RefinementSchema | None:
     """Gemini API 호출에 지수 백오프 재시도. 모든 시도 실패 시 None 반환."""
     user_msg = HumanMessage(content=_user_prompt(item))
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            return cast(MetadataSchema, model.invoke([system_msg, user_msg]))
+            return cast(RefinementSchema, model.invoke([system_msg, user_msg]))
         except _RETRYABLE_EXC as e:
             if attempt == _MAX_ATTEMPTS:
                 print(f"  ⚠️ refine 실패 [{item.get('url')}] — {type(e).__name__}: {e}")

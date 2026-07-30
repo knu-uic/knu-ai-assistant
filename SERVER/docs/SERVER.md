@@ -539,6 +539,8 @@ EMBEDDING_DIM=768
 # LM Studio
 LOCAL_LLM_PORT=1234
 LMSTUDIO_BASE_URL=http://localhost:1234/v1
+LOCAL_LLM_MAX_TOKENS=1024
+LOCAL_LLM_TIMEOUT_SECONDS=180
 
 # Retrieval
 RERANK_CANDIDATES=50
@@ -620,14 +622,18 @@ python3 -m sync.lms_sync                   # 할 일 동기화
 python3 -m sync.knuis_sync --username 학번 --password-stdin <<< "비밀번호"
 ```
 
-스캔 PDF OCR을 쓰려면 로컬에도 poppler가 필요합니다. HWP를 LibreOffice PDF 변환 fallback으로 처리하려면 LibreOffice도 필요합니다.
+스캔 PDF OCR을 쓰려면 로컬에도 poppler가 필요합니다. HWP를 LibreOffice PDF 변환 fallback으로 처리하려면 LibreOffice도 필요합니다. `opendataloader-pdf`로 PDF의 텍스트와 표를 직접 추출하려면 Java 11 이상도 필요합니다.
 
 macOS:
 
 ```bash
 brew install poppler
+brew install openjdk@21
 brew install --cask libreoffice
 ```
+
+Homebrew의 `openjdk@21`이 시스템 기본 Java보다 뒤에 잡히는 환경에서는 서버를
+실행할 때 `PATH="/opt/homebrew/bin:$PATH"`를 앞에 붙입니다.
 
 ## Docker 실행
 
