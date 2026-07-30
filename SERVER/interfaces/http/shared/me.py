@@ -59,6 +59,7 @@ async def me(request: Request, username: str = Depends(require_user)) -> MeProfi
             portal_linked=True,
             portal_syncing=sync_status["syncing"],
             sync_stage=sync_status["stage"],
+            portal_sync_error=sync_status["portal_error"],
             lms_sync_error=sync_status["lms_error"],
         )
     sync_status = portal_sync_status(student_id)
@@ -73,6 +74,7 @@ async def me(request: Request, username: str = Depends(require_user)) -> MeProfi
         portal_linked=bool(user.get("timetable") or user.get("grade_distribution")),
         portal_syncing=sync_status["syncing"],
         sync_stage=sync_status["stage"],
+        portal_sync_error=sync_status["portal_error"],
         lms_sync_error=sync_status["lms_error"],
         lms_linked=len(courses) > 0,
     )

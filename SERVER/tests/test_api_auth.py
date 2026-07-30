@@ -251,6 +251,38 @@ def test_university_sync_runs_portal_and_lms_without_persisting_password(monkeyp
     assert portal_auth.portal_sync_status("20260001")["syncing"] is False
 
 
+def test_university_sync_preserves_portal_failure_for_status_api(monkeypatch):
+    import sync.knuis_sync as knuis_sync
+    import sync.portal_auth as portal_auth
+
+    monkeypatch.setattr(
+        knuis_sync,
+        "run_portal_sync",
+        lambda sid, **kwargs: {
+            "success": False,
+            "message": "통합정보시스템 진입 버튼을 찾지 못했습니다.",
+        },
+    )
+    monkeypatch.setattr(
+        portal_auth,
+        "sync_lms_data",
+        lambda sid, password: {"success": True},
+    )
+
+    portal_auth.sync_university_data(
+        "20260002",
+        {"cookies": [], "origins": []},
+        "one-time-password",
+    )
+
+    status = portal_auth.portal_sync_status("20260002")
+    assert status["syncing"] is False
+    assert status["portal_error"] == "통합정보시스템 진입 버튼을 찾지 못했습니다."
+
+    portal_auth.mark_portal_sync_started("20260002")
+    assert portal_auth.portal_sync_status("20260002")["portal_error"] is None
+
+
 @pytest.mark.real_auth
 def test_public_notices_allow_anonymous_but_reject_invalid_token(monkeypatch):
     import interfaces.http.shared.notices as notices_mod

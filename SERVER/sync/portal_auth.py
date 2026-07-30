@@ -11,6 +11,7 @@ from sync.common import DEFAULT_PORTAL_URL
 
 _syncing_student_ids: set[str] = set()
 _sync_stage_by_student: dict[str, str] = {}
+_portal_error_by_student: dict[str, str] = {}
 _lms_error_by_student: dict[str, str] = {}
 _syncing_lock = Lock()
 
@@ -19,6 +20,7 @@ def mark_portal_sync_started(student_id: str) -> None:
     with _syncing_lock:
         _syncing_student_ids.add(student_id)
         _sync_stage_by_student[student_id] = "학교 데이터 동기화 준비 중"
+        _portal_error_by_student.pop(student_id, None)
         _lms_error_by_student.pop(student_id, None)
 
 
@@ -32,6 +34,7 @@ def portal_sync_status(student_id: str) -> dict:
         return {
             "syncing": student_id in _syncing_student_ids,
             "stage": _sync_stage_by_student.get(student_id),
+            "portal_error": _portal_error_by_student.get(student_id),
             "lms_error": _lms_error_by_student.get(student_id),
         }
 
@@ -51,6 +54,12 @@ def _set_lms_error(student_id: str, error: Exception | str) -> None:
     message = str(error).strip() or "알 수 없는 오류"
     with _syncing_lock:
         _lms_error_by_student[student_id] = message[:300]
+
+
+def _set_portal_error(student_id: str, error: Exception | str) -> None:
+    message = str(error).strip() or "알 수 없는 오류"
+    with _syncing_lock:
+        _portal_error_by_student[student_id] = message[:500]
 
 
 def _browser_context_options() -> dict:
@@ -142,11 +151,20 @@ def sync_portal_data(student_id: str, storage_state: dict) -> dict:
 
     mark_portal_sync_started(student_id)
     try:
-        return run_portal_sync(
+        result = run_portal_sync(
             student_id,
             storage_state=storage_state,
             on_step=lambda stage: _set_sync_stage(student_id, stage),
         )
+        if not result.get("success"):
+            _set_portal_error(
+                student_id,
+                result.get("message") or "포털 데이터 동기화에 실패했습니다.",
+            )
+        return result
+    except Exception as error:
+        _set_portal_error(student_id, error)
+        raise
     finally:
         _finish_sync(student_id)
 
@@ -189,6 +207,11 @@ def sync_university_data(
             storage_state=storage_state,
             on_step=lambda stage: _set_sync_stage(student_id, stage),
         )
+        if not result["portal"].get("success"):
+            _set_portal_error(
+                student_id,
+                result["portal"].get("message") or "포털 데이터 동기화에 실패했습니다.",
+            )
         try:
             result["lms"] = sync_lms_data(student_id, password)
         except Exception as error:
@@ -198,6 +221,9 @@ def sync_university_data(
                 "message": str(error),
             }
         return result
+    except Exception as error:
+        _set_portal_error(student_id, error)
+        raise
     finally:
         password = ""
         _finish_sync(student_id)
