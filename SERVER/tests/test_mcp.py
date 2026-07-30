@@ -46,7 +46,7 @@ def _tool_call_result(client, token, name, arguments):
     ],
 )
 def test_mcp_accepts_only_configured_bearer_token(monkeypatch, token, expected_status):
-    import api.mcp_server as mcp_mod
+    import interfaces.mcp.server as mcp_mod
 
     payload = {
         "jsonrpc": "2.0",
@@ -67,7 +67,7 @@ def test_mcp_accepts_only_configured_bearer_token(monkeypatch, token, expected_s
 
 
 def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
-    import api.mcp_server as mcp_mod
+    import interfaces.mcp.server as mcp_mod
 
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
     with TestClient(app) as client:
@@ -88,7 +88,7 @@ def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
 
 
 def test_search_knu_notices_clamps_result_limit_and_returns_safe_fields(monkeypatch):
-    import api.mcp_server as mcp_mod
+    import interfaces.mcp.server as mcp_mod
 
     def fake_retrieve(query, major, category_override):
         assert (query, major, category_override) == ("수강 철회", None, None)
@@ -185,7 +185,7 @@ def test_search_knu_notices_clamps_result_limit_and_returns_safe_fields(monkeypa
     ],
 )
 def test_search_knu_notices_returns_mode_status(monkeypatch, query_mode, contexts, expected_status):
-    import api.mcp_server as mcp_mod
+    import interfaces.mcp.server as mcp_mod
 
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
     monkeypatch.setattr(
@@ -215,7 +215,7 @@ def test_search_knu_notices_returns_mode_status(monkeypatch, query_mode, context
 
 
 def test_get_knu_notice_detail_limits_content_and_returns_source_url(monkeypatch):
-    import api.mcp_server as mcp_mod
+    import interfaces.mcp.server as mcp_mod
 
     content = "가" * (mcp_mod._DETAIL_CONTENT_LIMIT + 1)
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")

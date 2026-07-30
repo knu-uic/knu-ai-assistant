@@ -1,3 +1,5 @@
+"""Notice collection API shared by the React web app and Codmes."""
+
 import base64
 import binascii
 from datetime import datetime
@@ -11,7 +13,7 @@ from db.documents import get_documents
 from db.users import get_user
 from api.deps import optional_user
 from api.ratelimit import limiter, user_or_ip
-from api.schemas.notices import NoticeListResponse
+from interfaces.http.schemas.notices import NoticeListResponse
 from api.mappers import notice_from_list_row
 from config import HIDDEN_NOTICE_SOURCE_CODES, RATE_LIMIT_READ
 

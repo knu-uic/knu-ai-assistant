@@ -15,7 +15,7 @@ def test_chat_maps_graph_result_to_flat_keys(monkeypatch):
                 "expanded_query": "국가장학금 신청 기간",
             }
 
-    import api.routers.chat as chat_mod
+    import interfaces.http.web.chat as chat_mod
     monkeypatch.setattr(chat_mod, "GRAPH", FakeGraph())
 
     with TestClient(app) as client:
@@ -39,7 +39,7 @@ def test_chat_defaults_when_keys_missing(monkeypatch):
         def invoke(self, state):
             return {"answer": "관련 공지를 찾지 못했습니다."}
 
-    import api.routers.chat as chat_mod
+    import interfaces.http.web.chat as chat_mod
     monkeypatch.setattr(chat_mod, "GRAPH", FakeGraph())
 
     with TestClient(app) as client:

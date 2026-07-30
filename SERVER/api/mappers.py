@@ -1,8 +1,8 @@
 """DB row tuple → API schema 매핑. 날짜는 ISO 문자열, target/keywords는 list[str]로 정규화."""
 import math
 
-from api.schemas.notices import NoticeItem
-from api.schemas.search import SearchResult
+from interfaces.http.schemas.notices import NoticeItem
+from interfaces.http.schemas.search import SearchResult
 
 
 def _iso(x):

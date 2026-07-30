@@ -5,7 +5,7 @@ from api.main import app
 
 def test_portal_plugin_data_contains_domain_data_without_ui_schema(monkeypatch):
     from api.deps import create_portal_access_token
-    import api.routers.plugin_data as plugin_data
+    import interfaces.http.codmes.plugin_data as plugin_data
 
     monkeypatch.setattr(
         plugin_data,

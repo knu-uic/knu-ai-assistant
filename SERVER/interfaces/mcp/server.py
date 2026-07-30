@@ -1,3 +1,5 @@
+"""KNU notice evidence tools exposed through the MCP interface."""
+
 import secrets
 from datetime import date, datetime
 from math import isfinite
@@ -200,7 +202,7 @@ async def get_knu_notice_detail(category: str, url: str) -> dict:
     }
 
 
-def _create_mcp_app():
+def create_mcp_app():
     return mcp.http_app(
         path="/",
         transport="streamable-http",

@@ -1,10 +1,12 @@
+"""Standalone React web search endpoint."""
+
 import anyio
 from fastapi import APIRouter, Query, Request
 
 from db.documents import search_chunks
 from embedding.embed import embed_query
 from api.ratelimit import limiter, user_or_ip
-from api.schemas.search import SearchResponse
+from interfaces.http.schemas.search import SearchResponse
 from api.mappers import result_from_search_row
 from config import RATE_LIMIT_READ
 

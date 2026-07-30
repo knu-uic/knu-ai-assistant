@@ -1,3 +1,5 @@
+"""Service health contract shared by every client."""
+
 from fastapi import APIRouter
 
 from config import MIN_APP_VERSION

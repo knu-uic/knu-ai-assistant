@@ -27,7 +27,7 @@ def test_signup_request_rejects_non_school_email():
 
 
 def test_signup_request_sends_code(monkeypatch):
-    import api.routers.auth as auth_mod
+    import interfaces.http.shared.auth as auth_mod
 
     sent = {}
     monkeypatch.setattr(auth_mod, "last_verification_at", lambda e: None)
@@ -48,7 +48,7 @@ def test_signup_request_sends_code(monkeypatch):
 def test_signup_request_cooldown_429(monkeypatch):
     from datetime import datetime, timezone
 
-    import api.routers.auth as auth_mod
+    import interfaces.http.shared.auth as auth_mod
 
     monkeypatch.setattr(
         auth_mod, "last_verification_at", lambda e: datetime.now(timezone.utc)
@@ -61,7 +61,7 @@ def test_signup_request_cooldown_429(monkeypatch):
 
 
 def test_signup_request_mail_failure_502(monkeypatch):
-    import api.routers.auth as auth_mod
+    import interfaces.http.shared.auth as auth_mod
 
     monkeypatch.setattr(auth_mod, "last_verification_at", lambda e: None)
     monkeypatch.setattr(auth_mod, "insert_verification", lambda e, c, exp: None)
@@ -78,7 +78,7 @@ def test_signup_request_mail_failure_502(monkeypatch):
 
 
 def test_signup_verify_creates_account(monkeypatch):
-    import api.routers.auth as auth_mod
+    import interfaces.http.shared.auth as auth_mod
 
     monkeypatch.setattr(auth_mod, "get_account", lambda u: None)
     monkeypatch.setattr(auth_mod, "consume_verification", lambda e, c: True)
@@ -94,7 +94,7 @@ def test_signup_verify_creates_account(monkeypatch):
 
 
 def test_signup_verify_bad_code_400(monkeypatch):
-    import api.routers.auth as auth_mod
+    import interfaces.http.shared.auth as auth_mod
 
     monkeypatch.setattr(auth_mod, "get_account", lambda u: None)
     monkeypatch.setattr(auth_mod, "consume_verification", lambda e, c: False)
@@ -106,7 +106,7 @@ def test_signup_verify_bad_code_400(monkeypatch):
 
 
 def test_signup_verify_duplicate_username_409_before_code_consumed(monkeypatch):
-    import api.routers.auth as auth_mod
+    import interfaces.http.shared.auth as auth_mod
 
     consumed = []
     monkeypatch.setattr(auth_mod, "get_account", lambda u: {"username": u})
@@ -126,7 +126,7 @@ def test_login_success_and_wrong_password(monkeypatch):
     import bcrypt
     import jwt
 
-    import api.routers.auth as auth_mod
+    import interfaces.http.shared.auth as auth_mod
 
     password_hash = bcrypt.hashpw(b"password123", bcrypt.gensalt()).decode()
     account = {
@@ -155,7 +155,7 @@ def test_login_success_and_wrong_password(monkeypatch):
 
 
 def test_login_unknown_username_401(monkeypatch):
-    import api.routers.auth as auth_mod
+    import interfaces.http.shared.auth as auth_mod
 
     monkeypatch.setattr(auth_mod, "get_account", lambda u: None)
 
@@ -253,7 +253,7 @@ def test_university_sync_runs_portal_and_lms_without_persisting_password(monkeyp
 
 @pytest.mark.real_auth
 def test_public_notices_allow_anonymous_but_reject_invalid_token(monkeypatch):
-    import api.routers.notices as notices_mod
+    import interfaces.http.shared.notices as notices_mod
 
     monkeypatch.setattr(notices_mod, "get_documents", lambda **kw: [])
 
@@ -269,7 +269,7 @@ def test_public_notices_allow_anonymous_but_reject_invalid_token(monkeypatch):
 
 @pytest.mark.real_auth
 def test_protected_route_accepts_valid_token(monkeypatch):
-    import api.routers.notices as notices_mod
+    import interfaces.http.shared.notices as notices_mod
     from api.deps import create_access_token
 
     monkeypatch.setattr(notices_mod, "get_documents", lambda **kw: [])

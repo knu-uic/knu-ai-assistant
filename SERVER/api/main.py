@@ -1,23 +1,22 @@
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
 from config import WEB_CORS_ORIGINS
 from db.pool import pool
-from api.deps import require_user
-from api.mcp_server import _create_mcp_app, mcp_asgi_app
 from api.ratelimit import limiter
-from api.routers import auth, health, chat, lms, me, notices, plugin_data, portal, search
+from interfaces.http.routes import register_http_routes
+from interfaces.mcp import create_mcp_app, mcp_asgi_app
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await pool.open()
     try:
-        mcp_app = _create_mcp_app()
+        mcp_app = create_mcp_app()
         mcp_asgi_app.app = mcp_app
         async with mcp_app.router.lifespan_context(mcp_app):
             yield
@@ -50,13 +49,5 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONRe
     )
 
 
-app.include_router(health.router, prefix="/api")
-app.include_router(auth.router, prefix="/api")
-app.include_router(chat.router, prefix="/api", dependencies=[Depends(require_user)])
-app.include_router(notices.router, prefix="/api")
-app.include_router(plugin_data.router, prefix="/api")
-app.include_router(search.router, prefix="/api", dependencies=[Depends(require_user)])
-app.include_router(portal.router, prefix="/api", dependencies=[Depends(require_user)])
-app.include_router(lms.router, prefix="/api", dependencies=[Depends(require_user)])
-app.include_router(me.router, prefix="/api", dependencies=[Depends(require_user)])
+register_http_routes(app)
 app.mount("/api/mcp", mcp_asgi_app)

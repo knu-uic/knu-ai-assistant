@@ -10,7 +10,7 @@ def test_notices_maps_rows(monkeypatch):
         "장학", ["재학생"], ["장학금", "신청"],
         "KNU", "학생지원과", "notice", None, "신청 요약",
     )]
-    import api.routers.notices as m
+    import interfaces.http.shared.notices as m
     monkeypatch.setattr(m, "get_documents", lambda **kw: fake_rows)
     monkeypatch.setattr(m, "get_account", lambda u: None)  # 미연동 → 공통, DB 미접근
     with TestClient(app) as client:
@@ -28,7 +28,7 @@ def test_notices_maps_rows(monkeypatch):
 
 
 def test_notices_empty(monkeypatch):
-    import api.routers.notices as m
+    import interfaces.http.shared.notices as m
     monkeypatch.setattr(m, "get_documents", lambda **kw: [])
     monkeypatch.setattr(m, "get_account", lambda u: None)
     with TestClient(app) as client:
@@ -39,7 +39,7 @@ def test_notices_empty(monkeypatch):
 
 def test_notices_unlinked_scopes_to_common(monkeypatch):
     """미연동 유저 → department='공통'로 조회(타과 공지 제외)."""
-    import api.routers.notices as m
+    import interfaces.http.shared.notices as m
     captured = {}
     monkeypatch.setattr(m, "get_documents", lambda **kw: captured.update(kw) or [])
     monkeypatch.setattr(m, "get_account", lambda u: None)
@@ -52,7 +52,7 @@ def test_notices_unlinked_scopes_to_common(monkeypatch):
 
 def test_notices_linked_scopes_to_major(monkeypatch):
     """연동 유저 → 학과로 조회(내학과+공통). major 쿼리 미지정 시 자동 해석."""
-    import api.routers.notices as m
+    import interfaces.http.shared.notices as m
     captured = {}
     monkeypatch.setattr(m, "get_documents", lambda **kw: captured.update(kw) or [])
     monkeypatch.setattr(m, "get_account", lambda u: {"student_id": "202202165"})
@@ -66,7 +66,7 @@ def test_notices_linked_scopes_to_major(monkeypatch):
 
 def test_notices_explicit_major_query_wins(monkeypatch):
     """major 쿼리가 명시되면 자동 해석을 건너뛰고 그대로 사용(dart 호환)."""
-    import api.routers.notices as m
+    import interfaces.http.shared.notices as m
     captured = {}
     monkeypatch.setattr(m, "get_documents", lambda **kw: captured.update(kw) or [])
     # get_account이 호출되면 안 됨(명시 major 우선) — 호출 시 터지게
@@ -90,7 +90,7 @@ def _row(url: str, sort_ts: datetime.datetime):
 
 def test_notices_next_cursor_roundtrip(monkeypatch):
     """limit보다 많으면 next_cursor 생성, 그 커서로 재요청 시 디코드 값이 DB 조회에 전달."""
-    import api.routers.notices as m
+    import interfaces.http.shared.notices as m
 
     ts = datetime.datetime(2026, 6, 1, 12, 0, 0)
     captured = {}
@@ -123,7 +123,7 @@ def test_notices_next_cursor_roundtrip(monkeypatch):
 
 
 def test_notices_invalid_cursor_400(monkeypatch):
-    import api.routers.notices as m
+    import interfaces.http.shared.notices as m
     monkeypatch.setattr(m, "get_documents", lambda **kw: [])
     monkeypatch.setattr(m, "get_account", lambda u: None)
     with TestClient(app) as client:

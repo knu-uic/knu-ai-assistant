@@ -1,3 +1,5 @@
+"""Authentication routes shared by the React web app and Codmes."""
+
 import secrets
 from datetime import datetime, timedelta, timezone
 from functools import partial
@@ -9,7 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from api.deps import create_access_token, create_portal_access_token
 from api.mailer import send_verification_email
 from api.ratelimit import limiter
-from api.schemas.auth import (
+from interfaces.http.schemas.auth import (
     LoginRequest,
     PortalLoginRequest,
     SignupCodeRequest,

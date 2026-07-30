@@ -37,7 +37,7 @@ class _StartJob:
 
 
 def _patch_pool(monkeypatch, pool, start_job=_StartJob):
-    import api.routers.lms as lms_mod
+    import interfaces.http.web.lms as lms_mod
 
     async def fake_get_pool():
         return pool

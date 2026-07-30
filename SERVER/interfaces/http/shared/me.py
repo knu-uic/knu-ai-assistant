@@ -1,6 +1,6 @@
 """로그인 본인 데이터 읽기 (/api/me/*).
 
-모든 엔드포인트는 JWT 유저 → accounts.student_id로만 조회한다.
+React 웹과 Codmes가 공유하며, JWT 유저 → accounts.student_id로만 조회한다.
 경로에 학번을 받지 않으므로 타인 데이터 접근이 구조적으로 불가능(IDOR 차단).
 """
 from functools import partial
@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from api.deps import portal_student_id, require_user
 from api.ratelimit import limiter, user_or_ip
 from api.recommend import build_home
-from api.schemas.me import (
+from interfaces.http.schemas.me import (
     FavoritesRequest,
     HomeResponse,
     InterestsRequest,

@@ -1,3 +1,5 @@
+"""Authentication transport schemas."""
+
 from pydantic import BaseModel, Field
 
 

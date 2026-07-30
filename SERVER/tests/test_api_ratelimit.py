@@ -7,7 +7,7 @@ SCHOOL_EMAIL = "limituser@smail.kongju.ac.kr"
 
 
 def _mock_signup_request_deps(monkeypatch):
-    import api.routers.auth as auth_mod
+    import interfaces.http.shared.auth as auth_mod
 
     monkeypatch.setattr(auth_mod, "last_verification_at", lambda e: None)
     monkeypatch.setattr(auth_mod, "insert_verification", lambda e, c, exp: None)
@@ -48,7 +48,7 @@ def test_429_detail_is_korean(monkeypatch):
 @pytest.mark.real_auth
 def test_chat_limit_is_per_user(monkeypatch):
     """기본 상한 5/minute — 유저 A가 소진해도 유저 B는 통과(키 = JWT sub)."""
-    import api.routers.chat as chat_mod
+    import interfaces.http.web.chat as chat_mod
     from api.deps import create_access_token
 
     class FakeGraph:

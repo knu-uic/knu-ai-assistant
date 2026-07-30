@@ -1,3 +1,5 @@
+"""Standalone React web chatbot endpoints."""
+
 import json
 
 import anyio
@@ -6,7 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from retrieval.graph import GRAPH
 from api.ratelimit import limiter, user_or_ip
-from api.schemas.chat import ChatRequest, ChatResponse
+from interfaces.http.schemas.chat import ChatRequest, ChatResponse
 from api.sse import graph_events
 from config import RATE_LIMIT_CHAT
 

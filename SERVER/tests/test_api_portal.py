@@ -45,7 +45,7 @@ class _StartJob:
 
 
 def _patch_pool(monkeypatch, pool, start_job=_StartJob):
-    import api.routers.portal as portal_mod
+    import interfaces.http.web.portal as portal_mod
 
     async def fake_get_pool():
         return pool

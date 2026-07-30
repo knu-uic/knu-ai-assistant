@@ -1,4 +1,4 @@
-"""Data-only adapters consumed by installed client plugins.
+"""Data-only adapters consumed by the Codmes KNU plugin.
 
 These endpoints contain no Codmes presentation, component, icon, search, or
 filter definitions. The plugin package owns that UI contract.

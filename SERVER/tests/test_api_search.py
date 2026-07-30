@@ -10,7 +10,7 @@ def test_search_maps_rows(monkeypatch):
         "학사", ["전체"], ["수강"],
         "KNU", "학사과", "notice", None, "요약문", "바디", None,
     )]
-    import api.routers.search as m
+    import interfaces.http.web.search as m
     monkeypatch.setattr(m, "embed_query", lambda q: [0.1, 0.2, 0.3])
     monkeypatch.setattr(m, "search_chunks", lambda vec, **kw: fake_rows)
     with TestClient(app) as client:
@@ -33,7 +33,7 @@ def test_search_nan_score_coerced_to_zero(monkeypatch):
         None, None, None, "기타", None, None,
         "KNU", "기타과", "notice", None, None, None, None,
     )]
-    import api.routers.search as m
+    import interfaces.http.web.search as m
     monkeypatch.setattr(m, "embed_query", lambda q: [0.0])
     monkeypatch.setattr(m, "search_chunks", lambda vec, **kw: fake_rows)
     with TestClient(app) as client:
@@ -43,7 +43,7 @@ def test_search_nan_score_coerced_to_zero(monkeypatch):
 
 
 def test_search_empty(monkeypatch):
-    import api.routers.search as m
+    import interfaces.http.web.search as m
     monkeypatch.setattr(m, "embed_query", lambda q: [0.0])
     monkeypatch.setattr(m, "search_chunks", lambda vec, **kw: [])
     with TestClient(app) as client:

@@ -2,7 +2,7 @@
 
 공주대학교 공지와 학과 자료를 크롤링해 PostgreSQL/pgvector에 저장하고, FastAPI와 LangGraph 기반 RAG 챗봇으로 제공하는 학생 맞춤형 안내 서비스입니다.
 
-실제 웹 제품은 `WEB/`의 React/Vite 클라이언트이고, `SERVER/`는 FastAPI HTTP API와 Redis/ARQ 백그라운드 작업을 제공합니다. Flutter 앱은 별도 클라이언트입니다.
+독립 웹 제품은 `WEB/`의 React/Vite 클라이언트이고, Codmes 플러그인은 네이티브 Surface와 MCP를 사용합니다. `SERVER/`는 두 클라이언트가 공유하는 FastAPI 백엔드와 Redis/ARQ 백그라운드 작업을 제공합니다. 자세한 경계는 [architecture.md](architecture.md)를 참고합니다.
 
 ## 현재 기능
 
@@ -26,7 +26,15 @@
 
 ```text
 .
-├── api/                           # FastAPI HTTP API와 인증/동기화 잡 등록
+├── api/                           # FastAPI 조립·lifespan·공통 HTTP 보조 모듈
+├── interfaces/
+│   ├── http/
+│   │   ├── shared/                # React/Codmes 공용 인증·공지·내 정보
+│   │   ├── web/                   # React 전용 챗봇·검색·동기화 API
+│   │   ├── codmes/                # Codmes Surface 전용 data adapter
+│   │   ├── schemas/               # HTTP 요청·응답 DTO
+│   │   └── routes.py              # 기존 /api URL 조립
+│   └── mcp/                       # Codmes AI용 MCP 도구
 ├── workers/
 │   └── arq_worker.py              # Redis/ARQ 워커와 공지 폴링
 │
