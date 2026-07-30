@@ -124,23 +124,28 @@ async def portal_login(
     from sync.portal_auth import (
         authenticate_portal,
         mark_portal_sync_started,
+        save_portal_identity,
         sync_university_data,
     )
 
     student_id = req.student_id.strip()
-    storage_state = await anyio.to_thread.run_sync(
+    portal_auth = await anyio.to_thread.run_sync(
         partial(authenticate_portal, student_id, req.password)
     )
-    if storage_state is None:
+    if portal_auth is None:
         raise HTTPException(
             status_code=401,
             detail="공주대 포털 학번 또는 비밀번호를 확인해주세요.",
         )
+    await anyio.to_thread.run_sync(
+        partial(save_portal_identity, student_id, portal_auth.get("profile"))
+    )
     mark_portal_sync_started(student_id)
     background_tasks.add_task(
         sync_university_data,
         student_id,
-        storage_state,
+        portal_auth["storage_state"],
         req.password,
+        portal_auth.get("profile"),
     )
     return TokenResponse(access_token=create_portal_access_token(student_id))

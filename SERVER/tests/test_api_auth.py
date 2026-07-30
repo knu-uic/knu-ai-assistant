@@ -173,16 +173,31 @@ def test_portal_login_issues_direct_student_token(monkeypatch):
     import sync.portal_auth as portal_auth
 
     synced = []
+    saved = []
     monkeypatch.setattr(
         portal_auth,
         "authenticate_portal",
-        lambda sid, pw: {"cookies": [], "origins": []},
+        lambda sid, pw: {
+            "storage_state": {"cookies": [], "origins": []},
+            "profile": {
+                "name": "테스트 학생",
+                "major": "컴퓨터공학과",
+                "academic_status": "학부생",
+            },
+        },
     )
     monkeypatch.setattr(portal_auth, "mark_portal_sync_started", lambda sid: None)
     monkeypatch.setattr(
         portal_auth,
+        "save_portal_identity",
+        lambda sid, profile: saved.append((sid, profile)),
+    )
+    monkeypatch.setattr(
+        portal_auth,
         "sync_university_data",
-        lambda sid, state, password: synced.append((sid, state, password)),
+        lambda sid, state, password, profile: synced.append(
+            (sid, state, password, profile)
+        ),
     )
 
     with TestClient(app) as client:
@@ -198,10 +213,23 @@ def test_portal_login_issues_direct_student_token(monkeypatch):
     )
     assert payload["sub"] == "portal:20260001"
     assert "exp" not in payload
+    assert saved == [(
+        "20260001",
+        {
+            "name": "테스트 학생",
+            "major": "컴퓨터공학과",
+            "academic_status": "학부생",
+        },
+    )]
     assert synced == [(
         "20260001",
         {"cookies": [], "origins": []},
         "portal-password",
+        {
+            "name": "테스트 학생",
+            "major": "컴퓨터공학과",
+            "academic_status": "학부생",
+        },
     )]
 
 

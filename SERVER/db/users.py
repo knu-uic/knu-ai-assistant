@@ -72,8 +72,8 @@ def get_user(student_id: str) -> dict | None:
 
 def upsert_user(
     student_id: str,
-    name: str,
-    major: str,
+    name: str | None,
+    major: str | None,
     year: int | None,
     interests: list[str] | None = None,
     favorite_courses: list[str] | None = None,
@@ -93,9 +93,9 @@ def upsert_user(
             INSERT INTO users (student_id, name, major, year, interests, favorite_courses, graduation_credits, timetable, grade_distribution_json, cumulative_grades_json)
             VALUES (%s, %s, %s, %s, COALESCE(%s, ''), COALESCE(%s, ''), %s, %s, %s, %s)
             ON CONFLICT (student_id) DO UPDATE SET
-                name = EXCLUDED.name,
-                major = EXCLUDED.major,
-                year = EXCLUDED.year,
+                name = COALESCE(EXCLUDED.name, users.name),
+                major = COALESCE(EXCLUDED.major, users.major),
+                year = COALESCE(EXCLUDED.year, users.year),
                 interests = CASE WHEN EXCLUDED.interests IS NOT NULL AND EXCLUDED.interests <> '' THEN EXCLUDED.interests ELSE users.interests END,
                 favorite_courses = CASE WHEN EXCLUDED.favorite_courses IS NOT NULL AND EXCLUDED.favorite_courses <> '' THEN EXCLUDED.favorite_courses ELSE users.favorite_courses END,
                 graduation_credits = COALESCE(EXCLUDED.graduation_credits, users.graduation_credits),

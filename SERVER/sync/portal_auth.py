@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 import tempfile
 from pathlib import Path
@@ -89,8 +90,67 @@ def _has_visible_system_button(page) -> bool:
     return False
 
 
+def parse_portal_identity(
+    student_id: str,
+    name_text: str,
+    department_text: str,
+) -> dict:
+    """Parse the common portal user widget shown immediately after SSO login."""
+    name_match = re.search(r"^\s*(.+?)\s*\((\d+)\)", name_text or "")
+    if not name_match:
+        raise RuntimeError("포털 사용자 이름과 학번을 해석하지 못했습니다.")
+    parsed_name, parsed_student_id = name_match.groups()
+    if parsed_student_id != student_id:
+        raise RuntimeError("로그인 계정과 포털 사용자 정보의 학번이 일치하지 않습니다.")
+
+    department_parts = [
+        part.strip() for part in (department_text or "").split("/") if part.strip()
+    ]
+    if not department_parts:
+        raise RuntimeError("포털 사용자 정보에서 학과를 확인하지 못했습니다.")
+    return {
+        "name": parsed_name.strip(),
+        "major": department_parts[0],
+        "academic_status": department_parts[1] if len(department_parts) > 1 else None,
+    }
+
+
+def extract_portal_identity(page, student_id: str) -> dict | None:
+    """Read identity fields from the portal home iframe without entering KNUIS."""
+    name_selector = '[id="frmInsa_s.txtNm"]'
+    department_selector = '[id="frmInsa_s.txtdept"]'
+    for frame in page.frames:
+        try:
+            name = frame.locator(name_selector)
+            department = frame.locator(department_selector)
+            if name.count() != 1 or department.count() != 1:
+                continue
+            name_text = name.get_attribute("value") or name.text_content() or ""
+            department_text = (
+                department.get_attribute("value") or department.text_content() or ""
+            )
+            return parse_portal_identity(student_id, name_text, department_text)
+        except Exception:
+            continue
+    return None
+
+
+def save_portal_identity(student_id: str, profile: dict | None) -> None:
+    """Persist the identity available at login before slower KNUIS/LMS sync."""
+    if not profile:
+        return
+    from db.users import upsert_user
+
+    upsert_user(
+        student_id=student_id,
+        name=profile["name"],
+        major=profile["major"],
+        year=None,
+    )
+
+
 def authenticate_portal(student_id: str, password: str) -> dict | None:
-    """Verify university SSO and return its temporary browser session state."""
+    """Verify university SSO and return session state plus portal identity."""
     if not student_id.strip() or not password:
         return None
 
@@ -128,7 +188,10 @@ def authenticate_portal(student_id: str, password: str) -> dict | None:
                 if rejected:
                     return None
                 if _has_visible_system_button(page):
-                    return context.storage_state()
+                    return {
+                        "storage_state": context.storage_state(),
+                        "profile": extract_portal_identity(page, student_id.strip()),
+                    }
                 if not reloaded and time.monotonic() + 10 < deadline:
                     page.wait_for_timeout(4_000)
                     page.reload(wait_until="load", timeout=15_000)
@@ -195,6 +258,7 @@ def sync_university_data(
     student_id: str,
     storage_state: dict,
     password: str,
+    portal_profile: dict | None = None,
 ) -> dict:
     """Sync KNUIS and LMS with credentials kept only for this background task."""
     from sync.knuis_sync import run_portal_sync
@@ -206,6 +270,7 @@ def sync_university_data(
             student_id,
             storage_state=storage_state,
             on_step=lambda stage: _set_sync_stage(student_id, stage),
+            initial_profile=portal_profile,
         )
         if not result["portal"].get("success"):
             _set_portal_error(

@@ -103,20 +103,68 @@ def _set_nested(d, path, value):
     d[path[-1]] = value
 
 
-def parse_graduation_data(data_frame) -> tuple[str, str, int, dict]:
-    """졸업사전예고 프레임에서 학적(F_SRCH)·취득학점(G4)을 arrData에서 직접 파싱.
-    grad_json 중첩 구조는 기존과 동일하게 유지(portal.py cols_def 호환)."""
-    # 1. 학적 기본정보 — F_SRCH arrData (NM/SUST_NM/SYEAR)
+def parse_profile_data(data_frame) -> tuple[str, str, int]:
+    """F_SRCH 학적 데이터에서 이름·학과·학년을 읽는다.
+
+    일부 학생은 졸업사전예고의 G4 데이터가 없으므로 F_SRCH와 G4를 함께
+    요구하면 정상 로그인 후에도 프로필을 저장하지 못한다.
+    """
     f = get_arrdata(data_frame, "F_SRCH")
     if not f:
         raise RuntimeError("학적 기본 정보(F_SRCH arrData)를 찾지 못했습니다.")
-    student_name = _av(f, "NM", 0) or "이름 미설정"
-    student_major = _av(f, "SUST_NM", 0) or "학과 미설정"
-    year_str = _av(f, "SYEAR", 0) or "1"
+    student_name = _av(f, "NM", 0).strip()
+    student_major = _av(f, "SUST_NM", 0).strip()
+    year_str = _av(f, "SYEAR", 0).strip()
+    if not student_name or not student_major:
+        raise RuntimeError("학적 기본 정보에 이름 또는 학과가 없습니다.")
     match = re.search(r"(\d+)", year_str)
-    student_year = int(match.group(1)) if match else 1
+    if not match:
+        raise RuntimeError("학적 기본 정보에서 학년을 확인하지 못했습니다.")
+    return student_name, student_major, int(match.group(1))
 
-    # 2. 취득학점 요약 — G4 arrData(1행). SUST_*=기준, 접두사 없음=취득.
+
+def parse_knuis_identity(student_id: str, text: str) -> dict:
+    """Parse the persistent KNUIS header user label.
+
+    Example: ``장예원(202102271, 학부생(졸업)) 식물자원학과(주)``
+    """
+    match = re.match(
+        r"^\s*(?P<name>.+?)\s*\((?P<student_id>\d+)\s*,\s*"
+        r"(?P<academic_status>.+)\)\s+(?P<major>.+?)\s*$",
+        text or "",
+    )
+    if not match:
+        raise RuntimeError("통합정보시스템 사용자 정보를 해석하지 못했습니다.")
+    profile = match.groupdict()
+    if profile["student_id"] != student_id:
+        raise RuntimeError("로그인 계정과 통합정보시스템 학번이 일치하지 않습니다.")
+    return {
+        "name": profile["name"].strip(),
+        "major": profile["major"].strip(),
+        "academic_status": profile["academic_status"].strip(),
+    }
+
+
+def extract_knuis_identity(page, student_id: str, timeout_sec: int = 10) -> dict | None:
+    """Read the user label displayed on every KNUIS screen."""
+    selector = '[id="frmUserInfo.txtUserTotalInfo"]'
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        for frame in page.frames:
+            try:
+                locator = frame.locator(selector)
+                if locator.count() != 1:
+                    continue
+                text = locator.get_attribute("value") or locator.text_content() or ""
+                return parse_knuis_identity(student_id, text)
+            except Exception:
+                continue
+        time.sleep(0.25)
+    return None
+
+
+def parse_graduation_credits(data_frame) -> dict:
+    """G4 취득학점 데이터를 기존 중첩 JSON 구조로 변환한다."""
     g4 = get_arrdata(data_frame, "G4")
     if not g4:
         raise RuntimeError("졸업 취득 학점 요약(G4 arrData)을 찾지 못했습니다.")
@@ -130,7 +178,13 @@ def parse_graduation_data(data_frame) -> tuple[str, str, int, dict]:
     grad_json = {}
     for path, std_col, taken_col in GRAD_G4_MAP:
         _set_nested(grad_json, path, {"기준": cell(std_col), "취득": cell(taken_col)})
+    return grad_json
 
+
+def parse_graduation_data(data_frame) -> tuple[str, str, int, dict]:
+    """학적(F_SRCH)과 졸업학점(G4)이 함께 있는 기존 화면용 파서."""
+    student_name, student_major, student_year = parse_profile_data(data_frame)
+    grad_json = parse_graduation_credits(data_frame)
     return student_name, student_major, student_year, grad_json
 
 
@@ -431,6 +485,7 @@ def run_portal_sync(
     keep_open: int = 0,
     save_db: bool = True,
     on_step=None,
+    initial_profile: dict | None = None,
 ) -> dict:
     """포털 로그인/검증 세션 → 시간표·성적·졸업정보 파싱 → users 저장.
 
@@ -528,6 +583,13 @@ def run_portal_sync(
             knuis_page = new_page_info.value
             knuis_page.bring_to_front()
             knuis_page.wait_for_load_state("load")
+            knuis_profile = extract_knuis_identity(knuis_page, student_id)
+            if knuis_profile:
+                print(
+                    f"[2/7] 통합정보시스템 사용자 확인: "
+                    f"{knuis_profile['name']} ({knuis_profile['major']})",
+                    flush=True,
+                )
 
             # LeftFrame의 fn_runFileMDI 런타임이 준비될 때까지 대기(최대 120초, 준비 즉시 통과).
             # 느린 환경에서 첫 메뉴 진입이 런타임 미초기화로 빈손이 되는 것을 막는다.
@@ -546,36 +608,75 @@ def run_portal_sync(
             else:
                 print("[2/7] LeftFrame 런타임 준비 타임아웃(계속 진행).", file=sys.stderr, flush=True)
 
-            # 3. 시간표(menuId 1000000062) — fn_runFileMDI 직접 호출로 진입.
+            # 3. 나의 학적자료(menuId 1000000033) — 프로필의 단일 공식 원본.
+            # 포털 홈/상단 사용자 문구는 로그인 직후 임시 표시용 fallback이고,
+            # 이름·학과·현재 학년은 이 화면의 F_SRCH dataset으로 최종 확정한다.
+            base_profile = knuis_profile or initial_profile or {}
+            name = base_profile.get("name")
+            major = base_profile.get("major")
+            year = None
+            profile_error = None
+            try:
+                print("[3/9] 나의 학적자료 진입 (fn_runFileMDI)...", flush=True)
+                _step("학적정보 가져오는 중")
+                open_menu(knuis_page, "1000000033")
+                deadline = time.time() + 20
+                profile_frame = None
+                while time.time() < deadline:
+                    candidate = find_frame_by_iframe_id(context, "WHHHJV0210")
+                    if candidate is not None and get_arrdata(candidate, "F_SRCH"):
+                        profile_frame = candidate
+                        break
+                    time.sleep(0.25)
+                if profile_frame is None:
+                    raise RuntimeError(
+                        "나의 학적자료(WHHHJV0210)에서 F_SRCH를 찾지 못했습니다."
+                    )
+                name, major, year = parse_profile_data(profile_frame)
+                print(
+                    f"[3/9] 공식 학적정보 파싱 완료: "
+                    f"{name} ({major}, {year}학년)",
+                    flush=True,
+                )
+            except Exception as profile_sync_error:
+                if not name or not major:
+                    profile_error = str(profile_sync_error)
+                print(
+                    f"나의 학적자료 연동 중 오류 발생: {profile_sync_error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+            # 4. 시간표(menuId 1000000062) — fn_runFileMDI 직접 호출로 진입.
             timetable_json = None
             try:
-                print("[3/8] 시간표 진입 (fn_runFileMDI)...", flush=True)
+                print("[4/9] 시간표 진입 (fn_runFileMDI)...", flush=True)
                 _step("시간표 가져오는 중")
                 open_menu(knuis_page, "1000000062")
                 knuis_page.wait_for_timeout(3000)
                 wait_for_grid_rows(context, "WHHSKV", "G1", timeout_sec=30)
                 timetable_json = parse_timetable_data(context)
-                print(f"[3/8] 시간표 파싱 완료 (테이블 수: {len(timetable_json) if timetable_json else 0})", flush=True)
+                print(f"[4/9] 시간표 파싱 완료 (테이블 수: {len(timetable_json) if timetable_json else 0})", flush=True)
             except Exception as te:
                 print(f"시간표 연동 중 오류 발생: {te}", file=sys.stderr, flush=True)
 
-            # 4. 나의 성적분포(menuId 1000000103) — 조회 버튼 없이 진입 즉시 crossurl 로드.
+            # 5. 나의 성적분포(menuId 1000000103) — 조회 버튼 없이 진입 즉시 crossurl 로드.
             grade_distribution_json = None
             try:
-                print("[4/8] 나의 성적분포 진입 (fn_runFileMDI)...", flush=True)
+                print("[5/9] 나의 성적분포 진입 (fn_runFileMDI)...", flush=True)
                 _step("성적분포 가져오는 중")
                 open_menu(knuis_page, "1000000103")
                 knuis_page.wait_for_timeout(3000)
                 wait_for_grid_rows(context, "WHHSJV0275", "G1", timeout_sec=30)
                 grade_distribution_json = parse_grade_distribution(context)
-                print(f"[4/8] 나의 성적분포 파싱 완료 (그리드 수: {len(grade_distribution_json['grids']) if grade_distribution_json else 0})", flush=True)
+                print(f"[5/9] 나의 성적분포 파싱 완료 (그리드 수: {len(grade_distribution_json['grids']) if grade_distribution_json else 0})", flush=True)
             except Exception as ge:
                 print(f"나의 성적분포 연동 중 오류 발생: {ge}", file=sys.stderr, flush=True)
 
-            # 5. 누적성적조회(menuId 1000000102) ('전체' 학기 강제 선택)
+            # 6. 누적성적조회(menuId 1000000102) ('전체' 학기 강제 선택)
             cumulative_grades_json = None
             try:
-                print("[5/8] 누적성적조회 진입 (fn_runFileMDI)...", flush=True)
+                print("[6/9] 누적성적조회 진입 (fn_runFileMDI)...", flush=True)
                 _step("누적성적 가져오는 중")
                 open_menu(knuis_page, "1000000102")
                 knuis_page.wait_for_timeout(3000)
@@ -594,52 +695,46 @@ def run_portal_sync(
                         pass
                 wait_for_grid_rows(context, "WHHSJV0270", "G1", timeout_sec=20)
                 cumulative_grades_json = parse_cumulative_grades(context)
-                print(f"[5/8] 누적성적조회 파싱 완료 (그리드 수: {len(cumulative_grades_json['grids']) if cumulative_grades_json else 0})", flush=True)
+                print(f"[6/9] 누적성적조회 파싱 완료 (그리드 수: {len(cumulative_grades_json['grids']) if cumulative_grades_json else 0})", flush=True)
             except Exception as ce:
                 print(f"누적성적조회 연동 중 오류 발생: {ce}", file=sys.stderr, flush=True)
 
-            # 6. 졸업사전예고(menuId 1000000111): 학적(#F_SRCH) + 졸업 취득학점(#G4).
+            # 7. 졸업사전예고(menuId 1000000111): 졸업 취득학점(#G4) 전용.
             #    진입 시 WHHJUV0942 안내문 팝업이 뜨지만 모달 오버레이일 뿐, 데이터는 뒤 프레임
             #    DOM에 이미 렌더되므로 팝업을 닫지 않고 evaluate로 직접 읽는다(안내문 닫기는 best-effort).
             #    졸업사전예고 실패가 시간표·성적 저장을 막지 않도록 비치명적 처리.
-            name, major, year, grad_json = None, None, None, None
+            grad_json = None
             try:
-                print("[6/8] 졸업사전예고 진입 (fn_runFileMDI)...", flush=True)
+                print("[7/9] 졸업사전예고 진입 (fn_runFileMDI)...", flush=True)
                 _step("졸업정보 가져오는 중")
                 open_menu(knuis_page, "1000000111")
                 knuis_page.wait_for_timeout(3000)
                 # 안내문 팝업 '확인' 닫기 시도(실패해도 무시 — DOM 읽기에 영향 없음).
                 wait_and_click_in_any_frame(knuis_page, 'input[value*="확인"]', timeout_sec=3)
 
-                # G4 arrData를 실제로 가진 WHHJUV 프레임 선택. #G4 DOM은 shell 프레임에도 있을 수
-                # 있어, Webcrea 런타임+arrData 적재가 모두 끝난 프레임을 직접 검증해야 한다
-                # (안내문 팝업 프레임 구분 + 데이터 로드 대기 동시 처리).
-                data_frame = None
+                graduation_frame = None
                 deadline = time.time() + 20
-                while time.time() < deadline and data_frame is None:
+                while time.time() < deadline and graduation_frame is None:
                     for p_item in context.pages:
                         for frame in p_item.frames:
                             try:
-                                # URL이 공통 실행주소(run.jsp 등)로 떠도 잡히도록 URL 프리필터 제거.
-                                # 단 #G4만 가진 shell 프레임이 있어, 학적(F_SRCH)+취득학점(G4)을
-                                # 모두 보유한 프레임만 데이터 프레임으로 확정한다.
-                                if get_arrdata(frame, "F_SRCH") and get_arrdata(frame, "G4"):
-                                    data_frame = frame
-                                    break
+                                if graduation_frame is None and get_arrdata(frame, "G4"):
+                                    graduation_frame = frame
                             except Exception:
                                 continue
-                        if data_frame:
-                            break
-                    if data_frame is None:
+                    if graduation_frame is None:
                         time.sleep(0.5)
 
-                if not data_frame:
-                    raise RuntimeError("졸업 데이터 프레임(G4 arrData 보유 WHHJUV)을 식별하지 못했습니다.")
-
-                name, major, year, grad_json = parse_graduation_data(data_frame)
-                print(f"[6/8] 학적/졸업 정보 파싱 완료: {name} ({major}, {year}학년)")
+                if graduation_frame is None:
+                    raise RuntimeError("졸업학점 데이터(G4)를 찾지 못했습니다.")
+                grad_json = parse_graduation_credits(graduation_frame)
+                print("[7/9] 졸업학점 파싱 완료", flush=True)
             except Exception as gae:
-                print(f"졸업사전예고 연동 중 오류 발생(무시): {gae}", file=sys.stderr, flush=True)
+                print(
+                    f"졸업사전예고 연동 중 오류 발생(프로필과 무관): {gae}",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
             # 7. DB 일괄 저장
             if not save_db:
@@ -679,6 +774,19 @@ def run_portal_sync(
                     grade_distribution=grade_distribution_json,
                     cumulative_grades=cumulative_grades_json,
                 )
+            if profile_error:
+                message = f"포털 프로필 동기화 실패: {profile_error}"
+                result.update(
+                    success=False,
+                    message=message,
+                    timetable_synced=bool(timetable_json),
+                    grade_distribution_synced=bool(grade_distribution_json),
+                    cumulative_grades_synced=bool(cumulative_grades_json),
+                    graduation_synced=bool(grad_json),
+                )
+                print(message, file=sys.stderr, flush=True)
+                browser.close()
+                return result
             message = (
                 f"포털 데이터 연동 성공 "
                 f"(시간표: {'성공' if timetable_json else '실패'}, "
