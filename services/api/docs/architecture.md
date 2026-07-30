@@ -5,7 +5,7 @@ KNU는 백엔드 프로세스를 클라이언트별로 복제하지 않습니다
 분리합니다.
 
 ```text
-React WEB ─────┐
+React Web ─────┐
                ├─ interfaces/http/shared ─┐
                └─ interfaces/http/web ────┤
                                            ├─ db / retrieval / sync / pipelines
@@ -16,7 +16,7 @@ Codmes AI ─────── interfaces/mcp ──────────┘
 ## 디렉터리 소유권
 
 ```text
-SERVER/
+services/api/
 ├── api/
 │   ├── main.py          # FastAPI 조립, middleware, lifespan만 담당
 │   └── ...              # HTTP 공통 인증·보안·큐 보조 모듈

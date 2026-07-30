@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-server_dir="$repo_root/SERVER"
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+server_dir="$repo_root/services/api"
 network="knu-mcp-gateway-test-$RANDOM-$RANDOM"
 api_name="$network-api"
 gateway_name="$network-gateway"
@@ -33,10 +33,10 @@ grep -Fq "MCP_AUTH_TOKEN: $fixture_token" <<<"$compose_config"
 
 docker network create "$network" >/dev/null
 docker run -d --name "$api_name" --network "$network" --network-alias api \
-  -v "$repo_root/WEB/tests/fixtures/mcp_gateway_api.Caddyfile:/etc/caddy/Caddyfile:ro" \
+  -v "$repo_root/apps/web/tests/fixtures/mcp_gateway_api.Caddyfile:/etc/caddy/Caddyfile:ro" \
   caddy:2-alpine >/dev/null
 docker run -d --name "$gateway_name" --network "$network" -e MCP_AUTH_TOKEN="$fixture_token" \
-  -p 127.0.0.1::8000 -v "$repo_root/WEB/Caddyfile:/etc/caddy/Caddyfile:ro" \
+  -p 127.0.0.1::8000 -v "$repo_root/apps/web/Caddyfile:/etc/caddy/Caddyfile:ro" \
   caddy:2-alpine >/dev/null
 
 for _ in {1..20}; do

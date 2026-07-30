@@ -1,6 +1,6 @@
 """Arq 백그라운드 워커.
 
-실행 (SERVER 디렉터리에서, redis 필요):
+실행 (`services/api` 디렉터리에서, Redis 필요):
     arq workers.arq_worker.WorkerSettings
 
 잡:

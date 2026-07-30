@@ -10,14 +10,14 @@ maps them to the KNU MCP server's `search_knu_notices` and
 `get_knu_notice_detail` tools.
 
 ```sh
-# KNU API/MCP: SERVER/.env must contain MCP_AUTH_TOKEN=<a secret value>
-cd SERVER
-RUNTIME_ENV=local ../.venv/bin/python -m uvicorn api.main:app --port 8000
+# KNU API/MCP: services/api/.env must contain MCP_AUTH_TOKEN=<a secret value>
+cd services/api
+RUNTIME_ENV=local ../../.venv/bin/python -m uvicorn api.main:app --port 8000
 
 # Codmes must store the same MCP token in its server-side credential store.
 printf '%s' "$MCP_AUTH_TOKEN" | codmes mcp credential set knu \
   --root /path/to/CodmesWorkspace
-codmes plugin install ./CODMES_PLUGIN --root /path/to/CodmesWorkspace
+codmes plugin install ./packages/codmes-plugin --root /path/to/CodmesWorkspace
 ```
 
 The default manifest expects the KNU domain data API and MCP at
@@ -27,13 +27,13 @@ and data bindings. FastAPI returns only KNU data; Codmes combines both inputs
 and renders the resulting document with native SwiftUI.
 The manifest contains only the credential id `knu`;
 the actual token remains in Codmes `.codmes/config/auth.json` and KNU
-`SERVER/.env`.
+`services/api/.env`.
 
 Docker/Caddy remains an optional production path. Install
 `plugin.docker.json` as a file when the KNU API is exposed on local port 80:
 
 ```sh
-codmes plugin install ./CODMES_PLUGIN/plugin.docker.json \
+codmes plugin install ./packages/codmes-plugin/plugin.docker.json \
   --root /path/to/CodmesWorkspace
 ```
 

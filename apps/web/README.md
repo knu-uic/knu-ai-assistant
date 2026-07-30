@@ -5,17 +5,17 @@
 동기화(포털·LMS)는 백그라운드 워커가 처리한다. **워커나 redis가 없으면 동기화는 영원히 "동기화 중..."에서 멈춘다.**
 
 ```bash
-# 1) DB + Redis (SERVER에서)
-cd SERVER && docker compose up -d db redis
+# 1) DB + Redis (API 서비스에서)
+cd services/api && docker compose up -d db redis
 
 # 2) API 서버
-cd SERVER && RUNTIME_ENV=local ../.venv/bin/python -m uvicorn api.main:app --port 8000
+cd services/api && RUNTIME_ENV=local ../../.venv/bin/python -m uvicorn api.main:app --port 8000
 
 # 3) 워커 (동기화 처리 — 필수!)
-cd SERVER && RUNTIME_ENV=local ../.venv/bin/arq workers.arq_worker.WorkerSettings
+cd services/api && RUNTIME_ENV=local ../../.venv/bin/arq workers.arq_worker.WorkerSettings
 
 # 4) 웹
-cd WEB && npm install && npm run dev   # → http://localhost:5173
+cd apps/web && npm install && npm run dev   # → http://localhost:5173
 ```
 
 `/api` 요청은 vite proxy로 8000(API)으로 전달된다(같은 오리진).
@@ -25,7 +25,7 @@ cd WEB && npm install && npm run dev   # → http://localhost:5173
 Codmes plugin proxy 아래에서는 production build의 상대 asset 경로를 사용한다.
 
 ```bash
-cd WEB
+cd apps/web
 npm run build
 npm run preview -- --host 127.0.0.1 --port 5173
 ```

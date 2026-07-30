@@ -73,7 +73,7 @@ services:
 
   web:
     build:
-      context: ../WEB            # WEB/Dockerfile (node 빌드 → caddy 2-stage)
+      context: ../../apps/web    # apps/web/Dockerfile (node 빌드 → caddy 2-stage)
     restart: always
     environment:
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN is required}

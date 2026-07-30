@@ -5,7 +5,7 @@ Interface) 웹앱이다. 일반 HTML 크롤링이 통하지 않으며, 프레임
 런타임을 직접 호출/파싱해야 한다. 이 문서는 `sync/knuis_sync.py` 구현에서 확립한 기법을
 정리한다. 향후 동일 프레임워크(Webcrea 기반 타 대학 포털 포함) 크롤러 개발·유지보수 시 참고.
 
-> 구현 기준 파일: `sync/knuis_sync.py`, 소비처: 서버 테스트용 `test_streamlit/pages/portal.py`·`test_streamlit/pages/home.py`, 저장: [db/](file:///Users/hanjeong-u/Desktop/knu-ai-assistant/SERVER/db/)
+> 구현 기준 파일: `sync/knuis_sync.py`, 소비처: 서버 테스트용 `test_streamlit/pages/portal.py`·`test_streamlit/pages/home.py`, 저장: [db/](../db/)
 
 ---
 

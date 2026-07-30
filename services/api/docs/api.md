@@ -2,7 +2,7 @@
 
 공주대학교 공지와 학과 자료를 크롤링해 PostgreSQL/pgvector에 저장하고, FastAPI와 LangGraph 기반 RAG 챗봇으로 제공하는 학생 맞춤형 안내 서비스입니다.
 
-독립 웹 제품은 `WEB/`의 React/Vite 클라이언트이고, Codmes 플러그인은 네이티브 Surface와 MCP를 사용합니다. `SERVER/`는 두 클라이언트가 공유하는 FastAPI 백엔드와 Redis/ARQ 백그라운드 작업을 제공합니다. 자세한 경계는 [architecture.md](architecture.md)를 참고합니다.
+독립 웹 제품은 `apps/web/`의 React/Vite 클라이언트이고, Codmes 플러그인은 네이티브 Surface와 MCP를 사용합니다. `services/api/`는 두 클라이언트가 공유하는 FastAPI 백엔드와 Redis/ARQ 백그라운드 작업을 제공합니다. 자세한 경계는 [architecture.md](architecture.md)를 참고합니다.
 
 ## 현재 기능
 
@@ -88,7 +88,7 @@
 ├── debugtools/
 │   └── crawl_one.py               # 단일 URL 테스트 리포트
 ├── docs/                          # 문서
-│   ├── SERVER.md                  # (현재 파일)
+│   ├── api.md                     # (현재 파일)
 │   └── crawling_guide.md          # 크롤링 가이드
 ├── data/                          # 생성 데이터 (gitignore 처리)
 ├── Dockerfile
@@ -98,10 +98,10 @@
 
 ## 실행 시작점과 실제 흐름
 
-로컬 개발은 DB·Redis를 Compose로 실행한 뒤 FastAPI, ARQ 워커, WEB/Vite를 각각 시작합니다.
+로컬 개발은 DB·Redis를 Compose로 실행한 뒤 FastAPI, ARQ 워커, apps/web/Vite를 각각 시작합니다.
 
 ```text
-WEB/Vite
+apps/web/Vite
   → /api 프록시
   → api/main.py (FastAPI)
      → db/retrieval
@@ -603,7 +603,7 @@ Docker 환경에서 워커가 호스트의 LM Studio에 접근해야 하면 `htt
 
 ## 로컬 실행
 
-DB·Redis만 Docker로 띄우고 FastAPI, ARQ 워커, WEB/Vite는 로컬에서 실행하는 방식입니다.
+DB·Redis만 Docker로 띄우고 FastAPI, ARQ 워커, apps/web/Vite는 로컬에서 실행하는 방식입니다.
 
 ```bash
 docker compose up -d db redis
@@ -619,8 +619,8 @@ python3 -m uvicorn api.main:app --port 8000
 # 별도 터미널: Redis 잡 처리와 공지 폴링
 arq workers.arq_worker.WorkerSettings
 
-# 별도 터미널: WEB/Vite
-cd ../WEB && npm run dev
+# 별도 터미널: apps/web/Vite
+cd ../../apps/web && npm run dev
 
 # LMS 동기화 (Canvas 계정 필요)
 python3 -m sync.lms_login --auto           # 세션 저장
@@ -651,7 +651,7 @@ Homebrew의 `openjdk@21`이 시스템 기본 Java보다 뒤에 잡히는 환경�
 docker compose up -d db redis
 ```
 
-제품 컨테이너 구성은 별도의 프로덕션 Compose를 사용합니다. API는 `Dockerfile.api`, 워커는 `Dockerfile`, 웹은 `WEB/`의 Caddy 이미지를 사용합니다.
+제품 컨테이너 구성은 별도의 프로덕션 Compose를 사용합니다. API는 `Dockerfile.api`, 워커는 `Dockerfile`, 웹은 `apps/web/`의 Caddy 이미지를 사용합니다.
 
 ```bash
 docker compose -f docker-compose.prod.yml up --build
@@ -715,7 +715,7 @@ python3 -m pip install --dry-run -r requirements.txt
 - Docker에서 LM Studio를 쓰려면 호스트 LM Studio 서버가 켜져 있어야 합니다.
 - FastAPI 실행은 `python3 -m uvicorn api.main:app --port 8000`
 - ARQ 워커 실행은 `arq workers.arq_worker.WorkerSettings`
-- 웹 개발 서버 실행은 `cd ../WEB && npm run dev`
+- 웹 개발 서버 실행은 `cd ../../apps/web && npm run dev`
 - 크롤링/적재 실행은 `python3 -m pipelines.ingest`
 - LMS 동기화 실행은 `python3 -m sync.lms_sync`
 - KNUIS 동기화 실행은 `python3 -m sync.knuis_sync`

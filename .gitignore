@@ -73,7 +73,7 @@ app.*.map.json
 .superpowers/
 docs/superpowers/
 
-# SERVER 테스트·참조앱
-SERVER/.vscode/
-SERVER/test_streamlit/
+# API 서비스 테스트·참조앱
+services/api/.vscode/
+services/api/test_streamlit/
 .agents/

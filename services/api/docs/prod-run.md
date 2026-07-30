@@ -3,7 +3,7 @@
 도커 컴포즈로 전체 스택을 한 번에 띄우는 배포용 실행법.
 네이티브 개발 실행은 [dev-run.md](dev-run.md) 참고.
 
-구성 파일: `SERVER/docker-compose.prod.yml` (개발용 `docker-compose.yml`과 별도).
+구성 파일: `services/api/docker-compose.prod.yml` (개발용 `docker-compose.yml`과 별도).
 
 ## 서비스 구성
 
@@ -13,14 +13,14 @@
 | redis | redis:7-alpine | ❌ 내부 전용 | 잡 큐 · LMS 세션 보관 |
 | api | `Dockerfile.api` (슬림) | ❌ 내부 전용 | FastAPI |
 | worker | `Dockerfile` (헤비, playwright·libreoffice) | ❌ 내부 전용 | arq — 동기화·공지 수집 |
-| web | `../WEB/Dockerfile` (node 빌드 → caddy) | ✅ **80포트** | SPA 정적 서빙 + `/api/*` 프록시 |
+| web | `../../apps/web/Dockerfile` (node 빌드 → caddy) | ✅ **80포트** | SPA 정적 서빙 + `/api/*` 프록시 |
 
 **외부로 열리는 문은 web(80) 하나뿐.** db·redis·api·worker는 컨테이너 네트워크
 (`bot_network`) 안에서만 통신한다. 그래서 api 검증은 호스트가 아니라 컨테이너 안에서 한다.
 
 ## 사전 준비: `.env`
 
-`SERVER/.env`가 필요하다. compose가 `env_file`로 읽고, 일부만 도커용으로 덮어쓴다
+`services/api/.env`가 필요하다. compose가 `env_file`로 읽고, 일부만 도커용으로 덮어쓴다
 (`RUNTIME_ENV=docker` → `DB_HOST=db`, `REDIS_URL=redis://redis:6379`).
 없으면 `.env.example`를 복사해 채운다. 기본값 없어 **반드시 설정해야 하는 것**:
 
@@ -38,7 +38,7 @@
 ## 띄우기
 
 ```bash
-cd ~/knu_ai_assistant/SERVER
+cd ~/knu-ai-assistant/services/api
 
 # 1. 빌드 + 전체 기동 (백그라운드)
 docker compose -f docker-compose.prod.yml up -d --build
@@ -74,8 +74,8 @@ docker compose -f docker-compose.prod.yml exec api curl -s localhost:8000/api/he
 인용해 최종 답변을 만든다.
 
 ```bash
-cd ~/knu_ai_assistant/SERVER
-../.venv/bin/python - <<'PY'
+cd ~/knu-ai-assistant/services/api
+../../.venv/bin/python - <<'PY'
 import asyncio
 from fastmcp import Client
 
@@ -102,7 +102,7 @@ docker compose -f docker-compose.prod.yml logs -f worker  # 동기화/수집 잡
 ## 내리기
 
 ```bash
-cd ~/knu_ai_assistant/SERVER
+cd ~/knu-ai-assistant/services/api
 
 docker compose -f docker-compose.prod.yml down      # 컨테이너만 제거, 데이터(pgdata) 유지
 docker compose -f docker-compose.prod.yml down -v   # ⚠️ pgdata 볼륨까지 삭제 (DB 초기화)
