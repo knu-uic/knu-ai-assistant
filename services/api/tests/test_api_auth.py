@@ -212,6 +212,7 @@ def test_portal_login_issues_direct_student_token(monkeypatch):
         options={"verify_signature": False},
     )
     assert payload["sub"] == "portal:20260001"
+    assert payload["sid"]
     assert "exp" not in payload
     assert saved == [(
         "20260001",
@@ -231,6 +232,26 @@ def test_portal_login_issues_direct_student_token(monkeypatch):
             "academic_status": "학부생",
         },
     )]
+
+
+@pytest.mark.real_auth
+def test_portal_logout_revokes_only_the_presented_session():
+    from api.deps import create_portal_access_token, decode_access_token
+
+    first = create_portal_access_token("20260001")
+    second = create_portal_access_token("20260001")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/auth/logout",
+            headers={"Authorization": f"Bearer {first}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"logged_out": True, "session_revoked": True}
+    with pytest.raises(Exception, match="로그아웃되었거나"):
+        decode_access_token(first)
+    assert decode_access_token(second) == "portal:20260001"
 
 
 def test_portal_login_rejects_invalid_credentials(monkeypatch):

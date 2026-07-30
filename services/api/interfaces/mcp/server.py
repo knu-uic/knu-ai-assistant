@@ -1,17 +1,21 @@
 """KNU notice evidence tools exposed through the MCP interface."""
 
 import secrets
+from hashlib import sha256
 from datetime import date, datetime
 from math import isfinite
 from typing import Any
 
 import anyio
+from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.tools.tool import ToolResult
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
 
-from config import MCP_AUTH_TOKEN
+from api.deps import decode_access_token
+from api.ratelimit import allow_rate_limited_request
+from config import MCP_AUTH_TOKEN, RATE_LIMIT_MCP
 from db.documents import get_document_content
 from retrieval.graph import retrieve_mcp_evidence
 
@@ -107,7 +111,7 @@ def _build_evidence_package(retrieval: dict, limit: int) -> dict:
     }
 
 
-class _StaticBearerMiddleware:
+class _McpAuthenticationMiddleware:
     def __init__(self, app):
         self.app = app
 
@@ -115,14 +119,32 @@ class _StaticBearerMiddleware:
         if scope["type"] == "http":
             headers = dict(scope["headers"])
             authorization = headers.get(b"authorization", b"").decode()
-            expected = f"Bearer {MCP_AUTH_TOKEN}" if MCP_AUTH_TOKEN else ""
-            if not expected or not secrets.compare_digest(authorization, expected):
+            token = authorization.removeprefix("Bearer ").strip()
+            principal = None
+            if token and MCP_AUTH_TOKEN and secrets.compare_digest(token, MCP_AUTH_TOKEN):
+                principal = "internal-service"
+            elif token:
+                try:
+                    principal = decode_access_token(token)
+                except HTTPException:
+                    principal = None
+            if not principal:
                 response = JSONResponse(
                     status_code=401,
                     content={"detail": "MCP 인증이 필요합니다."},
                 )
                 await response(scope, receive, send)
                 return
+            rate_key = f"mcp:{sha256(principal.encode()).hexdigest()}"
+            if not allow_rate_limited_request(rate_key, RATE_LIMIT_MCP):
+                response = JSONResponse(
+                    status_code=429,
+                    content={"detail": "MCP 요청이 너무 많습니다. 잠시 후 다시 시도해주세요."},
+                    headers={"Retry-After": "60"},
+                )
+                await response(scope, receive, send)
+                return
+            scope.setdefault("state", {})["mcp_principal"] = principal
         await self.app(scope, receive, send)
 
 
@@ -208,7 +230,7 @@ def create_mcp_app():
         transport="streamable-http",
         json_response=True,
         stateless_http=True,
-        middleware=[Middleware(_StaticBearerMiddleware)],
+        middleware=[Middleware(_McpAuthenticationMiddleware)],
     )
 
 

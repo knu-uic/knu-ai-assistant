@@ -26,6 +26,9 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
     networks:
       - bot_network
 
@@ -87,6 +90,7 @@ services:
 
 volumes:
   pgdata:
+  redisdata:
 
 networks:
   bot_network:

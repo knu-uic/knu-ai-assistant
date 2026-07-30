@@ -6,6 +6,7 @@
 """
 import jwt
 from fastapi import Request
+from limits import parse_many
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -31,3 +32,9 @@ limiter = Limiter(
     key_func=get_remote_address,
     storage_uri=REDIS_URL or "memory://",
 )
+
+
+def allow_rate_limited_request(key: str, limit_spec: str) -> bool:
+    """Apply one or more SlowAPI/limits rules to a non-FastAPI interface."""
+    limits = parse_many(limit_spec)
+    return all(limiter._limiter.hit(item, key) for item in limits)

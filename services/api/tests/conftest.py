@@ -29,6 +29,33 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def in_memory_auth_sessions(monkeypatch):
+    """Keep revocable portal-session tests independent from a live Redis server."""
+    from api import deps
+
+    active = {}
+
+    def create(principal):
+        session_id = f"test-session-{len(active) + 1}"
+        active[session_id] = principal
+        return session_id
+
+    def is_active(session_id, principal):
+        return active.get(session_id) == principal
+
+    def revoke(session_id, principal):
+        if not is_active(session_id, principal):
+            return False
+        del active[session_id]
+        return True
+
+    monkeypatch.setattr(deps, "create_auth_session", create)
+    monkeypatch.setattr(deps, "is_auth_session_active", is_active)
+    monkeypatch.setattr(deps, "revoke_auth_session", revoke)
+    return active
+
+
+@pytest.fixture(autouse=True)
 def bypass_auth(request):
     """보호 라우터 테스트가 토큰 없이 동작하도록 require_user를 대체.
     실제 인증 동작을 검증하는 테스트는 @pytest.mark.real_auth로 우회를 끈다."""

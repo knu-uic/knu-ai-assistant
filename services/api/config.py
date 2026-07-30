@@ -228,6 +228,7 @@ ATTACHMENT_NAME_RESERVE_RATIO = _env_float(
 AUTH_JWT_SECRET = os.getenv("AUTH_JWT_SECRET")
 
 MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN")
+RATE_LIMIT_MCP = os.getenv("RATE_LIMIT_MCP", "60/minute")
 
 # -----------------------------
 # mail (가입 인증)

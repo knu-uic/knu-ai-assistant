@@ -6,9 +6,14 @@ from functools import partial
 
 import anyio
 import bcrypt
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
-from api.deps import create_access_token, create_portal_access_token
+from api.deps import (
+    create_access_token,
+    create_portal_access_token,
+    require_user,
+    revoke_access_token,
+)
 from api.mailer import send_verification_email
 from api.ratelimit import limiter
 from interfaces.http.schemas.auth import (
@@ -153,3 +158,14 @@ async def portal_login(
         portal_auth.get("profile"),
     )
     return TokenResponse(access_token=create_portal_access_token(student_id))
+
+
+@router.post("/auth/logout")
+@limiter.limit(RATE_LIMIT_AUTH)
+async def logout(request: Request, principal: str = Depends(require_user)) -> dict:
+    authorization = request.headers.get("Authorization", "")
+    token = authorization.removeprefix("Bearer ").strip()
+    return {
+        "logged_out": True,
+        "session_revoked": revoke_access_token(token, principal),
+    }

@@ -28,7 +28,8 @@
 - `AUTH_JWT_SECRET` — 로그인 토큰 서명 키
 - `PORTAL_SYNC_ENC_KEY` — 포털 비번 전달용 Fernet 키
   (생성: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`)
-- `MCP_AUTH_TOKEN` — 내부 데모의 공지 근거 MCP Bearer token
+- `MCP_AUTH_TOKEN` — 운영자용 loopback MCP 점검 token. 일반 사용자는 알거나
+  입력하지 않는다.
   (생성: `python -c "import secrets; print(secrets.token_urlsafe(32))"`)
 - provider 키 — `EMBEDDING_PROVIDER`/`LLM_MODEL` 등 토글에 맞는 API 키
   (prod 기본 OpenAI: `OPENAI_API_KEY`)
@@ -54,17 +55,23 @@ docker compose -f docker-compose.prod.yml exec api curl -s localhost:8000/api/he
 
 ## 내부 MCP 공지 근거 조회
 
-`/api/mcp`는 두 경로로 나뉜다.
+`/api/mcp`는 두 인증 경로를 지원한다.
 
 - 공개 web 진입점(`http://<host>/api/mcp`, :80)은 API로 그대로 프록시되며,
-  호출자가 `Authorization: Bearer $MCP_AUTH_TOKEN`을 보내야 한다. 토큰이 없거나
-  틀리면 API가 거부한다.
+  Codmes가 포털 로그인으로 발급받은 사용자별 session token을 Bearer로 보낸다.
+  일반 사용자는 별도 MCP token을 입력하지 않는다.
 - MCP 전용 loopback 게이트웨이(`http://127.0.0.1:8000/api/mcp`)는 호스트에서만
   접근할 수 있다. Caddy가 서버의 `MCP_AUTH_TOKEN`을 upstream Bearer 헤더로
   주입하므로 호출자는 토큰을 보내지 않는다. 이 게이트웨이에는 `/api/mcp` 외
   경로가 없다(404).
 
-두 경로 모두 tool 인자나 모델 대화에 token을 넣지 않는다.
+두 경로 모두 tool 인자나 모델 대화에 token을 넣지 않는다. 사용자 경로는 JWT
+subject의 학번을 기준으로 `RATE_LIMIT_MCP`를 적용하므로 같은 학번의 여러 기기는
+한도를 공유한다. 기본값은 `60/minute`다.
+
+포털 session token은 만료일 대신 Redis의 활성 session record로 검증한다. Redis는
+AOF와 `redisdata` volume을 사용해 재시작 후에도 session을 유지한다. 사용자가
+로그아웃하면 현재 session record만 제거하며 다른 기기의 session은 유지한다.
 
 제공 도구는 `search_knu_notices`와 `get_knu_notice_detail` 두 개뿐이다.
 `search_knu_notices`는 Chat과 같은 router·precise/broad 검색·reranking·근거 선별을

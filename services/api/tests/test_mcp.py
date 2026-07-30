@@ -4,6 +4,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+from api.deps import create_portal_access_token
 from api.main import app
 
 
@@ -45,7 +46,7 @@ def _tool_call_result(client, token, name, arguments):
         ("unit-mcp-token", 200),
     ],
 )
-def test_mcp_accepts_only_configured_bearer_token(monkeypatch, token, expected_status):
+def test_mcp_accepts_internal_or_user_bearer_token(monkeypatch, token, expected_status):
     import interfaces.mcp.server as mcp_mod
 
     payload = {
@@ -64,6 +65,64 @@ def test_mcp_accepts_only_configured_bearer_token(monkeypatch, token, expected_s
         response = _mcp_request(client, payload, token)
 
     assert response.status_code == expected_status
+
+
+def test_mcp_accepts_portal_login_token_without_static_secret(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+
+    monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", None)
+    token = create_portal_access_token("20260001")
+    with TestClient(app) as client:
+        response = _mcp_request(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1.0"},
+                },
+            },
+            token,
+        )
+
+    assert response.status_code == 200
+
+
+def test_mcp_rate_limit_is_scoped_to_authenticated_principal(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+
+    seen = []
+
+    def fake_allow(key, limit):
+        seen.append((key, limit))
+        return len(seen) == 1
+
+    monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", None)
+    monkeypatch.setattr(mcp_mod, "allow_rate_limited_request", fake_allow)
+    first_session = create_portal_access_token("20260002")
+    second_session = create_portal_access_token("20260002")
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "1.0"},
+        },
+    }
+    with TestClient(app) as client:
+        first = _mcp_request(client, payload, first_session)
+        limited = _mcp_request(client, payload, second_session)
+
+    assert first.status_code == 200
+    assert limited.status_code == 429
+    assert limited.headers["retry-after"] == "60"
+    assert len({key for key, _ in seen}) == 1
+    assert all(limit == mcp_mod.RATE_LIMIT_MCP for _, limit in seen)
 
 
 def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
