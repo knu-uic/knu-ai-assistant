@@ -3,6 +3,12 @@
 This package registers the KNU declarative surface and its MCP tools as one Codmes
 installation unit. Docker is not required for local development.
 
+`tools.json` declares the stable public names `knu_search_notices` and
+`knu_get_notice_detail`, their independent JSON input schemas, read-only flags,
+and approval policy. Codmes validates the declarations during installation and
+maps them to the KNU MCP server's `search_knu_notices` and
+`get_knu_notice_detail` tools.
+
 ```sh
 # KNU API/MCP: SERVER/.env must contain MCP_AUTH_TOKEN=<a secret value>
 cd SERVER

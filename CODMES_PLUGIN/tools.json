@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "tools": [
+    {
+      "name": "knu_search_notices",
+      "description": "공주대학교의 최신 수강·학사·장학 공지를 검색하고 답변 근거와 출처 URL을 반환합니다.",
+      "group": "knu_notices",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "찾으려는 공지, 일정 또는 절차"
+          },
+          "major": {
+            "type": "string",
+            "description": "선택 학과명"
+          },
+          "category": {
+            "type": "string",
+            "description": "선택 공지 카테고리"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 10
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "provider": {
+        "type": "mcp",
+        "server": "knu",
+        "tool": "search_knu_notices"
+      },
+      "requiresApproval": true,
+      "readOnly": true
+    },
+    {
+      "name": "knu_get_notice_detail",
+      "description": "KNU 공지 검색 결과의 원문 내용을 근거 확인용으로 가져옵니다.",
+      "group": "knu_notices",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "검색 결과에 포함된 공지 카테고리"
+          },
+          "url": {
+            "type": "string",
+            "description": "검색 결과에 포함된 공지 URL"
+          }
+        },
+        "required": [
+          "category",
+          "url"
+        ]
+      },
+      "provider": {
+        "type": "mcp",
+        "server": "knu",
+        "tool": "get_knu_notice_detail"
+      },
+      "requiresApproval": true,
+      "readOnly": true
+    }
+  ]
+}
