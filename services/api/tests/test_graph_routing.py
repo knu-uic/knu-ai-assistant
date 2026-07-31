@@ -19,11 +19,14 @@ def test_unknown_defaults_to_precise():
     assert _route_by_mode({}) == "precise"
 
 
-def test_retrieve_mcp_evidence_uses_precise_retrieval_without_answerer(monkeypatch):
+def test_retrieve_mcp_evidence_uses_deep_retrieval_without_answerer(monkeypatch):
     monkeypatch.setattr(
         graph,
         "_retrieve_with_rerank",
-        lambda query, major, categories: ([{"title": "공지"}], [{"chunk": "근거"}]),
+        lambda query, major, categories, **kwargs: (
+            [{"title": f"공지:{kwargs['time_scope']}:{kwargs['year']}"}],
+            [{"chunk": "근거"}],
+        ),
     )
     monkeypatch.setattr(
         graph,
@@ -35,36 +38,23 @@ def test_retrieve_mcp_evidence_uses_precise_retrieval_without_answerer(monkeypat
         "수강 철회",
         major="컴퓨터학부",
         category_override="수강",
+        time_scope="current",
+        year=2026,
+        notice_ids=[9],
     )
 
     assert result == {
-        "query_mode": "precise",
+        "query_mode": "deep",
         "original_query": "수강 철회",
         "expanded_query": "수강 철회",
         "categories": ["수강"],
+        "time_scope": "current",
+        "year": 2026,
+        "notice_ids": [9],
         "routing_fallback": False,
-        "contexts": [{"title": "공지"}],
+        "contexts": [{"title": "공지:current:2026"}],
         "evidence_chunks": [{"chunk": "근거"}],
     }
-
-
-def test_retrieve_mcp_evidence_uses_broad_retrieval_and_category_override(monkeypatch):
-    monkeypatch.setattr(
-        graph,
-        "_retrieve_broad",
-        lambda query, major, categories: [{"title": f"{query}:{major}:{categories[0]}"}],
-    )
-
-    result = graph.retrieve_mcp_evidence(
-        "수강 공지 목록",
-        major="컴퓨터학부",
-        category_override="수강",
-    )
-
-    assert result["query_mode"] == "broad"
-    assert result["categories"] == ["수강"]
-    assert result["contexts"] == [{"title": "수강 공지 목록:컴퓨터학부:수강"}]
-    assert result["evidence_chunks"] == []
 
 
 def test_retrieve_mcp_evidence_does_not_call_llm_router(monkeypatch):
@@ -76,7 +66,7 @@ def test_retrieve_mcp_evidence_does_not_call_llm_router(monkeypatch):
     monkeypatch.setattr(
         graph,
         "_retrieve_with_rerank",
-        lambda query, major, categories: (
+        lambda query, major, categories, **_kwargs: (
             [{"title": f"{query}:{major}:{categories}"}],
             [],
         ),
@@ -84,7 +74,7 @@ def test_retrieve_mcp_evidence_does_not_call_llm_router(monkeypatch):
 
     result = graph.retrieve_mcp_evidence("원본 질문", major="컴퓨터학부")
 
-    assert result["query_mode"] == "precise"
+    assert result["query_mode"] == "deep"
     assert result["expanded_query"] == "원본 질문"
     assert result["categories"] == []
     assert result["routing_fallback"] is False
@@ -129,9 +119,9 @@ def test_precise_retrieval_preserves_vector_and_rerank_scores(monkeypatch):
         ["안내.pdf"],
     )
     monkeypatch.setattr(graph, "embed_query", lambda query: [0.1])
-    monkeypatch.setattr(graph, "_vector_search", lambda *args: [row])
+    monkeypatch.setattr(graph, "_vector_search", lambda *args, **kwargs: [row])
     monkeypatch.setattr(graph, "_rerank", lambda query, rows: [(row, 0.94)])
-    monkeypatch.setattr(graph, "get_document_content", lambda category, url: "공지 본문")
+    monkeypatch.setattr(graph, "get_document_content", lambda url, category: "공지 본문")
 
     contexts, evidence = graph._retrieve_with_rerank("수강 철회", None, ["수강"])
 

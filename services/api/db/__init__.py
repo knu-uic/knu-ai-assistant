@@ -1,18 +1,12 @@
 from db.schema import (
     DB_URL,
-    CATEGORY_SLUGS,
-    SLUG_TO_CATEGORY,
-    SLUGS,
-    _slug,
-    _doc_ident,
-    _chunk_ident,
     _connect_with_vector,
     _months_ago,
     reset_db,
     init_db,
 )
 from db.documents import (
-    prune_documents,
+    archive_documents,
     sync_pinned_urls,
     upsert_source,
     document_exists,
@@ -23,6 +17,7 @@ from db.documents import (
     search_chunks,
     get_document_content,
     get_documents,
+    list_notices_for_scan,
 )
 from db.users import (
     ensure_users_schema,
@@ -43,17 +38,11 @@ from db.lms import (
 
 __all__ = [
     "DB_URL",
-    "CATEGORY_SLUGS",
-    "SLUG_TO_CATEGORY",
-    "SLUGS",
-    "_slug",
-    "_doc_ident",
-    "_chunk_ident",
     "_connect_with_vector",
     "_months_ago",
     "reset_db",
     "init_db",
-    "prune_documents",
+    "archive_documents",
     "sync_pinned_urls",
     "upsert_source",
     "document_exists",
@@ -64,6 +53,7 @@ __all__ = [
     "search_chunks",
     "get_document_content",
     "get_documents",
+    "list_notices_for_scan",
     "ensure_users_schema",
     "get_user",
     "upsert_user",

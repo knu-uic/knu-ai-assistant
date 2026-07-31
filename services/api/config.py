@@ -92,7 +92,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 LLM_MAX_CONTEXT_WINDOW_TOKENS = _env_int(
     "LLM_MAX_CONTEXT_WINDOW_TOKENS",
-    60000,
+    32768,
 )
 
 LLM_CHARS_PER_TOKEN = _env_float(
@@ -145,14 +145,17 @@ BROAD_DOC_TOP_N = _env_int(
 
 REFINE_FULL_CONTENT_LIMIT = _env_int(
     "REFINE_FULL_CONTENT_LIMIT",
-    12000,
+    24000,
 )
 
 # body가 충분하면 attachment 원문은 refine에서 거의 사용 안 함.
 BODY_MIN_FOR_ATTACHMENT_SKIP = 1000
 
 # body가 빈약할 때 attachment excerpt fallback budget.
-ATTACHMENT_REFINE_FALLBACK_CHARS = 10000
+ATTACHMENT_REFINE_FALLBACK_CHARS = _env_int(
+    "ATTACHMENT_REFINE_FALLBACK_CHARS",
+    16000,
+)
 
 
 # -----------------------------

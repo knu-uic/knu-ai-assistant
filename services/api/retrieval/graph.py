@@ -116,12 +116,23 @@ EVIDENCE_TOP_K = RERANK_TOP_N
 
 
 @traceable(run_type="retriever", name="vector_search")
-def _vector_search(q_vec, major, categories):
+def _vector_search(
+    q_vec,
+    major,
+    categories,
+    *,
+    time_scope: str = "current",
+    year: int | None = None,
+    notice_ids: list[int] | None = None,
+):
     return search_chunks(
         q_vec,
         major=major,
         categories=categories,
         limit=RERANK_CANDIDATES,
+        time_scope=time_scope,
+        year=year,
+        notice_ids=notice_ids,
     )
 
 
@@ -152,9 +163,20 @@ def _retrieve_with_rerank(
     query: str,
     major: str | None,
     categories: List[str] | None,
+    *,
+    time_scope: str = "current",
+    year: int | None = None,
+    notice_ids: list[int] | None = None,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     q_vec = embed_query(query)
-    rows = _vector_search(q_vec, major, categories)
+    rows = _vector_search(
+        q_vec,
+        major,
+        categories,
+        time_scope=time_scope,
+        year=year,
+        notice_ids=notice_ids,
+    )
     if not rows:
         return [], []
 
@@ -194,7 +216,7 @@ def _retrieve_with_rerank(
 
     contexts: List[Dict[str, Any]] = []
     for r, s in top_docs:
-        full = get_document_content(r[7], r[0]) or r[2]
+        full = get_document_content(r[0], r[7]) or r[2]
         deduped_full = _dedup_text(full, evidence_by_url.get(r[0], []))
         contexts.append(
             {
@@ -277,33 +299,34 @@ def retrieve_mcp_evidence(
     question: str,
     major: str | None = None,
     category_override: str | None = None,
+    time_scope: str = "current",
+    year: int | None = None,
+    notice_ids: list[int] | None = None,
 ) -> dict:
-    """Retrieve MCP evidence without invoking a second LLM.
+    """Retrieve Deep MCP evidence without invoking a second LLM.
 
     The upstream Codmes model has already chosen this tool and supplied the
-    query/category arguments. Keeping routing deterministic avoids nested model
-    latency and lets the MCP work with only an embedding provider configured.
+    structured filters. KNU does not classify the question again.
     """
     query = question.strip()
-    broad_markers = ("목록", "모아", "최근", "어떤", "여러", "전체", "한눈에")
-    query_mode = "broad" if any(marker in query for marker in broad_markers) else "precise"
     categories = [category_override] if category_override else []
-
-    if query_mode == "broad":
-        contexts = _retrieve_broad(query, major, categories or None)
-        evidence_chunks = []
-    else:
-        contexts, evidence_chunks = _retrieve_with_rerank(
-            query,
-            major,
-            categories or None,
-        )
+    contexts, evidence_chunks = _retrieve_with_rerank(
+        query,
+        major,
+        categories or None,
+        time_scope=time_scope,
+        year=year,
+        notice_ids=notice_ids,
+    )
 
     return {
-        "query_mode": query_mode,
+        "query_mode": "deep",
         "original_query": question,
         "expanded_query": query,
         "categories": categories,
+        "time_scope": time_scope,
+        "year": year,
+        "notice_ids": list(notice_ids or []),
         "routing_fallback": False,
         "contexts": contexts,
         "evidence_chunks": evidence_chunks,

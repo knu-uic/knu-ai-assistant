@@ -73,12 +73,17 @@ subject의 학번을 기준으로 `RATE_LIMIT_MCP`를 적용하므로 같은 학
 AOF와 `redisdata` volume을 사용해 재시작 후에도 session을 유지한다. 사용자가
 로그아웃하면 현재 session record만 제거하며 다른 기기의 session은 유지한다.
 
-제공 도구는 `search_knu_notices`와 `get_knu_notice_detail` 두 개뿐이다.
-`search_knu_notices`는 Chat과 같은 router·precise/broad 검색·reranking·근거 선별을
-거치되 answerer와 verifier는 실행하지 않는다. 기존 MCP client용 결과 목록은
-`content`에 유지하고, query mode·확장 검색어·점수·제한된 본문을 포함한 근거 패키지는
-`structuredContent`로 반환한다. 첨부파일은 이름만 제공하며 요청자 모델이 근거 URL을
-인용해 최종 답변을 만든다.
+공지 MCP는 다음 세 도구를 제공한다.
+
+- `knu_list_notices`: 구조화된 메타데이터로 목록·개수·신청 상태를 조회하는 Scan 도구
+- `knu_search_notice_details`: 구체적인 자격·절차·제출 서류를 vector 검색과
+  reranking으로 찾는 Deep 도구
+- `knu_get_notice_detail`: URL로 보존 중인 공지 원문을 조회하는 도구
+
+Scan/Deep 선택과 시간 범위는 Codmes 대화 모델이 질문 의미를 보고 결정한다. KNU
+MCP 내부에는 질문 키워드 router나 별도의 LLM 호출이 없다. 도구 결과는 사람이 읽을
+수 있는 `content`와 기계가 그대로 이용할 수 있는 `structuredContent`를 함께
+반환하며, 요청자 모델이 근거 URL을 인용해 최종 답변을 만든다.
 
 ```bash
 cd ~/knu-ai-assistant/services/api
@@ -89,14 +94,20 @@ from fastmcp import Client
 async def main():
     async with Client("http://127.0.0.1:8000/api/mcp") as client:
         print([tool.name for tool in await client.list_tools()])
-        print(await client.call_tool("search_knu_notices", {"query": "수강 철회", "limit": 3}))
+        print(await client.call_tool(
+            "knu_list_notices",
+            {"category": "수강", "status": "open"},
+        ))
+        print(await client.call_tool(
+            "knu_search_notice_details",
+            {"query": "수강 철회 절차와 제출 서류", "category": "수강"},
+        ))
 
 asyncio.run(main())
 PY
 ```
 
-검색 결과의 `category`와 `url`로 `get_knu_notice_detail`을 호출해 본문과 출처 URL을
-대조한다. 이 경로는 일반 공개 인증·사용량 보호가 추가되기 전까지 외부에 공개하지 않는다.
+검색 결과의 `url`로 `knu_get_notice_detail`을 호출해 본문과 출처 URL을 대조한다.
 
 ## 상태 · 로그
 

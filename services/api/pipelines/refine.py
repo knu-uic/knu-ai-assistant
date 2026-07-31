@@ -49,28 +49,13 @@ def _user_prompt(item: dict) -> str:
 {item['content']}
 
 # 필드별 규칙
-## target
-- 본문에서 **학년** 또는 **재적상태** 제한만 추출한다. 그 외에는 절대 넣지 않는다.
-- 학과/단과대/소속 범위는 crawler의 source.department가 담당하므로 target에 절대 넣지 않는다.
-- 학년/재적상태 제한이 본문에 명시되지 않았다면 **무조건 `["전체"]`**.
-
-### 절대 target에 넣지 말 것 (이 조건들만 있으면 ["전체"]로 처리):
-- 학과/단과대/소속 (예: "컴퓨터공학과", "경영학과", "공과대학")
-- 나이 (예: "19세~39세 청년", "만 35세 이하")
-- 지역/거주 (예: "대구 거주자", "수도권 외 지역", "OO시 주민등록자")
-- 직업/직장 상태 (예: "재직자", "구직자", "프리랜서")
-- 관심사/취향 (예: "AI에 관심있는 사람", "창업에 관심있는 학생")
-- 국적/성별/소득 등 그 밖의 인구통계 조건
-
-### target에 넣어도 되는 것:
-- 학년 (예: "1학년", "3학년", "신입생", "졸업예정자")
-- 재적상태 (예: "재학생", "휴학생", "수료생")
-
-### 예시
-- 본문: "컴퓨터공학과 3학년 대상" → ["3학년"]   (학과명은 제외)
-- 본문: "공과대학 재학생 한정" → ["재학생"]   (단과대명은 제외)
-- 본문: "19세~39세 대구 외 거주 청년" → ["전체"]   (학년/재적상태 제한 없음)
-- 본문: "재직자 우대, 전 학년 누구나" → ["전체"]   (재직자는 제외, "전 학년"은 제한 없음)
+## audiences
+- 공지에 명시된 대상 조건을 각각 별도 항목으로 추출한다.
+- kind는 department, grade, enrollment_status, eligibility 중 하나다.
+- 학과·단과대는 department, 학년은 grade, 재학생·휴학생 등은 enrollment_status다.
+- 소득·나이·지역·성적 등 나머지 자격은 eligibility다.
+- 제한이 명시되지 않으면 빈 배열로 둔다.
+- 모든 항목에 실제 원문 문장 source_text와 confidence를 포함한다.
 
 ## category
 - 다음 5가지 대분류 중 가장 적합한 **단 1개**만 무조건 선택한다.
@@ -80,9 +65,10 @@ def _user_prompt(item: dict) -> str:
   4. 행사(공모전) (대회, 해커톤, 동아리, 축제, 세미나 등)
   5. 일반(기타) (분실물, 시설안내, 예비군 등 위 4개에 속하지 않는 모든 것)
 
-## keywords
-- 본문의 핵심 주제, 혜택, 다루는 기술 등 사용자가 관심 가질만한 해시태그 단어를 1~3개 추출한다.
-- 예시: ["멘토링"], ["해외연수", "어학"], ["파이썬", "특강"]
+## topics / series_key
+- topics는 핵심 제도·주제·활동을 1~5개 추출한다.
+- 매년 반복되는 동일 계열임이 명확하면 짧은 영문 kebab-case series_key를 만든다.
+- 반복 여부가 불명확하면 series_key는 null이다.
 
 ## summary
 - 공지의 핵심 내용을 2~3문장으로 요약한다.
@@ -90,12 +76,22 @@ def _user_prompt(item: dict) -> str:
 - 본문에 없는 사실은 절대 추가하지 않는다.
 - 날짜는 본문에 적힌 표현을 기준으로 하되, 연도 없는 날짜는 게시글 등록연도 기준으로 해석한다.
 
-## start_date / end_date
-- 접수기간을 시작일(start_date)과 마감일(end_date)로 분리해서 각각 yyyy-mm-dd 형식으로 추출한다.
-- "2026-04-15 ~ 2026-05-04" → start_date="2026-04-15", end_date="2026-05-04"
-- 마감일만 있는 경우(예: "~ 2026-05-04", "5월 4일까지") → start_date=null, end_date="2026-05-04"
-- 시작일만 있는 경우 → start_date만 채우고 end_date=null
-- 본문에 날짜가 전혀 없으면 둘 다 null.
+## periods
+- 한 공지에 있는 모든 의미 있는 일정을 각각 추출한다.
+- kind는 application, document_submission, result_announcement, event,
+  registration, payment, other 중 하나다.
+- starts_on과 ends_on은 yyyy-mm-dd 형식이며 없는 쪽은 null이다.
+- 일정이 하나도 없으면 빈 배열로 둔다.
+- 모든 일정에 실제 원문 문장 source_text와 confidence를 포함한다.
+- 원문에 연도가 없어 게시연도로 해석한 경우 inferred_year=true로 둔다.
+
+## application
+- 신청 방법, 신청 URL, 제출서류, 문의처, 장소, 금액·혜택을 구조화한다.
+- 값이 없으면 null 또는 빈 배열로 둔다.
+- evidence에는 값별 실제 원문 근거를 담는다.
+
+## extraction_confidence
+- 전체 구조화 결과의 신뢰도를 0~1로 평가한다.
 	"""
 
 
@@ -220,8 +216,39 @@ def _adjust_result_dates(result: MetadataSchema, item: dict) -> None:
         item.get("title") or "",
         item.get("body_content") or item.get("content") or "",
     ])
-    result.start_date = _adjust_relative_date_year(result.start_date, posted_year, evidence)
-    result.end_date = _adjust_relative_date_year(result.end_date, posted_year, evidence)
+    for period in result.periods:
+        original_start = period.starts_on
+        original_end = period.ends_on
+        period.starts_on = _adjust_relative_date_year(
+            period.starts_on,
+            posted_year,
+            evidence,
+        )
+        period.ends_on = _adjust_relative_date_year(
+            period.ends_on,
+            posted_year,
+            evidence,
+        )
+        if period.starts_on != original_start or period.ends_on != original_end:
+            period.inferred_year = True
+
+    # 일부 crawler는 이미 추출한 기존 메타데이터를 넘긴다. v2 구조화 필드가
+    # 실제로 존재할 때만 파생값을 다시 계산해 기존 날짜·대상·키워드를 보존한다.
+    if result.periods:
+        application_period = next(
+            (period for period in result.periods if period.kind == "application"),
+            None,
+        )
+        result.start_date = application_period.starts_on if application_period else None
+        result.end_date = application_period.ends_on if application_period else None
+    if result.audiences:
+        result.target = [
+            audience.value
+            for audience in result.audiences
+            if audience.kind in {"grade", "enrollment_status"}
+        ] or result.target
+    if result.topics:
+        result.keywords = list(result.topics)
 
 
 def _llm_item(item: dict) -> dict:
@@ -367,7 +394,9 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
         )
         for (idx, llm_item), out in zip(needs_llm, batch_out):
             original_item = crawled_data[idx]
-            if isinstance(out, Exception):
+            if isinstance(out, BaseException):
+                if isinstance(out, (KeyboardInterrupt, SystemExit)):
+                    raise out
                 # batch에서 죽은 항목만 단건 retry로 흡수 (네트워크 흔들림 대부분 여기서 회복)
                 print(f"  ↻ batch 실패 항목 단건 재시도 [{original_item.get('url')}] — {type(out).__name__}")
                 out = _invoke_with_retry(model, system_msg, llm_item)

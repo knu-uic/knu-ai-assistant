@@ -40,3 +40,23 @@ def test_baseline_exists_and_covers_static_tables():
         assert f"CREATE TABLE IF NOT EXISTS {table}" in body
     # 추적 테이블은 러너가 만든다 — 마이그레이션 파일에 있으면 안 됨
     assert "schema_migrations" not in body
+
+
+def test_notice_v2_migration_covers_structured_scan_metadata():
+    migration = MIGRATIONS_DIR / "002_notice_v2.sql"
+    assert migration.exists()
+
+    body = migration.read_text(encoding="utf-8")
+    for table in (
+        "notice",
+        "notice_period",
+        "notice_audience",
+        "notice_application",
+        "notice_asset",
+    ):
+        assert f"CREATE TABLE IF NOT EXISTS {table}" in body
+
+    assert "archived_at" in body
+    assert "series_key" in body
+    assert "source_text" in body
+    assert "extraction_confidence" in body

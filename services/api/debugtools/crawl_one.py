@@ -1,8 +1,8 @@
 """
 공지사항 URL 하나를 크롤링하여 텍스트 보고서를 작성합니다.
 
-이 작업은 데이터베이스를 초기화하거나 기록하지 않습니다.
-대신, 실제 앱 파이프라인에서 사용하는 동일한 주요 단계들을 그대로 실행합니다.
+기본값은 데이터베이스에 기록하지 않습니다. `--db-write`를 지정하면 실제 앱
+파이프라인과 같은 통합 공지 스키마에 결과를 기록합니다.
 
 포함되는 단계:
     - 크롤러 상세페이지 수집
@@ -81,10 +81,10 @@ def _crawler_map():
 
 
 def _require_board_crawler(crawler) -> None:
-    if not hasattr(crawler, "_crawl_detail"):
+    if not hasattr(crawler, "_crawl_detail_internal"):
         raise TypeError(
             f"{crawler.SOURCE_CODE} is not a board-detail crawler; "
-            "choose a crawler with _crawl_detail()."
+            "choose a crawler with _crawl_detail_internal()."
         )
 
 
@@ -116,7 +116,13 @@ def crawl_detail(crawler, url: str) -> dict:
         context = browser.new_context()
         page = context.new_page()
         try:
-            return crawler._crawl_detail(context, page, url, 1, 1)
+            return crawler._crawl_detail_internal(
+                context,
+                page,
+                url,
+                1,
+                1,
+            )
         finally:
             browser.close()
 
@@ -378,22 +384,22 @@ def main() -> None:
 
                         # 신규 구조
                         body_content=item.get("body_content"),
-                        attachment_names=item.get("attachment_names"),
-                        attachment_contents=item.get("attachment_contents"),
 
-                        start_date=doc.start_date,
-                        end_date=doc.end_date,
                         category=doc.category,
-                        target=doc.target,
-                        keywords=doc.keywords,
                         summary=doc.summary,
+                        topics=doc.topics,
+                        series_key=doc.series_key,
+                        periods=doc.periods,
+                        audiences=doc.audiences,
+                        application=doc.application,
+                        extraction_confidence=doc.extraction_confidence,
                         extra=extra,
                         posted_at=posted_at,
                         is_pinned=bool(item.get("is_pinned")),
                     )
 
-                    insert_assets(doc.category, document_id, assets)
-                    insert_chunks(doc.category, document_id, chunks)
+                    insert_assets(document_id, assets)
+                    insert_chunks(document_id, chunks)
 
                     print(f"[db] saved: document_id={document_id}")
 

@@ -1,95 +1,112 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import date
-
-from psycopg import sql
+from typing import Any
 
 from db.pool import sync_pool
-from db.schema import (
-    SLUGS,
-    SLUG_TO_CATEGORY,
-    _chunk_ident,
-    _doc_ident,
-    _months_ago,
-    _slug,
+from db.schema import _months_ago
+
+
+NOTICE_CATEGORIES = ("장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)")
+NOTICE_PERIOD_KINDS = (
+    "application",
+    "document_submission",
+    "result_announcement",
+    "event",
+    "registration",
+    "payment",
+    "other",
+)
+NOTICE_AUDIENCE_KINDS = (
+    "department",
+    "grade",
+    "enrollment_status",
+    "eligibility",
 )
 
 
-def prune_documents(
-    retention_months: int = 6,
-    delete_expired: bool = True,
+def _plain(value: Any) -> dict:
+    if value is None:
+        return {}
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    return dict(value)
+
+
+def _clean_date(value):
+    if value is None or not str(value).strip():
+        return None
+    return value
+
+
+def archive_documents(
+    retention_months: int = 24,
     protected_urls: set[str] | None = None,
 ) -> int:
-    today = date.today()
-    cutoff = _months_ago(today, retention_months)
+    """오래된 공지는 메타데이터만 남기고 원문·첨부·임베딩을 경량화한다."""
+    cutoff = _months_ago(date.today(), retention_months)
     protected_urls = protected_urls or set()
-    total = 0
-
     with sync_pool.connection() as conn:
-        for slug in SLUGS:
-            category = SLUG_TO_CATEGORY[slug]
-            expired_clause = (
-                sql.SQL(" OR (end_date IS NOT NULL AND end_date < %s)")
-                if delete_expired
-                else sql.SQL("")
-            )
-            query = sql.SQL("""
-                DELETE FROM {doc}
-                WHERE NOT is_pinned
-                  AND NOT (url = ANY(%s))
-                  AND (
-                    COALESCE(posted_at, crawled_at::date) < %s
-                    {expired}
-                  )
-                RETURNING id;
-            """).format(doc=_doc_ident(slug), expired=expired_clause)
-            params = [list(protected_urls), cutoff]
-            if delete_expired:
-                params.append(today)
-
-            deleted_ids = [row[0] for row in conn.execute(query, params).fetchall()]
-            if not deleted_ids:
-                continue
-
+        rows = conn.execute(
+            """
+            UPDATE notice
+            SET archived_at = now(),
+                archive_reason = 'retention',
+                content = '',
+                body_content = NULL,
+                updated_at = now()
+            WHERE archived_at IS NULL
+              AND NOT is_pinned
+              AND NOT preserve_forever
+              AND NOT (url = ANY(%s))
+              AND COALESCE(posted_at, crawled_at::date) < %s
+            RETURNING id
+            """,
+            (list(protected_urls), cutoff),
+        ).fetchall()
+        notice_ids = [row[0] for row in rows]
+        if notice_ids:
             conn.execute(
-                "DELETE FROM document_asset WHERE category = %s AND document_id = ANY(%s);",
-                (category, deleted_ids),
+                "DELETE FROM notice_chunk WHERE notice_id = ANY(%s)",
+                (notice_ids,),
             )
-            total += len(deleted_ids)
-            print(f"  ↳ 오래된/마감 문서 정리: {category} {len(deleted_ids)}건")
-
+            conn.execute(
+                "DELETE FROM notice_asset WHERE notice_id = ANY(%s)",
+                (notice_ids,),
+            )
         conn.commit()
 
-    if total:
-        print(f"🧹 문서 정리 완료: {total}건 삭제 (보존 {retention_months}개월, 마감문서 삭제={delete_expired}, 보호 URL {len(protected_urls)}건)")
-    else:
-        print(f"🧹 문서 정리 대상 없음 (보존 {retention_months}개월, 마감문서 삭제={delete_expired}, 보호 URL {len(protected_urls)}건)")
-    return total
+    print(
+        f"🗄️ 공지 경량 보관 완료: {len(notice_ids)}건 "
+        f"(전체 보존 {retention_months}개월, 보호 URL {len(protected_urls)}건)"
+    )
+    return len(notice_ids)
 
 
 def sync_pinned_urls(pinned_urls: set[str]) -> None:
     with sync_pool.connection() as conn:
-        for slug in SLUGS:
+        conn.execute("UPDATE notice SET is_pinned = false WHERE is_pinned = true")
+        if pinned_urls:
             conn.execute(
-                sql.SQL("UPDATE {doc} SET is_pinned = false WHERE is_pinned = true;").format(
-                    doc=_doc_ident(slug),
-                )
+                "UPDATE notice SET is_pinned = true WHERE url = ANY(%s)",
+                (list(pinned_urls),),
             )
-            if pinned_urls:
-                conn.execute(
-                    sql.SQL("UPDATE {doc} SET is_pinned = true WHERE url = ANY(%s);").format(
-                        doc=_doc_ident(slug),
-                    ),
-                    (list(pinned_urls),),
-                )
         conn.commit()
     print(f"📌 고정 공지 동기화 완료: 현재 고정 URL {len(pinned_urls)}건")
 
 
-def upsert_source(code: str, name: str, kind: str, department: str | None, base_url: str | None) -> int:
+def upsert_source(
+    code: str,
+    name: str,
+    kind: str,
+    department: str | None,
+    base_url: str | None,
+) -> int:
     with sync_pool.connection() as conn:
-        cur = conn.execute("""
+        row = conn.execute(
+            """
             INSERT INTO source (code, name, kind, department, base_url)
             VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (code) DO UPDATE SET
@@ -97,58 +114,124 @@ def upsert_source(code: str, name: str, kind: str, department: str | None, base_
                 kind = EXCLUDED.kind,
                 department = EXCLUDED.department,
                 base_url = EXCLUDED.base_url
-            RETURNING id;
-        """, (code, name, kind, department, base_url))
-        row = cur.fetchone()
+            RETURNING id
+            """,
+            (code, name, kind, department, base_url),
+        ).fetchone()
         assert row is not None
-        source_id = row[0]
         conn.commit()
-        return source_id
+        return row[0]
 
 
 def document_exists(url: str) -> bool:
-    sub = sql.SQL(" UNION ALL ").join(
-        sql.SQL("SELECT 1 FROM {} WHERE url = %s").format(_doc_ident(s)) for s in SLUGS
-    )
-    query = sql.SQL("SELECT EXISTS({sub});").format(sub=sub)
     with sync_pool.connection() as conn:
-        cur = conn.execute(query, tuple([url] * len(SLUGS)))
-        row = cur.fetchone()
+        row = conn.execute(
+            "SELECT EXISTS(SELECT 1 FROM notice WHERE url = %s)",
+            (url,),
+        ).fetchone()
         return bool(row and row[0])
 
 
 def delete_documents_by_source(source_id: int) -> int:
-    deleted_total = 0
     with sync_pool.connection() as conn:
-        for slug in SLUGS:
-            category = SLUG_TO_CATEGORY[slug]
-            rows = conn.execute(
-                sql.SQL(
-                    """
-                    DELETE FROM {doc}
-                    WHERE source_id = %s
-                    RETURNING id;
-                    """
-                ).format(doc=_doc_ident(slug)),
-                (source_id,),
-            ).fetchall()
-
-            if not rows:
-                continue
-
-            deleted_ids = [row[0] for row in rows]
-            conn.execute(
-                """
-                DELETE FROM document_asset
-                WHERE category = %s
-                  AND document_id = ANY(%s);
-                """,
-                (category, deleted_ids),
-            )
-            deleted_total += len(deleted_ids)
-
+        rows = conn.execute(
+            "DELETE FROM notice WHERE source_id = %s RETURNING id",
+            (source_id,),
+        ).fetchall()
         conn.commit()
-    return deleted_total
+        return len(rows)
+
+
+def _replace_periods(conn, notice_id: int, periods: list[Any]) -> None:
+    conn.execute("DELETE FROM notice_period WHERE notice_id = %s", (notice_id,))
+    for order_idx, raw in enumerate(periods):
+        period = _plain(raw)
+        if period.get("kind") not in NOTICE_PERIOD_KINDS:
+            raise ValueError(f"Unknown notice period kind: {period.get('kind')!r}")
+        starts_on = _clean_date(period.get("starts_on"))
+        ends_on = _clean_date(period.get("ends_on"))
+        if starts_on is None and ends_on is None:
+            continue
+        conn.execute(
+            """
+            INSERT INTO notice_period
+                (notice_id, kind, starts_on, ends_on, source_text,
+                 confidence, inferred_year, order_idx)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                notice_id,
+                period["kind"],
+                starts_on,
+                ends_on,
+                str(period.get("source_text") or "").strip(),
+                period.get("confidence"),
+                bool(period.get("inferred_year")),
+                order_idx,
+            ),
+        )
+
+
+def _replace_audiences(conn, notice_id: int, audiences: list[Any]) -> None:
+    conn.execute("DELETE FROM notice_audience WHERE notice_id = %s", (notice_id,))
+    for order_idx, raw in enumerate(audiences):
+        audience = _plain(raw)
+        if audience.get("kind") not in NOTICE_AUDIENCE_KINDS:
+            raise ValueError(f"Unknown notice audience kind: {audience.get('kind')!r}")
+        value = str(audience.get("value") or "").strip()
+        if not value:
+            continue
+        conn.execute(
+            """
+            INSERT INTO notice_audience
+                (notice_id, kind, value, source_text, confidence, order_idx)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                notice_id,
+                audience["kind"],
+                value,
+                str(audience.get("source_text") or "").strip(),
+                audience.get("confidence"),
+                order_idx,
+            ),
+        )
+
+
+def _replace_application(conn, notice_id: int, value: Any) -> None:
+    application = _plain(value)
+    conn.execute("DELETE FROM notice_application WHERE notice_id = %s", (notice_id,))
+    if not any(
+        application.get(key)
+        for key in (
+            "method",
+            "application_url",
+            "required_documents",
+            "contact",
+            "location",
+            "benefit",
+            "evidence",
+        )
+    ):
+        return
+    conn.execute(
+        """
+        INSERT INTO notice_application
+            (notice_id, method, application_url, required_documents,
+             contact, location, benefit, evidence)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            notice_id,
+            application.get("method"),
+            application.get("application_url"),
+            list(application.get("required_documents") or []),
+            application.get("contact"),
+            application.get("location"),
+            application.get("benefit"),
+            json.dumps(application.get("evidence") or {}, ensure_ascii=False),
+        ),
+    )
 
 
 def insert_document(
@@ -156,167 +239,120 @@ def insert_document(
     url: str,
     title: str,
     content: str,
-    start_date,
-    end_date,
     category: str,
-    target,
-    keywords,
     summary: str | None = None,
+    topics: list[str] | None = None,
+    series_key: str | None = None,
+    periods: list[Any] | None = None,
+    audiences: list[Any] | None = None,
+    application: Any = None,
+    extraction_confidence: float | None = None,
+    extraction_version: str = "notice-v2",
     extra: dict | None = None,
     posted_at=None,
     is_pinned: bool = False,
+    preserve_forever: bool = False,
     body_content: str | None = None,
-    attachment_names: list[str] | None = None,
-    attachment_contents: list[dict] | None = None,
+    **_removed_legacy_fields,
 ) -> int:
-    slug = _slug(category)
-
-    if not start_date or str(start_date).strip() == "":
-        start_date = None
-    if not end_date or str(end_date).strip() == "":
-        end_date = None
-    if not posted_at or str(posted_at).strip() == "":
-        posted_at = None
-
-    extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
-    attachment_names_json = json.dumps(attachment_names or [], ensure_ascii=False)
-    attachment_contents_json = json.dumps(attachment_contents or [], ensure_ascii=False)
-
-    query = sql.SQL("""
-        INSERT INTO {doc}
-            (
-                source_id,
-                url,
-                title,
-                content,
-                body_content,
-                attachment_names,
-                attachment_contents,
-                summary,
-                posted_at,
-                start_date,
-                end_date,
-                is_pinned,
-                target,
-                keywords,
-                extra,
-                updated_at
-            )
-        VALUES (
-            %s, %s, %s, %s,
-            %s, %s, %s,
-            %s, %s, %s, %s,
-            %s, %s, %s, %s,
-            now()
-        )
-        ON CONFLICT (url) DO UPDATE SET
-            source_id = EXCLUDED.source_id,
-            title = EXCLUDED.title,
-            content = EXCLUDED.content,
-            body_content = EXCLUDED.body_content,
-            attachment_names = EXCLUDED.attachment_names,
-            attachment_contents = EXCLUDED.attachment_contents,
-            summary = EXCLUDED.summary,
-            posted_at = EXCLUDED.posted_at,
-            start_date = EXCLUDED.start_date,
-            end_date = EXCLUDED.end_date,
-            is_pinned = EXCLUDED.is_pinned,
-            target = EXCLUDED.target,
-            keywords = EXCLUDED.keywords,
-            extra = EXCLUDED.extra,
-            updated_at = now()
-        RETURNING id;
-    """).format(doc=_doc_ident(slug))
-
+    if category not in NOTICE_CATEGORIES:
+        raise ValueError(f"Unknown category: {category!r}")
+    posted_at = _clean_date(posted_at)
+    content_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
     with sync_pool.connection() as conn:
-        cur = conn.execute(
-            query,
+        row = conn.execute(
+            """
+            INSERT INTO notice
+                (source_id, url, title, content, body_content, summary,
+                 category, topics, series_key, posted_at, is_pinned,
+                 preserve_forever, archived_at, archive_reason,
+                 content_sha256, extraction_version, extraction_confidence,
+                 extra, updated_at)
+            VALUES
+                (%s, %s, %s, %s, %s, %s,
+                 %s, %s, %s, %s, %s,
+                 %s, NULL, NULL,
+                 %s, %s, %s, %s, now())
+            ON CONFLICT (url) DO UPDATE SET
+                source_id = EXCLUDED.source_id,
+                title = EXCLUDED.title,
+                content = EXCLUDED.content,
+                body_content = EXCLUDED.body_content,
+                summary = EXCLUDED.summary,
+                category = EXCLUDED.category,
+                topics = EXCLUDED.topics,
+                series_key = EXCLUDED.series_key,
+                posted_at = EXCLUDED.posted_at,
+                is_pinned = EXCLUDED.is_pinned,
+                preserve_forever = EXCLUDED.preserve_forever,
+                archived_at = NULL,
+                archive_reason = NULL,
+                content_sha256 = EXCLUDED.content_sha256,
+                extraction_version = EXCLUDED.extraction_version,
+                extraction_confidence = EXCLUDED.extraction_confidence,
+                extra = EXCLUDED.extra,
+                updated_at = now()
+            RETURNING id
+            """,
             (
                 source_id,
                 url,
                 title,
                 content,
                 body_content or content,
-                attachment_names_json,
-                attachment_contents_json,
                 summary,
+                category,
+                list(topics or []),
+                series_key,
                 posted_at,
-                start_date,
-                end_date,
                 is_pinned,
-                target,
-                keywords,
-                extra_json,
+                preserve_forever,
+                content_sha256,
+                extraction_version,
+                extraction_confidence,
+                json.dumps(extra, ensure_ascii=False) if extra else None,
             ),
-        )
-        row = cur.fetchone()
+        ).fetchone()
         assert row is not None
-        document_id = row[0]
+        notice_id = row[0]
+        _replace_periods(conn, notice_id, periods or [])
+        _replace_audiences(conn, notice_id, audiences or [])
+        _replace_application(conn, notice_id, application)
         conn.commit()
-        print(f"✅ [{title}] document_{slug} 저장 완료 (id={document_id})")
-        return document_id
+    print(f"✅ [{title}] notice 저장 완료 (id={notice_id})")
+    return notice_id
 
 
-def insert_assets(category: str, document_id: int, assets: list[dict]):
-    if not assets:
-        return
-    _slug(category)
+def insert_assets(notice_id: int, assets: list[dict]) -> None:
     with sync_pool.connection() as conn:
-        conn.execute(
-            "DELETE FROM document_asset WHERE category = %s AND document_id = %s;",
-            (category, document_id),
-        )
-        for a in assets:
+        conn.execute("DELETE FROM notice_asset WHERE notice_id = %s", (notice_id,))
+        for asset in assets:
             conn.execute(
                 """
-                INSERT INTO document_asset
-                    (category, document_id, kind, filename, source_url, storage_path,
+                INSERT INTO notice_asset
+                    (notice_id, kind, filename, source_url, storage_path,
                      mime_type, extracted_text, order_idx)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    category,
-                    document_id,
-                    a["kind"],
-                    a.get("filename"),
-                    a["source_url"],
-                    a.get("storage_path"),
-                    a.get("mime_type"),
-                    a.get("extracted_text", ""),
-                    a.get("order_idx", 0),
+                    notice_id,
+                    asset["kind"],
+                    asset.get("filename"),
+                    asset["source_url"],
+                    asset.get("storage_path"),
+                    asset.get("mime_type"),
+                    asset.get("extracted_text", ""),
+                    asset.get("order_idx", 0),
                 ),
             )
         conn.commit()
+    if assets:
         print(f"  ↳ asset {len(assets)}건 저장 완료")
 
 
-def insert_chunks(
-    category: str,
-    document_id: int,
-    chunks: list[tuple],
-):
-    if not chunks:
-        return
-
-    slug = _slug(category)
-    del_q = sql.SQL("DELETE FROM {} WHERE document_id = %s;").format(_chunk_ident(slug))
-    ins_q = sql.SQL(
-        """
-        INSERT INTO {}
-        (
-            document_id,
-            chunk_idx,
-            content,
-            chunk_type,
-            attachment_name,
-            embedding
-        )
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """
-    ).format(_chunk_ident(slug))
-
+def insert_chunks(notice_id: int, chunks: list[tuple]) -> None:
     with sync_pool.connection() as conn:
-        conn.execute(del_q, (document_id,))
+        conn.execute("DELETE FROM notice_chunk WHERE notice_id = %s", (notice_id,))
         for chunk in chunks:
             if len(chunk) == 3:
                 idx, content, vector = chunk
@@ -325,9 +361,14 @@ def insert_chunks(
             else:
                 idx, content, vector, chunk_type, attachment_name = chunk
             conn.execute(
-                ins_q,
+                """
+                INSERT INTO notice_chunk
+                    (notice_id, chunk_idx, content, chunk_type,
+                     attachment_name, embedding)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
                 (
-                    document_id,
+                    notice_id,
                     idx,
                     content,
                     chunk_type,
@@ -336,57 +377,52 @@ def insert_chunks(
                 ),
             )
         conn.commit()
-        print(f"  ↳ chunk {len(chunks)}건 저장 완료 (→ document_{slug}_chunk)")
+    if chunks:
+        print(f"  ↳ chunk {len(chunks)}건 저장 완료")
 
 
-def _search_subquery(slug: str, major_filter: bool, distinct_by_doc: bool = False) -> tuple[sql.Composable, list]:
-    category_literal = SLUG_TO_CATEGORY[slug]
-    where_clause = (
-        sql.SQL(" WHERE (s.department = %s OR s.department = '공통' OR s.department IS NULL) ")
-        if major_filter
-        else sql.SQL(" ")
-    )
-    select_prefix = sql.SQL("SELECT DISTINCT ON (d.url)") if distinct_by_doc else sql.SQL("SELECT")
-    order_by = (
-        sql.SQL(" ORDER BY d.url, c.embedding <=> %s::vector ")
-        if distinct_by_doc
-        else sql.SQL(" ORDER BY c.embedding <=> %s::vector ")
-    )
+_SEARCH_SELECT = """
+    n.url,
+    n.title,
+    nc.content,
+    1 - (nc.embedding <=> %s::vector) AS score,
+    n.posted_at,
+    period.starts_on,
+    period.ends_on,
+    n.category,
+    audience.targets,
+    n.topics,
+    s.code,
+    s.name,
+    s.kind,
+    s.department,
+    n.summary,
+    n.body_content,
+    asset.names
+"""
 
-    sub = sql.SQL("""
-        {select_prefix}
-               d.url,
-               d.title,
-               c.content,
-               1 - (c.embedding <=> %s::vector) AS score,
-               d.posted_at,
-               d.start_date,
-               d.end_date,
-               {cat_lit}::text AS category,
-               d.target,
-               d.keywords,
-               s.code,
-               s.name,
-               s.kind,
-               s.department,
-               d.summary,
-               d.body_content,
-               d.attachment_names
-        FROM {chunk} c
-        JOIN {doc} d ON d.id = c.document_id
-        JOIN source s ON s.id = d.source_id
-        {where}
-        {order_by}
-    """).format(
-        select_prefix=select_prefix,
-        cat_lit=sql.Literal(category_literal),
-        chunk=_chunk_ident(slug),
-        doc=_doc_ident(slug),
-        where=where_clause,
-        order_by=order_by,
-    )
-
-    return sub, [category_literal]
+_SEARCH_JOINS = """
+    FROM notice_chunk nc
+    JOIN notice n ON n.id = nc.notice_id
+    JOIN source s ON s.id = n.source_id
+    LEFT JOIN LATERAL (
+        SELECT min(starts_on) AS starts_on, max(ends_on) AS ends_on
+        FROM notice_period
+        WHERE notice_id = n.id AND kind = 'application'
+    ) period ON true
+    LEFT JOIN LATERAL (
+        SELECT array_agg(value ORDER BY order_idx) AS targets
+        FROM notice_audience
+        WHERE notice_id = n.id
+          AND kind IN ('grade', 'enrollment_status')
+    ) audience ON true
+    LEFT JOIN LATERAL (
+        SELECT array_agg(filename ORDER BY order_idx)
+               FILTER (WHERE filename IS NOT NULL) AS names
+        FROM notice_asset
+        WHERE notice_id = n.id
+    ) asset ON true
+"""
 
 
 def search_chunks(
@@ -395,62 +431,98 @@ def search_chunks(
     categories: list[str] | None = None,
     limit: int = 10,
     distinct_by_doc: bool = False,
+    time_scope: str = "current",
+    year: int | None = None,
+    notice_ids: list[int] | None = None,
 ):
-    target_slugs = [_slug(c) for c in categories] if categories else list(SLUGS)
-    subs: list[sql.Composable] = []
-    params: list = []
-    for slug in target_slugs:
-        sub, _ = _search_subquery(slug, major_filter=bool(major), distinct_by_doc=distinct_by_doc)
-        subs.append(sql.SQL("(") + sub + sql.SQL(")"))
-        params.append(query_embedding)
-        if major:
-            params.append(major)
-        params.append(query_embedding)
+    conditions: list[str] = []
+    params: list[Any] = [query_embedding]
 
-    union = sql.SQL(" UNION ALL ").join(subs)
-    final_q = sql.SQL("""
-        SELECT url, title, content, score, posted_at, start_date, end_date,
-               category, target, keywords,
-               code, name, kind, department,
-               summary,
-               body_content,
-               attachment_names
-        FROM ({union}) merged
-        ORDER BY score DESC
-        LIMIT %s
-    """).format(union=union)
+    if time_scope == "current":
+        conditions.append("n.archived_at IS NULL")
+    elif time_scope == "historical":
+        conditions.append("n.archived_at IS NOT NULL")
+    elif time_scope != "all":
+        raise ValueError(f"Unknown time scope: {time_scope!r}")
+    if categories:
+        conditions.append("n.category = ANY(%s)")
+        params.append(categories)
+    if major:
+        conditions.append(
+            """
+            (s.department = %s OR s.department = '공통' OR s.department IS NULL)
+            AND (
+                NOT EXISTS (
+                    SELECT 1 FROM notice_audience ad
+                    WHERE ad.notice_id = n.id AND ad.kind = 'department'
+                )
+                OR EXISTS (
+                    SELECT 1 FROM notice_audience ad
+                    WHERE ad.notice_id = n.id
+                      AND ad.kind = 'department'
+                      AND ad.value = %s
+                )
+            )
+            """
+        )
+        params.extend([major, major])
+    if year is not None:
+        if year < 2000 or year > 2200:
+            raise ValueError("year must be between 2000 and 2200")
+        conditions.append("n.posted_at >= %s AND n.posted_at < %s")
+        params.extend([date(year, 1, 1), date(year + 1, 1, 1)])
+    if notice_ids:
+        conditions.append("n.id = ANY(%s)")
+        params.append(notice_ids)
+
+    where = " AND ".join(conditions) if conditions else "true"
+    if distinct_by_doc:
+        query = f"""
+            WITH candidates AS (
+                SELECT {_SEARCH_SELECT},
+                       row_number() OVER (
+                           PARTITION BY n.id
+                           ORDER BY nc.embedding <=> %s::vector
+                       ) AS document_rank
+                {_SEARCH_JOINS}
+                WHERE {where}
+            )
+            SELECT url, title, content, score, posted_at, starts_on, ends_on,
+                   category, targets, topics, code, name, kind, department,
+                   summary, body_content, names
+            FROM candidates
+            WHERE document_rank = 1
+            ORDER BY score DESC
+            LIMIT %s
+        """
+        params.insert(1, query_embedding)
+    else:
+        query = f"""
+            SELECT {_SEARCH_SELECT}
+            {_SEARCH_JOINS}
+            WHERE {where}
+            ORDER BY nc.embedding <=> %s::vector
+            LIMIT %s
+        """
+        params.append(query_embedding)
     params.append(limit)
 
     with sync_pool.connection() as conn:
-        cursor = conn.execute(final_q, params)
-        return cursor.fetchall()
+        return conn.execute(query, params).fetchall()
 
 
-def get_document_content(category: str, url: str) -> str | None:
-    slug = _slug(category)
-    q = sql.SQL("SELECT content FROM {doc} WHERE url = %s").format(doc=_doc_ident(slug))
+def get_document_content(url: str, category: str | None = None) -> str | None:
+    conditions = ["url = %s"]
+    params: list[Any] = [url]
+    if category:
+        conditions.append("category = %s")
+        params.append(category)
     with sync_pool.connection() as conn:
-        cur = conn.execute(q, (url,))
-        row = cur.fetchone()
+        row = conn.execute(
+            f"SELECT content FROM notice WHERE {' AND '.join(conditions)}",
+            params,
+        ).fetchone()
         return row[0] if row else None
-
-
-def _list_subquery(slug: str, where: sql.Composable) -> sql.Composable:
-    return sql.SQL("""
-        SELECT d.url, d.title, d.content, d.posted_at, d.start_date, d.end_date,
-               {cat_lit}::text AS category,
-               d.target, d.keywords,
-               s.code, s.name, s.kind, s.department,
-               d.crawled_at,
-               d.summary
-        FROM {doc} d
-        JOIN source s ON s.id = d.source_id
-        {where}
-    """).format(
-        cat_lit=sql.Literal(SLUG_TO_CATEGORY[slug]),
-        doc=_doc_ident(slug),
-        where=where,
-    )
 
 
 def get_documents(
@@ -462,68 +534,297 @@ def get_documents(
     cursor_ts=None,
     cursor_url: str | None = None,
     exclude_codes=None,
+    time_scope: str = "current",
 ):
-    """cursor_ts/cursor_url이 주어지면 그 지점보다 정렬상 뒤(더 오래된) 행만 반환.
-    정렬 키 = (COALESCE(posted_at, crawled_at) DESC, url DESC) — url은 동점 처리용."""
-    target_slugs = [_slug(category)] if category else list(SLUGS)
-
-    conditions: list[sql.Composable] = []
-    base_params: list = []
+    conditions: list[str] = []
+    params: list[Any] = []
+    if time_scope == "current":
+        conditions.append("n.archived_at IS NULL")
+    elif time_scope == "historical":
+        conditions.append("n.archived_at IS NOT NULL")
+    elif time_scope != "all":
+        raise ValueError(f"Unknown time scope: {time_scope!r}")
+    if category:
+        conditions.append("n.category = %s")
+        params.append(category)
     if major:
-        conditions.append(sql.SQL("(s.department = %s OR s.department = '공통' OR s.department IS NULL)"))
-        base_params.append(major)
-    if kind:
-        conditions.append(sql.SQL("s.kind = %s"))
-        base_params.append(kind)
-    if department:
-        conditions.append(sql.SQL("s.department = %s"))
-        base_params.append(department)
-    where = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(conditions) if conditions else sql.SQL("")
-
-    subs = [sql.SQL("(") + _list_subquery(slug, where) + sql.SQL(")") for slug in target_slugs]
-    params: list = []
-    for _ in target_slugs:
-        params.extend(base_params)
-
-    union = sql.SQL(" UNION ALL ").join(subs)
-
-    # merged 결과에 대한 최종 필터(커서 + 숨김 소스). LIMIT 전에 적용해야
-    # 페이지네이션(limit+1) 정확도가 유지된다.
-    final_conditions: list[sql.Composable] = []
-    final_params: list = []
-    if cursor_ts is not None and cursor_url is not None:
-        # (DESC, DESC) 정렬에서 "커서 다음"은 행값 비교로 (sort_ts, url) < (커서값)
-        final_conditions.append(
-            sql.SQL("(COALESCE(posted_at::timestamp, crawled_at), url) < (%s, %s)")
+        conditions.append(
+            "(s.department = %s OR s.department = '공통' OR s.department IS NULL)"
         )
-        final_params.extend([cursor_ts, cursor_url])
+        params.append(major)
+    if kind:
+        conditions.append("s.kind = %s")
+        params.append(kind)
+    if department:
+        conditions.append("s.department = %s")
+        params.append(department)
+    if cursor_ts is not None and cursor_url is not None:
+        conditions.append(
+            "(COALESCE(n.posted_at::timestamp, n.crawled_at), n.url) < (%s, %s)"
+        )
+        params.extend([cursor_ts, cursor_url])
     if exclude_codes:
-        final_conditions.append(sql.SQL("code <> ALL(%s)"))
-        final_params.append(list(exclude_codes))
-    final_where = (
-        sql.SQL(" WHERE ") + sql.SQL(" AND ").join(final_conditions)
-        if final_conditions else sql.SQL("")
-    )
-    final_q = sql.SQL("""
-        SELECT url, title, content, posted_at, start_date, end_date,
-               category, target, keywords,
-               code, name, kind, department, summary,
-               COALESCE(posted_at::timestamp, crawled_at) AS sort_ts
-        FROM ({union}) merged
-        {final_where}
-        ORDER BY sort_ts DESC NULLS LAST, url DESC
+        conditions.append("s.code <> ALL(%s)")
+        params.append(list(exclude_codes))
+
+    where = " AND ".join(conditions) if conditions else "true"
+    query = f"""
+        SELECT
+            n.url, n.title, n.content, n.posted_at,
+            period.starts_on, period.ends_on, n.category,
+            audience.targets, n.topics,
+            s.code, s.name, s.kind, s.department, n.summary,
+            COALESCE(n.posted_at::timestamp, n.crawled_at) AS sort_ts
+        FROM notice n
+        JOIN source s ON s.id = n.source_id
+        LEFT JOIN LATERAL (
+            SELECT min(starts_on) AS starts_on, max(ends_on) AS ends_on
+            FROM notice_period
+            WHERE notice_id = n.id AND kind = 'application'
+        ) period ON true
+        LEFT JOIN LATERAL (
+            SELECT array_agg(value ORDER BY order_idx) AS targets
+            FROM notice_audience
+            WHERE notice_id = n.id
+              AND kind IN ('grade', 'enrollment_status')
+        ) audience ON true
+        WHERE {where}
+        ORDER BY sort_ts DESC NULLS LAST, n.url DESC
         LIMIT %s
-    """).format(union=union, final_where=final_where)
-    params.extend(final_params)
+    """
     params.append(limit)
+    with sync_pool.connection() as conn:
+        return conn.execute(query, params).fetchall()
+
+
+def list_notices_for_scan(
+    category: str | None = None,
+    status: str = "any",
+    as_of: date | None = None,
+    time_scope: str = "current",
+    department: str | None = None,
+    grade: int | None = None,
+    year: int | None = None,
+    topic: str | None = None,
+    sort: str = "posted_at",
+    offset: int = 0,
+    page_size: int = 30,
+) -> dict:
+    """구조화 메타데이터로 공지를 필터·집계한다. 임베딩은 사용하지 않는다."""
+    as_of = as_of or date.today()
+    if category is not None and category not in NOTICE_CATEGORIES:
+        raise ValueError(f"Unknown category: {category!r}")
+    if status not in {"any", "open", "upcoming", "closed"}:
+        raise ValueError(f"Unknown notice status: {status!r}")
+    if time_scope not in {"current", "historical", "all"}:
+        raise ValueError(f"Unknown time scope: {time_scope!r}")
+    if sort not in {"posted_at", "start_date", "end_date"}:
+        raise ValueError(f"Unknown scan sort: {sort!r}")
+    if grade is not None and grade not in {1, 2, 3, 4}:
+        raise ValueError("grade must be between 1 and 4")
+    if year is not None and (year < 2000 or year > 2200):
+        raise ValueError("year must be between 2000 and 2200")
+    offset = max(0, int(offset))
+    page_size = max(1, min(int(page_size), 50))
+
+    conditions: list[str] = []
+    params: list[Any] = []
+    if time_scope == "current":
+        conditions.append("n.archived_at IS NULL")
+    elif time_scope == "historical":
+        conditions.append("n.archived_at IS NOT NULL")
+    if category:
+        conditions.append("n.category = %s")
+        params.append(category)
+    if status == "open":
+        conditions.append(
+            """
+            EXISTS (
+                SELECT 1 FROM notice_period p
+                WHERE p.notice_id = n.id
+                  AND p.kind = 'application'
+                  AND (p.starts_on IS NULL OR p.starts_on <= %s)
+                  AND (p.ends_on IS NULL OR p.ends_on >= %s)
+            )
+            """
+        )
+        params.extend([as_of, as_of])
+    elif status == "upcoming":
+        conditions.append(
+            """
+            EXISTS (
+                SELECT 1 FROM notice_period p
+                WHERE p.notice_id = n.id
+                  AND p.kind = 'application'
+                  AND p.starts_on > %s
+            )
+            """
+        )
+        params.append(as_of)
+    elif status == "closed":
+        conditions.append(
+            """
+            EXISTS (
+                SELECT 1 FROM notice_period p
+                WHERE p.notice_id = n.id
+                  AND p.kind = 'application'
+                  AND p.ends_on < %s
+            )
+            """
+        )
+        params.append(as_of)
+    if department:
+        conditions.append(
+            """
+            (s.department = %s OR s.department = '공통' OR s.department IS NULL)
+            AND (
+                NOT EXISTS (
+                    SELECT 1 FROM notice_audience ad
+                    WHERE ad.notice_id = n.id AND ad.kind = 'department'
+                )
+                OR EXISTS (
+                    SELECT 1 FROM notice_audience ad
+                    WHERE ad.notice_id = n.id
+                      AND ad.kind = 'department'
+                      AND ad.value = %s
+                )
+            )
+            """
+        )
+        params.extend([department, department])
+    if grade:
+        conditions.append(
+            """
+            (
+                NOT EXISTS (
+                    SELECT 1 FROM notice_audience ag
+                    WHERE ag.notice_id = n.id AND ag.kind = 'grade'
+                )
+                OR EXISTS (
+                    SELECT 1 FROM notice_audience ag
+                    WHERE ag.notice_id = n.id
+                      AND ag.kind = 'grade'
+                      AND ag.value IN (%s, %s)
+                )
+            )
+            """
+        )
+        params.extend([f"{grade}학년", str(grade)])
+    if year:
+        conditions.append("n.posted_at >= %s AND n.posted_at < %s")
+        params.extend([date(year, 1, 1), date(year + 1, 1, 1)])
+    if topic:
+        conditions.append(
+            "(%s = ANY(n.topics) OR n.title ILIKE %s OR COALESCE(n.summary, '') ILIKE %s)"
+        )
+        params.extend([topic, f"%{topic}%", f"%{topic}%"])
+
+    where = " AND ".join(conditions) if conditions else "true"
+    order_by = {
+        "posted_at": "n.posted_at DESC NULLS LAST, n.id DESC",
+        "start_date": "period.starts_on ASC NULLS LAST, n.posted_at DESC NULLS LAST",
+        "end_date": "period.ends_on ASC NULLS LAST, n.posted_at DESC NULLS LAST",
+    }[sort]
+    base_from = f"""
+        FROM notice n
+        JOIN source s ON s.id = n.source_id
+        LEFT JOIN LATERAL (
+            SELECT min(starts_on) AS starts_on, max(ends_on) AS ends_on
+            FROM notice_period
+            WHERE notice_id = n.id AND kind = 'application'
+        ) period ON true
+        WHERE {where}
+    """
 
     with sync_pool.connection() as conn:
-        cursor = conn.execute(final_q, params)
-        return cursor.fetchall()
+        total = conn.execute(
+            f"SELECT count(*) {base_from}",
+            params,
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"""
+            SELECT
+                n.id, n.url, n.title, n.summary, n.category, n.topics,
+                n.series_key, n.posted_at, n.archived_at,
+                period.starts_on, period.ends_on,
+                s.code, s.name, s.department,
+                COALESCE(
+                    (
+                        SELECT jsonb_agg(
+                            jsonb_build_object(
+                                'kind', p.kind,
+                                'starts_on', p.starts_on,
+                                'ends_on', p.ends_on,
+                                'source_text', p.source_text,
+                                'confidence', p.confidence,
+                                'inferred_year', p.inferred_year
+                            )
+                            ORDER BY p.order_idx
+                        )
+                        FROM notice_period p
+                        WHERE p.notice_id = n.id
+                    ),
+                    '[]'::jsonb
+                ) AS periods,
+                COALESCE(
+                    (
+                        SELECT jsonb_agg(
+                            jsonb_build_object(
+                                'kind', a.kind,
+                                'value', a.value,
+                                'source_text', a.source_text,
+                                'confidence', a.confidence
+                            )
+                            ORDER BY a.order_idx
+                        )
+                        FROM notice_audience a
+                        WHERE a.notice_id = n.id
+                    ),
+                    '[]'::jsonb
+                ) AS audiences
+            {base_from}
+            ORDER BY {order_by}
+            OFFSET %s
+            LIMIT %s
+            """,
+            [*params, offset, page_size],
+        ).fetchall()
+
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "id": row[0],
+                "url": row[1],
+                "title": row[2],
+                "summary": row[3],
+                "category": row[4],
+                "topics": list(row[5] or []),
+                "series_key": row[6],
+                "posted_at": row[7].isoformat() if row[7] else None,
+                "archived": row[8] is not None,
+                "application_start": row[9].isoformat() if row[9] else None,
+                "application_end": row[10].isoformat() if row[10] else None,
+                "source_code": row[11],
+                "source_name": row[12],
+                "department": row[13],
+                "periods": list(row[14] or []),
+                "audiences": list(row[15] or []),
+            }
+        )
+    return {
+        "total": int(total),
+        "offset": offset,
+        "returned": len(items),
+        "as_of": as_of.isoformat(),
+        "time_scope": time_scope,
+        "status": status,
+        "items": items,
+    }
 
 
 __all__ = [
-    "prune_documents",
+    "archive_documents",
     "sync_pinned_urls",
     "upsert_source",
     "document_exists",
@@ -534,4 +835,5 @@ __all__ = [
     "search_chunks",
     "get_document_content",
     "get_documents",
+    "list_notices_for_scan",
 ]

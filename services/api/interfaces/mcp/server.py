@@ -4,7 +4,7 @@ import secrets
 from hashlib import sha256
 from datetime import date, datetime
 from math import isfinite
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 from fastapi import HTTPException
@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse
 from api.deps import decode_access_token
 from api.ratelimit import allow_rate_limited_request
 from config import MCP_AUTH_TOKEN, RATE_LIMIT_MCP
-from db.documents import get_document_content
+from db.documents import get_document_content, list_notices_for_scan
 from retrieval.graph import retrieve_mcp_evidence
 
 
@@ -38,7 +38,7 @@ def _finite_score(value: Any) -> float | None:
     return score if isfinite(score) else None
 
 
-def _build_evidence_package(retrieval: dict, limit: int) -> dict:
+def _build_evidence_package(retrieval: dict) -> dict:
     query_mode = retrieval.get("query_mode") or "precise"
     if query_mode == "smalltalk":
         status = "search_not_required"
@@ -47,7 +47,7 @@ def _build_evidence_package(retrieval: dict, limit: int) -> dict:
 
     body_remaining = int(_EVIDENCE_TEXT_LIMIT * 0.65)
     documents = []
-    for context in (retrieval.get("contexts") or [])[:limit]:
+    for context in retrieval.get("contexts") or []:
         raw_body = str(context.get("body_content") or context.get("snippet") or "")
         body = raw_body[:body_remaining]
         body_remaining -= len(body)
@@ -105,6 +105,9 @@ def _build_evidence_package(retrieval: dict, limit: int) -> dict:
         "original_query": retrieval.get("original_query") or "",
         "expanded_query": retrieval.get("expanded_query") or "",
         "categories": list(retrieval.get("categories") or []),
+        "time_scope": retrieval.get("time_scope") or "current",
+        "year": retrieval.get("year"),
+        "notice_ids": list(retrieval.get("notice_ids") or []),
         "routing_fallback": bool(retrieval.get("routing_fallback")),
         "documents": documents,
         "evidence_chunks": evidence_chunks,
@@ -151,28 +154,64 @@ class _McpAuthenticationMiddleware:
 mcp = FastMCP(
     "KNU Notice Evidence",
     instructions=(
-        "Use these tools only to retrieve KNU notice evidence. "
+        "Use knu_list_notices for counts, lists, filters, current/open status, and sorting. "
+        "Use knu_search_notice_details for a specific notice's dates, requirements, procedures, "
+        "or attachment evidence. Combine them for comparison questions. "
         "If the evidence is insufficient, say so instead of making up an answer."
     ),
 )
 
 
 @mcp.tool
-async def search_knu_notices(
+async def knu_list_notices(
+    category: Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"] | None = None,
+    status: Literal["any", "open", "upcoming", "closed"] = "any",
+    time_scope: Literal["current", "historical", "all"] = "current",
+    as_of: str | None = None,
+    department: str | None = None,
+    grade: int | None = None,
+    year: int | None = None,
+    topic: str | None = None,
+    sort: Literal["posted_at", "start_date", "end_date"] = "posted_at",
+    offset: int = 0,
+) -> dict:
+    """List, filter, sort, or count KNU notices from structured metadata. Use this for broad or current-status questions; total is the full matching count."""
+    reference_date = date.fromisoformat(as_of) if as_of else date.today()
+    return await anyio.to_thread.run_sync(
+        list_notices_for_scan,
+        category,
+        status,
+        reference_date,
+        time_scope,
+        department,
+        grade,
+        year,
+        topic,
+        sort,
+        offset,
+    )
+
+
+@mcp.tool
+async def knu_search_notice_details(
     query: str,
     major: str | None = None,
-    category: str | None = None,
-    limit: int = 10,
+    category: Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"] | None = None,
+    time_scope: Literal["current", "historical", "all"] = "current",
+    year: int | None = None,
+    notice_ids: list[int] | None = None,
 ) -> ToolResult:
-    """Use for current 수강/학사/장학 공지, dates, procedures, or notice lists even when KNU is omitted. Cite returned URLs and do not exceed the evidence."""
-    limit = max(1, min(limit, 10))
+    """Search notice body and attachment evidence with embeddings and reranking. Use for a specific notice's detailed dates, eligibility, documents, or procedures."""
     retrieval = await anyio.to_thread.run_sync(
         retrieve_mcp_evidence,
         query,
         major,
         category,
+        time_scope,
+        year,
+        notice_ids,
     )
-    package = _build_evidence_package(retrieval, limit)
+    package = _build_evidence_package(retrieval)
 
     evidence_by_url = {
         evidence["url"]: evidence for evidence in package["evidence_chunks"]
@@ -213,9 +252,9 @@ async def search_knu_notices(
 
 
 @mcp.tool
-async def get_knu_notice_detail(category: str, url: str) -> dict:
-    """Get the body of a notice returned by search_knu_notices for evidence."""
-    content = await anyio.to_thread.run_sync(get_document_content, category, url)
+async def knu_get_notice_detail(url: str) -> dict:
+    """Get the body of a notice returned by knu_search_notice_details for evidence."""
+    content = await anyio.to_thread.run_sync(get_document_content, url)
     content = content or ""
     return {
         "content": content[:_DETAIL_CONTENT_LIMIT],

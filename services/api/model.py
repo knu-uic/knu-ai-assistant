@@ -43,6 +43,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 @lru_cache(maxsize=1)
 def get_context_window_chars() -> int:
     """config.py compatibility wrapper."""
@@ -154,12 +164,13 @@ def get_llm():
             model=LLM_MODEL,
             base_url=OPENAI_COMPAT_BASE_URL,
             api_key="lm-studio",
-            temperature=0,
+            # 구조화 추출은 재현성과 사실 보존이 중요하므로 기본값을 최저로 둔다.
+            temperature=_env_float("LOCAL_LLM_TEMPERATURE", 0.0),
             # OpenAI-compatible local models do not always emit a stop token
             # reliably for OCR/structured-output requests. Without a limit,
             # one malformed response can occupy LM Studio until its full
             # context window is exhausted and stall the entire ingest worker.
-            max_tokens=_env_int("LOCAL_LLM_MAX_TOKENS", 1024),
+            max_tokens=_env_int("LOCAL_LLM_MAX_TOKENS", 2048),
             timeout=_env_int("LOCAL_LLM_TIMEOUT_SECONDS", 180),
         )
 

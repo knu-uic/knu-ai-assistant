@@ -139,23 +139,74 @@ def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
     assert response.status_code == 200
     tools = response.json()["result"]["tools"]
     assert {tool["name"] for tool in tools} == {
-        "search_knu_notices",
-        "get_knu_notice_detail",
+        "knu_list_notices",
+        "knu_search_notice_details",
+        "knu_get_notice_detail",
     }
-    search_tool = next(tool for tool in tools if tool["name"] == "search_knu_notices")
-    assert "수강/학사/장학 공지" in search_tool["description"]
+    scan_tool = next(tool for tool in tools if tool["name"] == "knu_list_notices")
+    deep_tool = next(tool for tool in tools if tool["name"] == "knu_search_notice_details")
+    assert "count" in scan_tool["description"]
+    assert "reranking" in deep_tool["description"]
+    assert "limit" not in scan_tool["inputSchema"]["properties"]
+    assert "limit" not in deep_tool["inputSchema"]["properties"]
 
 
-def test_search_knu_notices_clamps_result_limit_and_returns_safe_fields(monkeypatch):
+def test_knu_list_notices_returns_server_total(monkeypatch):
     import interfaces.mcp.server as mcp_mod
 
-    def fake_retrieve(query, major, category_override):
-        assert (query, major, category_override) == ("수강 철회", None, None)
+    seen = []
+
+    def fake_list(*args):
+        seen.append(args)
         return {
-            "query_mode": "precise",
+            "total": 4,
+            "offset": 0,
+            "returned": 1,
+            "as_of": "2026-07-31",
+            "time_scope": "current",
+            "status": "open",
+            "items": [{"id": 9, "title": "장학 공지"}],
+        }
+
+    monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
+    monkeypatch.setattr(mcp_mod, "list_notices_for_scan", fake_list)
+    with TestClient(app) as client:
+        result = _tool_call(
+            client,
+            "unit-mcp-token",
+            "knu_list_notices",
+            {
+                "category": "장학",
+                "status": "open",
+                "as_of": "2026-07-31",
+                "sort": "end_date",
+            },
+        )
+
+    assert result["total"] == 4
+    assert result["items"][0]["title"] == "장학 공지"
+    assert seen[0][0:4] == (
+        "장학",
+        "open",
+        datetime.date(2026, 7, 31),
+        "current",
+    )
+
+
+def test_knu_search_notice_details_returns_safe_fields(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+
+    def fake_retrieve(query, major, category_override, time_scope, year, notice_ids):
+        assert (query, major, category_override) == ("수강 철회", None, "수강")
+        assert (time_scope, year, notice_ids) == ("current", 2026, None)
+        return {
+            "query_mode": "deep",
             "original_query": query,
             "expanded_query": "2026학년도 수강 철회 신청 기간",
             "categories": ["수강"],
+            "time_scope": "current",
+            "year": 2026,
+            "notice_ids": [],
             "routing_fallback": False,
             "contexts": [
                 {
@@ -191,7 +242,10 @@ def test_search_knu_notices_clamps_result_limit_and_returns_safe_fields(monkeypa
     monkeypatch.setattr(mcp_mod, "retrieve_mcp_evidence", fake_retrieve)
     with TestClient(app) as client:
         result = _tool_call_result(
-            client, "unit-mcp-token", "search_knu_notices", {"query": "수강 철회", "limit": 99}
+            client,
+            "unit-mcp-token",
+            "knu_search_notice_details",
+            {"query": "수강 철회", "category": "수강", "year": 2026},
         )
 
     legacy = json.loads(result["content"][0]["text"])
@@ -204,9 +258,11 @@ def test_search_knu_notices_clamps_result_limit_and_returns_safe_fields(monkeypa
     package = result["structuredContent"]
     assert package["schema_version"] == 2
     assert package["status"] == "ok"
-    assert package["query_mode"] == "precise"
+    assert package["query_mode"] == "deep"
     assert package["expanded_query"] == "2026학년도 수강 철회 신청 기간"
     assert package["categories"] == ["수강"]
+    assert package["time_scope"] == "current"
+    assert package["year"] == 2026
     assert package["evidence_chunks"] == [
         {
             "url": "https://x/9",
@@ -223,18 +279,16 @@ def test_search_knu_notices_clamps_result_limit_and_returns_safe_fields(monkeypa
 
 
 @pytest.mark.parametrize(
-    ("query_mode", "contexts", "expected_status"),
+    ("contexts", "expected_status"),
     [
-        ("smalltalk", [], "search_not_required"),
-        ("precise", [], "no_results"),
+        ([], "no_results"),
         (
-            "broad",
             [
                 {
-                    "url": "https://x/broad",
-                    "title": "수강 공지 목록",
+                    "url": "https://x/deep",
+                    "title": "수강 공지 근거",
                     "category": "수강",
-                    "matched_chunk": "여러 수강 공지 요약",
+                    "matched_chunk": "수강 공지 상세",
                     "vector_score": 0.7,
                     "rerank_score": 0.8,
                 }
@@ -243,18 +297,21 @@ def test_search_knu_notices_clamps_result_limit_and_returns_safe_fields(monkeypa
         ),
     ],
 )
-def test_search_knu_notices_returns_mode_status(monkeypatch, query_mode, contexts, expected_status):
+def test_knu_search_notice_details_returns_status(monkeypatch, contexts, expected_status):
     import interfaces.mcp.server as mcp_mod
 
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
     monkeypatch.setattr(
         mcp_mod,
         "retrieve_mcp_evidence",
-        lambda query, major, category: {
-            "query_mode": query_mode,
+        lambda query, major, category, time_scope, year, notice_ids: {
+            "query_mode": "deep",
             "original_query": query,
             "expanded_query": query,
             "categories": [],
+            "time_scope": time_scope,
+            "year": year,
+            "notice_ids": notice_ids or [],
             "routing_fallback": False,
             "contexts": contexts,
             "evidence_chunks": [],
@@ -265,12 +322,12 @@ def test_search_knu_notices_returns_mode_status(monkeypatch, query_mode, context
         result = _tool_call_result(
             client,
             "unit-mcp-token",
-            "search_knu_notices",
+            "knu_search_notice_details",
             {"query": "질문"},
         )
 
     assert result["structuredContent"]["status"] == expected_status
-    assert result["structuredContent"]["query_mode"] == query_mode
+    assert result["structuredContent"]["query_mode"] == "deep"
 
 
 def test_get_knu_notice_detail_limits_content_and_returns_source_url(monkeypatch):
@@ -278,13 +335,13 @@ def test_get_knu_notice_detail_limits_content_and_returns_source_url(monkeypatch
 
     content = "가" * (mcp_mod._DETAIL_CONTENT_LIMIT + 1)
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
-    monkeypatch.setattr(mcp_mod, "get_document_content", lambda category, url: content)
+    monkeypatch.setattr(mcp_mod, "get_document_content", lambda url: content)
     with TestClient(app) as client:
         result = _tool_call(
             client,
             "unit-mcp-token",
-            "get_knu_notice_detail",
-            {"category": "학사", "url": "https://x/9"},
+            "knu_get_notice_detail",
+            {"url": "https://x/9"},
         )
 
     assert result == {

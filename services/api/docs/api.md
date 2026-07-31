@@ -535,19 +535,19 @@ DB_HOST=localhost
 DB_PORT=5432
 DATABASE_URL=postgresql://knu-uic:pass@localhost:5432/knu-uic
 
-# LLM Provider (lmstudio / google / openai)
-VLM_PROVIDER=lmstudio
-LLM_MODEL=gemma-4-e4b
+# LLM Provider (local / google / openai)
+VLM_PROVIDER=local
+LLM_MODEL=gemma-4-12b-it-mlx
 
 # Embedding
-EMBEDDING_PROVIDER=lmstudio
+EMBEDDING_PROVIDER=local
 EMBEDDING_MODEL=text-embedding-nomic-embed-text-v1.5
 EMBEDDING_DIM=768
 
 # LM Studio
 LOCAL_LLM_PORT=1234
-LMSTUDIO_BASE_URL=http://localhost:1234/v1
-LOCAL_LLM_MAX_TOKENS=1024
+LOCAL_LLM_TEMPERATURE=0
+LOCAL_LLM_MAX_TOKENS=2048
 LOCAL_LLM_TIMEOUT_SECONDS=180
 
 # Retrieval
@@ -558,8 +558,10 @@ BROAD_RERANK_CANDIDATES=50
 BROAD_DOC_TOP_N=12
 
 # Context
-LLM_MAX_CONTEXT_WINDOW_TOKENS=60000
+LLM_MAX_CONTEXT_WINDOW_TOKENS=32768
 LLM_CHARS_PER_TOKEN=1.5
+REFINE_FULL_CONTENT_LIMIT=24000
+ATTACHMENT_REFINE_FALLBACK_CHARS=16000
 ANSWER_CONTEXT_BUDGET_RATIO=0.70        # answerer context budget 비율
 VERIFIER_CONTEXT_BUDGET_RATIO=0.20      # verifier context budget 비율
 ATTACHMENT_NAME_RESERVE_RATIO=0.13      # support doc 본문 예산 중 첨부파일명 표기 예약 비율
@@ -570,7 +572,8 @@ ATTACHMENT_NAME_RESERVE_RATIO=0.13      # support doc 본문 예산 중 첨부�
 ENABLE_VERIFIER=false
 
 # Refine
-REFINE_FULL_CONTENT_LIMIT=12000
+REFINE_FULL_CONTENT_LIMIT=24000
+ATTACHMENT_REFINE_FALLBACK_CHARS=16000
 
 # API Keys
 GOOGLE_API_KEY=
@@ -595,11 +598,26 @@ LANGSMITH_PROJECT=knu-ai-assistant
 ```
 
 provider 설정:
-- `VLM_PROVIDER`: `lmstudio`, `google`, `openai` 중 선택
-- `EMBEDDING_PROVIDER`: `lmstudio`, `google`, `openai` 중 선택
+- `VLM_PROVIDER`: `local`, `google`, `openai` 중 선택
+- `EMBEDDING_PROVIDER`: `local`, `google`, `openai` 중 선택
 - `RERANKER_PROVIDER`: `local`(BGE CrossEncoder), `jina`(Jina API) 중 선택
 
 Docker 환경에서 워커가 호스트의 LM Studio에 접근해야 하면 `http://host.docker.internal:1234/v1`을 사용합니다.
+
+LM Studio에서 Gemma를 사용할 때는 실제 모델도 같은 컨텍스트 크기로 로드합니다.
+환경변수는 앱의 입력 예산을 정할 뿐, 이미 로드된 모델의 컨텍스트를 바꾸지는 않습니다.
+
+```bash
+lms unload gemma-4-12b-it-mlx
+lms load gemma-4-12b-it-mlx \
+  --identifier gemma-4-12b-it-mlx \
+  --context-length 32768 \
+  --parallel 2 \
+  --gpu max \
+  --ttl 3600 \
+  -y
+lms ps
+```
 
 ## 로컬 실행
 

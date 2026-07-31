@@ -6,7 +6,7 @@ from crawlers import CRAWLERS
 from pipelines.refine import refine
 from db import (
     init_db,
-    prune_documents,
+    archive_documents,
     sync_pinned_urls,
     upsert_source,
     insert_document,
@@ -58,7 +58,7 @@ def run_ingest() -> dict:
             except Exception as e:
                 print(f"  ⚠️ 고정 공지 수집 실패 [{crawler.SOURCE_CODE}] — {type(e).__name__}: {e}")
     sync_pinned_urls(pinned_urls)
-    prune_documents(retention_months=6, delete_expired=True, protected_urls=pinned_urls)
+    archive_documents(retention_months=24, protected_urls=pinned_urls)
 
     for mod in CRAWLERS:
         source_id = upsert_source(
@@ -121,20 +121,20 @@ def run_ingest() -> dict:
 
                 # 신규 구조
                 body_content=item.get("body_content"),
-                attachment_names=item.get("attachment_names"),
-                attachment_contents=item.get("attachment_contents"),
 
-                start_date=doc.start_date,
-                end_date=doc.end_date,
                 category=doc.category,
-                target=doc.target,
-                keywords=doc.keywords,
                 summary=doc.summary,
+                topics=doc.topics,
+                series_key=doc.series_key,
+                periods=doc.periods,
+                audiences=doc.audiences,
+                application=doc.application,
+                extraction_confidence=doc.extraction_confidence,
                 extra=extra,
                 posted_at=posted_at,
                 is_pinned=bool(item.get("is_pinned")),
             )
-            insert_assets(doc.category, document_id, assets)
+            insert_assets(document_id, assets)
 
             base_body_content = (
                 item.get("body_content")
@@ -173,11 +173,7 @@ def run_ingest() -> dict:
                 ),
             )
 
-            insert_chunks(
-                doc.category,
-                document_id,
-                chunks,
-            )
+            insert_chunks(document_id, chunks)
             inserted_count += 1
 
         print(

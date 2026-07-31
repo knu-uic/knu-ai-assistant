@@ -1,4 +1,10 @@
-from schema import MetadataSchema, RefinementSchema
+from schema import (
+    MetadataSchema,
+    NoticeApplicationSchema,
+    NoticeAudienceSchema,
+    NoticePeriodSchema,
+    RefinementSchema,
+)
 import pipelines.refine as refine_module
 
 
@@ -7,11 +13,31 @@ class _FakeStructuredModel:
         return [
             RefinementSchema(
                 summary="핵심 요약",
-                target=["재학생"],
-                start_date="2026-07-20",
-                end_date="2026-08-04",
                 category="취업(진로)",
-                keywords=["WEST"],
+                topics=["WEST"],
+                series_key="west-program",
+                periods=[
+                    NoticePeriodSchema(
+                        kind="application",
+                        starts_on="2026-07-20",
+                        ends_on="2026-08-04",
+                        source_text="2026. 7. 20.부터 8. 4.까지 신청",
+                        confidence=0.98,
+                    )
+                ],
+                audiences=[
+                    NoticeAudienceSchema(
+                        kind="enrollment_status",
+                        value="재학생",
+                        source_text="재학생 대상",
+                        confidence=0.99,
+                    )
+                ],
+                application=NoticeApplicationSchema(
+                    method="온라인 신청",
+                    evidence={"method": "온라인으로 신청"},
+                ),
+                extraction_confidence=0.97,
             )
         ]
 
@@ -57,5 +83,11 @@ def test_local_refine_extracts_metadata_without_regenerating_original(monkeypatc
     assert document.content == original_content
     assert document.url == "https://example.test/west"
     assert document.summary == "핵심 요약"
+    assert document.start_date == "2026-07-20"
+    assert document.end_date == "2026-08-04"
+    assert document.target == ["재학생"]
+    assert document.keywords == ["WEST"]
+    assert document.periods[0].source_text == "2026. 7. 20.부터 8. 4.까지 신청"
+    assert document.application.method == "온라인 신청"
     assert assets == []
     assert extra == {"source": "test"}
