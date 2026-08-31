@@ -85,6 +85,12 @@ MCP 내부에는 질문 키워드 router나 별도의 LLM 호출이 없다. 도�
 수 있는 `content`와 기계가 그대로 이용할 수 있는 `structuredContent`를 함께
 반환하며, 요청자 모델이 근거 URL을 인용해 최종 답변을 만든다.
 
+사용자 session으로 호출하면 KNU MCP는 학번에 연결된 학적정보를 자동으로 읽는다.
+도구의 `department`를 생략한 기본 호출은 학교 공통 게시판과 사용자 학과 게시판만
+조회하며, Scan은 학년도 함께 적용한다. 다른 학과를 명시적으로 묻는 경우에만
+Codmes 모델이 `department`를 전달해 이 기본 범위를 바꾼다. 이 필터는 임베딩 검색
+전에 적용되므로 다른 학과 문서가 높은 유사도만으로 Deep 결과에 섞이지 않는다.
+
 ```bash
 cd ~/knu-ai-assistant/services/api
 ../../.venv/bin/python - <<'PY'

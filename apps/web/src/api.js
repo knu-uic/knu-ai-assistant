@@ -174,9 +174,9 @@ export async function getNotices() {
   return (r.notices || []).map((n) => ({
     urgent: false,
     source: n.source_name || "공지",
-    dept: "",
-    deadlineLabel: n.end_date ? `~ ${n.end_date}` : "",
-    deadlineWarm: false,
+    dept: n.department || "",
+    deadlineLabel: n.deadline_label || "",
+    deadlineWarm: n.deadline_tone === "danger" || n.deadline_tone === "warning",
     reg: n.posted_at ? `Reg: ${n.posted_at}` : "",
     title: n.title,
     body: n.summary || n.content || "",

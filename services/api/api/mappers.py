@@ -1,5 +1,6 @@
 """DB row tuple → API schema 매핑. 날짜는 ISO 문자열, target/keywords는 list[str]로 정규화."""
 import math
+from datetime import date, datetime
 
 from interfaces.http.schemas.notices import NoticeItem
 from interfaces.http.schemas.search import SearchResult
@@ -27,15 +28,41 @@ def _strlist(x) -> list[str]:
     return []
 
 
+def _deadline(end_date) -> tuple[str | None, str | None]:
+    if end_date is None:
+        return None, None
+    if isinstance(end_date, datetime):
+        value = end_date.date()
+    elif isinstance(end_date, date):
+        value = end_date
+    else:
+        try:
+            value = date.fromisoformat(str(end_date))
+        except ValueError:
+            return f"~ {end_date}", "accent"
+    remaining = (value - date.today()).days
+    if remaining < 0:
+        return "마감", "neutral"
+    if remaining == 0:
+        return "오늘 마감", "danger"
+    if remaining <= 7:
+        return f"D-{remaining}", "danger"
+    if remaining <= 30:
+        return f"D-{remaining}", "warning"
+    return f"~ {value.isoformat()}", "accent"
+
+
 def notice_from_list_row(row) -> NoticeItem:
     (url, title, content, posted_at, start_date, end_date, category,
-     target, keywords, _code, source_name, _kind, _dept, *rest) = row
+     target, keywords, _code, source_name, _kind, department, *rest) = row
     summary = rest[0] if rest else None
+    deadline_label, deadline_tone = _deadline(end_date)
     return NoticeItem(
         url=url, title=title, content=content, summary=summary,
         posted_at=_iso(posted_at), start_date=_iso(start_date), end_date=_iso(end_date),
         category=category, target=_strlist(target), keywords=_strlist(keywords),
-        source_name=source_name,
+        source_name=source_name, department=department,
+        deadline_label=deadline_label, deadline_tone=deadline_tone,
     )
 
 

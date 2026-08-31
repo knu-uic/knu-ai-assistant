@@ -194,6 +194,8 @@ def _retrieve_with_rerank(
             "start_date": r[5],
             "end_date": r[6],
             "category": r[7],
+            "source_name": r[11],
+            "source_department": r[13],
             "summary": r[14] if len(r) > 14 else None,
         }
         for r, s in evidence_ranked
@@ -234,6 +236,8 @@ def _retrieve_with_rerank(
                 "start_date": r[5],
                 "end_date": r[6],
                 "category": r[7],
+                "source_name": r[11],
+                "source_department": r[13],
             }
         )
 
@@ -280,6 +284,8 @@ def _retrieve_broad(
             "start_date": r[5],
             "end_date": r[6],
             "category": r[7],
+            "source_name": r[11],
+            "source_department": r[13],
             "score": s,
             "vector_score": r[3],
             "rerank_score": s,
@@ -297,7 +303,7 @@ def broad_retriever_node(state: ChatState) -> dict:
 
 def retrieve_mcp_evidence(
     question: str,
-    major: str | None = None,
+    department: str | None = None,
     category_override: str | None = None,
     time_scope: str = "current",
     year: int | None = None,
@@ -312,7 +318,7 @@ def retrieve_mcp_evidence(
     categories = [category_override] if category_override else []
     contexts, evidence_chunks = _retrieve_with_rerank(
         query,
-        major,
+        department,
         categories or None,
         time_scope=time_scope,
         year=year,
@@ -324,6 +330,7 @@ def retrieve_mcp_evidence(
         "original_query": question,
         "expanded_query": query,
         "categories": categories,
+        "department": department,
         "time_scope": time_scope,
         "year": year,
         "notice_ids": list(notice_ids or []),

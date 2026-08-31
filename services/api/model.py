@@ -166,6 +166,14 @@ def get_llm():
             api_key="lm-studio",
             # 구조화 추출은 재현성과 사실 보존이 중요하므로 기본값을 최저로 둔다.
             temperature=_env_float("LOCAL_LLM_TEMPERATURE", 0.0),
+            # Gemma 계열 chat template가 지원하는 내부 추론은 공지 구조화에는
+            # 불필요하다. LM Studio가 모델 기본값으로 thinking을 켜더라도
+            # 명시적으로 비활성화해 수집 지연과 불필요한 token 소비를 막는다.
+            extra_body={
+                "chat_template_kwargs": {
+                    "enable_thinking": False,
+                },
+            },
             # OpenAI-compatible local models do not always emit a stop token
             # reliably for OCR/structured-output requests. Without a limit,
             # one malformed response can occupy LM Studio until its full

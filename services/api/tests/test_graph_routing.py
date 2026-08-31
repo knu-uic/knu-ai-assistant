@@ -36,7 +36,7 @@ def test_retrieve_mcp_evidence_uses_deep_retrieval_without_answerer(monkeypatch)
 
     result = graph.retrieve_mcp_evidence(
         "수강 철회",
-        major="컴퓨터학부",
+        department="컴퓨터학부",
         category_override="수강",
         time_scope="current",
         year=2026,
@@ -48,6 +48,7 @@ def test_retrieve_mcp_evidence_uses_deep_retrieval_without_answerer(monkeypatch)
         "original_query": "수강 철회",
         "expanded_query": "수강 철회",
         "categories": ["수강"],
+        "department": "컴퓨터학부",
         "time_scope": "current",
         "year": 2026,
         "notice_ids": [9],
@@ -72,7 +73,7 @@ def test_retrieve_mcp_evidence_does_not_call_llm_router(monkeypatch):
         ),
     )
 
-    result = graph.retrieve_mcp_evidence("원본 질문", major="컴퓨터학부")
+    result = graph.retrieve_mcp_evidence("원본 질문", department="컴퓨터학부")
 
     assert result["query_mode"] == "deep"
     assert result["expanded_query"] == "원본 질문"

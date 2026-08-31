@@ -1,6 +1,8 @@
 import datetime
+import pytest
 from fastapi.testclient import TestClient
 from api.main import app
+from api.deps import create_portal_access_token
 
 
 def test_notices_maps_rows(monkeypatch):
@@ -25,6 +27,9 @@ def test_notices_maps_rows(monkeypatch):
     assert n["target"] == ["재학생"]
     assert n["keywords"] == ["장학금", "신청"]
     assert n["source_name"] == "학생지원과"
+    assert n["department"] is None
+    assert n["deadline_label"] == "마감"
+    assert n["deadline_tone"] == "neutral"
 
 
 def test_notices_empty(monkeypatch):
@@ -75,6 +80,31 @@ def test_notices_explicit_major_query_wins(monkeypatch):
         r = client.get("/api/notices?major=경영학과")
     assert r.status_code == 200
     assert captured["major"] == "경영학과"
+    assert captured["department"] is None
+
+
+@pytest.mark.real_auth
+def test_notices_portal_session_uses_synced_department(monkeypatch):
+    """Codmes plugin의 portal session은 accounts 연결 없이 학번에서 학과를 찾는다."""
+    import interfaces.http.shared.notices as m
+    captured = {}
+    monkeypatch.setattr(m, "get_documents", lambda **kw: captured.update(kw) or [])
+    monkeypatch.setattr(m, "get_user", lambda sid: {"major": "컴퓨터공학과"})
+    monkeypatch.setattr(
+        m,
+        "get_account",
+        lambda username: (_ for _ in ()).throw(AssertionError("account lookup called")),
+    )
+    token = create_portal_access_token("202203236")
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/notices",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    assert captured["major"] == "컴퓨터공학과"
     assert captured["department"] is None
 
 

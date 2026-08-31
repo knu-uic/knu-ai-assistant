@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from db.accounts import get_account
 from db.documents import get_documents
 from db.users import get_user
-from api.deps import optional_user
+from api.deps import optional_user, portal_student_id
 from api.ratelimit import limiter, user_or_ip
 from interfaces.http.schemas.notices import NoticeListResponse
 from api.mappers import notice_from_list_row
@@ -22,8 +22,10 @@ router = APIRouter()
 
 async def _resolve_major(username: str) -> str | None:
     """로그인 유저 → 연결된 학번 → 학과. 미연동이면 None."""
-    account = await anyio.to_thread.run_sync(partial(get_account, username))
-    student_id = account.get("student_id") if account else None
+    student_id = portal_student_id(username)
+    if student_id is None:
+        account = await anyio.to_thread.run_sync(partial(get_account, username))
+        student_id = account.get("student_id") if account else None
     if not student_id:
         return None
     user = await anyio.to_thread.run_sync(partial(get_user, student_id))
