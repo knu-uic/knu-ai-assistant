@@ -1,0 +1,7 @@
+{
+	auto_https off
+}
+
+:8000 {
+	respond "{http.request.header.Authorization}" 200
+}

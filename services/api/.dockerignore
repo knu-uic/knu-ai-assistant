@@ -1,0 +1,30 @@
+# 이미지에 굽지 않을 것 (슬림 + 비밀 비노출). Dockerfile·Dockerfile.api 공통.
+# 런타임에 필요한 .env는 compose env_file로, .secrets는 볼륨 마운트로 주입한다.
+
+# 비밀 / 환경
+.env
+.env.*
+.envrc
+.secrets/
+
+# VCS / 에이전트 산출물
+.git
+.gitignore
+.claude/
+docs/superpowers/
+graphify-out/
+
+# 파이썬 캐시 / 가상환경
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+.mypy_cache/
+
+# 모델 캐시 / 크롤링·파싱 산출물 (이미지에 불필요, 용량만 큼)
+.hf_cache/
+hf_cache/
+crawl_result/
+output/
+debugtools/

@@ -1,0 +1,95 @@
+KNU AI Assistant 서버 프로젝트 분석 보고서
+==================================================
+
+1. 프로젝트 개요
+- 이 프로젝트는 공주대학교 공지사항, 학과 공지, 교과과정표, LMS/포털 연동 데이터를 수집하여
+  PostgreSQL + pgvector에 저장하고, FastAPI API와 LangGraph RAG 챗봇으로 제공하는
+  학생 맞춤형 안내 시스템이다.
+- 실제 웹 제품은 apps/web/Vite 클라이언트이며, Flutter 앱은 별도 구현 중이다. services/api는 FastAPI와 Redis/ARQ 작업을 제공한다.
+
+2. 실행 시작점과 전체 실행 과정
+- 로컬 개발 시작 순서: `services/api`에서 DB·Redis·API·worker를 실행하고 `apps/web`에서 `npm run dev`.
+- 웹 요청 흐름: apps/web/Vite → `/api` 프록시 → `api/main.py`(FastAPI) → DB/retrieval.
+- 비동기 작업 흐름: FastAPI → Redis → `workers/arq_worker.py`(ARQ) → LMS/포털 동기화 또는 공지 폴링.
+- 검색/답변은 `retrieval/graph.py`에서 router → retriever → answerer 순으로 처리하며, `ENABLE_VERIFIER=true`일 때 verifier가 근거 검증을 추가한다.
+
+3. 데이터 수집/적재 흐름 (크롤링 → 정제 → 저장 → 벡터화)
+- 실행 명령: python3 -m pipelines.ingest
+- 단계별 흐름:
+  1) crawlers/registry.py가 크롤러 목록을 로드한다.
+     - 공주대학교 일반 공지
+     - 컴퓨터공학과 학과공지/교과과정표
+     - 경영학과 학과공지/교과과정표
+     - 장학안내 등
+  2) 각 크롤러가 게시글/본문/첨부/메타데이터를 수집한다.
+  3) extractors/attachments.py가 본문 이미지 OCR, PDF/HWP/HWPX/XLSX/XLS/ZIP 첨부 텍스트를 추출한다.
+  4) pipelines/refine.py가 LLM을 호출해 summary, category, target, start_date, end_date, keywords를 정제한다.
+  5) db/documents.py의 insert_document / insert_assets / insert_chunks가 DB에 저장한다.
+  6) embedding/embed.py가 body/attachment를 청킹하고 embedding model로 벡터화를 수행한다.
+  7) document_<category>_chunk 테이블에 embedding vector를 저장한다.
+- 저장 대상:
+  - document_scholarship / document_academic / document_career / document_event / document_etc
+  - document_asset
+  - source
+  - users / lms_tasks / lms_courses
+
+4. DB 구조와 검색 인덱스
+- PostgreSQL 16 + pgvector를 사용한다.
+- 문서 테이블은 카테고리별로 분리되어 있고, 각각 source_id, url, title, content, body_content,
+  attachment_names, attachment_contents, summary, posted_at, start_date, end_date, target, keywords,
+  extra를 저장한다.
+- chunk 테이블은 document_id, chunk_idx, content, chunk_type, attachment_name, embedding vector를 가진다.
+- embedding 컬럼은 HNSW cosine index로 생성되어 similarity 검색에 사용된다.
+- search_chunks()는 source.department와 사용자 major의 일치 여부를 고려해 학과 필터링을 수행한다.
+  - s.department = 사용자의 major
+  - 또는 s.department = '공통'
+  - 또는 s.department IS NULL
+
+5. 검색/답변(RAG) 작동 방식
+- 사용자의 질문은 retrieval/graph.py의 LangGraph 그래프에서 처리된다.
+- 단계:
+  1) router_node
+     - 질문을 LLM에 보내 query_mode(precise/broad), categories, expanded_query를 생성한다.
+     - 애매하면 precise를 안전하게 선택한다.
+  2) retriever_node (precise 경로)
+     - embed_query()로 질문 벡터를 생성한다.
+     - db.search_chunks()로 후보 chunk를 벡터 유사도 검색한다.
+     - retrieval/rerank.py의 BGE CrossEncoder 또는 Jina reranker로 재정렬한다.
+     - 상위 evidence chunk와 support document를 선별하여 context를 구성한다.
+  3) answerer_node
+     - pack_contexts()가 evidence chunk와 support document를 한 번에 압축한다.
+     - LLM에 컨텍스트만 근거로 답하도록 지시한 뒤 답변을 생성한다.
+  4) verifier_node (ENABLE_VERIFIER=true인 경우)
+     - 답변이 실제 컨텍스트 기반인지 검증하고 grounded/fidelity를 반환한다.
+- broad 경로:
+  - broad_retriever_node는 DISTINCT ON (d.url)로 문서 단위 검색을 수행하고,
+    broad_answerer_node가 메타카드 형태의 목록형 답변을 만든다.
+
+6. LMS 및 KNUIS 동기화 흐름
+- LMS 동기화
+  - sync/lms_login.py: Playwright로 LMS 로그인 후 storage_state와 Canvas Access Token을 저장한다.
+  - sync/lms_sync.py: Canvas API를 사용해 수강과목, 즐겨찾기 과목, planner/todo/공지, LearningX 미시청 강의를 가져와
+    users, lms_courses, lms_tasks에 저장한다.
+- KNUIS 포털 동기화
+  - sync/knuis_sync.py: Playwright로 포털 로그인 후 Webcrea arrData를 직접 읽어 시간표, 성적분포,
+    누적성적, 졸업사전예고를 users 테이블의 JSONB 필드에 저장한다.
+
+7. 문서와 실제 코드의 정합성 점검 결과
+- 현재 문서(services/api/docs/api.md)와 실제 코드의 큰 흐름은 대부분 일치한다.
+- 다만 이전 수정 이후 코드/설정이 추가로 바뀌어 문서의 일부 환경변수와 표현이 어긋나 있었으므로,
+  이번 수정에서 다음 항목을 다시 한 번 점검해 보강했다:
+  1) .env 예시의 RERANK_CANDIDATES / RERANK_TOP_N이 config.py 기본값(50/5)과 어긋나 있던 부분을 정정.
+  2) ANSWER_CONTEXT_CHAR_BUDGET처럼 config.py에 없는 고정 char 수치를 .env 예시에서 제거하고,
+     실제 동작(ANSWER_CONTEXT_BUDGET_RATIO / VERIFIER_CONTEXT_BUDGET_RATIO / ATTACHMENT_NAME_RESERVE_RATIO 비율 기반)을 명시.
+  3) CHUNK_SIZE / CHUNK_OVERLAP은 환경변수가 아니라 embedding/embed.py의 모듈 상수(280/80)이므로
+     .env 예시에서 제거하고 "청킹 전략" 섹션에 위치를 명시.
+  4) "RecursiveCharacterTextSplitter" 표현이 실제 코드(chunk_text / _table_context_prefix)와 다르므로
+     줄 경계 + 표 문맥 기반의 자체 청킹 함수로 표현을 수정.
+  5) parsers/pdf_parser.py가 실제 디렉터리에 존재하지만 구조도 트리에서 누락되어 있어 추가.
+  6) RERANKER_PROVIDER는 비워두면 JINA_API_KEY 유무에 따라 local(BGE CrossEncoder)/jina로 자동 결정되도록 .env 주석에 명시.
+- 현재 실행 시작점은 FastAPI, ARQ worker, apps/web/Vite로 분리되어 있으며 RAG 검색의 시작점은 `retrieval/graph.py`다.
+
+8. 결론
+- 이 프로젝트는 크롤링/정제/벡터화/검색/동기화의 5단계가 하나로 연결된 백엔드 시스템이다.
+- 실제 웹 경로는 apps/web/Vite → FastAPI이고, 동기화·공지 폴링은 Redis/ARQ worker가 처리한다. 검색·답변의 핵심은 retrieval/graph.py + db/documents.py + embedding/embed.py이다.
+- 문서화 관점에서는 실행 경로와 검색 작동 방식이 잘 정리되어 있으며, 이번 보고서와 수정본이 그 흐름을 잘 요약한다.

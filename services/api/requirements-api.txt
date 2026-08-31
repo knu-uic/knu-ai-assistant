@@ -1,0 +1,52 @@
+# api 프로세스 전용 의존성 (슬림 이미지용).
+#
+# 기존 requirements.txt와의 차이 — 다음은 일부러 뺀다:
+#   torch, sentence-transformers : 로컬 임베딩/리랭커용. prod는 원격 provider라 불필요.
+#     (EMBEDDING_PROVIDER=openai, RERANKER_PROVIDER=jina → 둘 다 원격 HTTP)
+#   playwright, beautifulsoup4, lxml : 크롤링용 → worker(헤비 이미지) 몫.
+#   opendataloader-pdf, pdf2image, openpyxl, xlrd, pillow : 첨부파일 파싱 → worker 몫.
+#   streamlit : 구버전 UI. 안 씀.
+#
+# transformers는 남긴다 — langchain(openai·google)이 토크나이저로 요구. torch가 없으면
+# transformers가 torch-free로 동작하고, 원격 API 호출에는 토크나이저만 쓰므로 문제없다.
+
+# 웹/서버
+fastapi
+uvicorn[standard]
+fastmcp==2.14.7
+python-multipart
+python-dotenv
+pydantic
+httpx
+playwright
+
+# DB / 벡터
+psycopg[binary,pool]
+pgvector
+
+# 인증 (JWT + 비밀번호 해시)
+pyjwt
+bcrypt
+
+# 레이트리밋
+slowapi
+
+# 잡 큐 (api가 포털 동기화 잡 enqueue)
+arq
+redis
+
+# 포털 비밀번호 잡 전달용 암호화 (Fernet)
+cryptography
+
+# LangChain / LangGraph (챗 그래프)
+langchain
+langchain-core
+langchain-community
+langchain-google-genai
+langchain-openai
+langchain-postgres
+langgraph
+langsmith
+
+# langchain이 토크나이저로 요구 (torch 없이 동작)
+transformers

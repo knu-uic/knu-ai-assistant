@@ -1,0 +1,20 @@
+# prod api 슬림 이미지.
+# 기존 Dockerfile(worker용 헤비)과 분리 — api는 크롤링/문서변환을 안 하므로
+# poppler·libreoffice·JRE·playwright 같은 시스템 패키지와 torch가 전부 불필요하다.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 파이썬 패키지만 설치(시스템 패키지 없음).
+COPY requirements-api.txt .
+RUN pip install --no-cache-dir -r requirements-api.txt
+RUN playwright install --with-deps chromium
+
+# 앱 소스 복사. .env·.secrets·캐시·빌드 부산물은 .dockerignore로 제외된다.
+COPY . .
+
+EXPOSE 8000
+
+# FastAPI api 서버. DB 호스트는 compose가 RUNTIME_ENV=docker로 'db'를 가리키게 하고,
+# REDIS_URL은 compose가 redis://redis:6379로 주입한다.
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

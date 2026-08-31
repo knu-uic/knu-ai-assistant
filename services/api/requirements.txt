@@ -1,0 +1,67 @@
+streamlit
+psycopg[binary,pool]
+pgvector
+fastapi
+uvicorn[standard]
+fastmcp==2.14.7
+python-dotenv
+pydantic
+
+httpx
+
+# 인증 (자체 계정 JWT + 비밀번호 해시)
+pyjwt
+bcrypt
+
+# 레이트리밋 (auth IP 기반 + chat 유저 기반)
+slowapi
+
+# 백그라운드 워커 (공지 폴링 cron, 포털 동기화 잡)
+arq
+redis
+
+# 포털 비밀번호 잡 전달용 암호화 (Fernet)
+cryptography
+
+# LangChain / LangGraph
+# - langchain-openai: LM Studio가 OpenAI 호환 API라서 필요
+# - langchain-google-genai: provider를 google로 바꿀 때 사용
+langchain
+langchain-core
+langchain-community
+langchain-google-genai
+langchain-openai
+langchain-postgres
+langgraph
+langsmith
+
+# 임베딩 / 리랭킹
+sentence-transformers
+transformers
+torch
+
+# 크롤링
+# - playwright: 동적 페이지 / 로그인 / JS 렌더링 처리
+# - beautifulsoup4 + lxml: 정적 페이지 HTML 파싱
+#
+# 설치 후 로컬에서는 별도로 실행:
+#   python3 -m playwright install chromium
+# Dockerfile에서는 자동 실행함
+playwright
+beautifulsoup4
+lxml
+
+# 첨부파일 처리
+# - opendataloader-pdf: PDF → 마크다운/표 추출 (ODL, Java 11+ 필요 — Dockerfile에 JRE 설치)
+# - pdf2image: 스캔 PDF를 이미지로 렌더링 (VLM OCR 폴백)
+# - openpyxl/xlrd: XLSX/XLS 추출
+# - HWP/HWPX: LibreOffice(soffice)로 PDF 변환 후 추출 (별도 시스템 의존: soffice)
+# macOS 로컬에서 pdf2image를 쓰려면:
+#   brew install poppler
+opendataloader-pdf
+openpyxl
+xlrd
+pdf2image
+
+# 이미지/OCR 처리
+pillow
