@@ -11,11 +11,13 @@ import anyio
 from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.tools.tool import ToolResult
-from pydantic import BeforeValidator
+from pydantic import BeforeValidator, Field
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
+from arq.jobs import Job, JobStatus
 
 from api.deps import decode_access_token, portal_student_id
+from api.jobs import get_arq_pool
 from api.ratelimit import allow_rate_limited_request
 from config import MCP_AUTH_TOKEN, RATE_LIMIT_MCP
 from db.accounts import get_account
@@ -124,6 +126,44 @@ def _finite_score(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return score if isfinite(score) else None
+
+
+def _counseling_student_id() -> str:
+    student_id = portal_student_id(_MCP_PRINCIPAL.get() or "")
+    if not student_id:
+        raise ValueError("상담신청은 Codmes에서 포털로 로그인한 사용자만 사용할 수 있습니다.")
+    return student_id
+
+
+async def _start_counseling_job(name: str, student_id: str, *args: Any) -> str:
+    """One active job per student and action keeps retried tool calls idempotent."""
+    pool = await get_arq_pool()
+    job_id = f"counseling:{name}:{student_id}"
+    job = Job(job_id, redis=pool)
+    status = await job.status()
+    if status in (JobStatus.queued, JobStatus.deferred, JobStatus.in_progress, JobStatus.complete):
+        return job_id
+    await pool.enqueue_job(name, student_id, *args, _job_id=job_id)
+    return job_id
+
+
+async def _counseling_job_status(student_id: str, job_id: str) -> dict:
+    if not job_id.startswith("counseling:") or not job_id.endswith(f":{student_id}"):
+        raise ValueError("본인의 상담 작업만 조회할 수 있습니다.")
+    pool = await get_arq_pool()
+    job = Job(job_id, redis=pool)
+    status = await job.status()
+    if status == JobStatus.not_found:
+        return {"status": "not_found"}
+    if status in (JobStatus.deferred, JobStatus.queued):
+        return {"status": "queued", "job_id": job_id}
+    if status == JobStatus.in_progress:
+        return {"status": "running", "job_id": job_id}
+    info = await job.result_info()
+    if info is None or not info.success:
+        return {"status": "failed", "job_id": job_id,
+                "message": "상담 작업을 완료하지 못했습니다. 잠시 후 다시 시도해주세요."}
+    return {"status": "done", "job_id": job_id, "result": info.result}
 
 
 def _build_evidence_package(retrieval: dict) -> dict:
@@ -258,6 +298,8 @@ mcp = FastMCP(
         "Omit department for a school-wide or personalized request; it only accepts a supported specific department. "
         "Use knu_search_notice_details for a specific notice's dates, requirements, procedures, "
         "or attachment evidence. Combine them for comparison questions. "
+        "Use knu_prepare_online_counseling before a counseling request. "
+        "Only call knu_submit_online_counseling when the user explicitly confirms the exact title, content, and topics. "
         "If the evidence is insufficient, say so instead of making up an answer."
     ),
 )
@@ -364,6 +406,40 @@ async def knu_get_notice_detail(url: str) -> dict:
         "content": content[:_DETAIL_CONTENT_LIMIT],
         "url": url,
         "truncated": len(content) > _DETAIL_CONTENT_LIMIT,
+    }
+
+
+@mcp.tool
+async def knu_prepare_online_counseling() -> dict:
+    """Start a read-only portal job that returns the default advisor and selectable online-counseling topics. Call knu_counseling_job_status with its job_id until done."""
+    student_id = _counseling_student_id()
+    return {
+        "job_id": await _start_counseling_job("counseling_prepare", student_id),
+        "status": "queued",
+    }
+
+
+@mcp.tool
+async def knu_counseling_job_status(job_id: str) -> dict:
+    """Read the result of an online-counseling portal job. This tool never changes portal data."""
+    return await _counseling_job_status(_counseling_student_id(), job_id)
+
+
+@mcp.tool
+async def knu_submit_online_counseling(
+    title: Annotated[str, Field(min_length=1, max_length=100)],
+    content: Annotated[str, Field(min_length=1, max_length=2000)],
+    topics: Annotated[list[str], Field(min_length=1, max_length=4)],
+    confirmed: Literal["submit"],
+) -> dict:
+    """Submit one online counseling request to the default advisor. Use only after the user explicitly confirms the exact title, content, and topics; confirmed must be 'submit'."""
+    student_id = _counseling_student_id()
+    return {
+        "job_id": await _start_counseling_job(
+            "counseling_submit", student_id, title, content, topics
+        ),
+        "status": "queued",
+        "confirmed": confirmed,
     }
 
 
