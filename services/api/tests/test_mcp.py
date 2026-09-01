@@ -149,7 +149,18 @@ def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
     assert "reranking" in deep_tool["description"]
     assert "department" in deep_tool["inputSchema"]["properties"]
     assert "major" not in deep_tool["inputSchema"]["properties"]
-    assert "limit" not in scan_tool["inputSchema"]["properties"]
+    scan_properties = scan_tool["inputSchema"]["properties"]
+    assert set(scan_properties) == {
+        "category", "status", "time_scope", "department", "grade", "year", "topic"
+    }
+    department_options = scan_properties["department"].get("anyOf", [])
+    department_enum = next(
+        option["enum"] for option in department_options if "enum" in option
+    )
+    assert department_enum == ["컴퓨터공학과", "경영학과"]
+    grade_options = scan_properties["grade"].get("anyOf", [])
+    grade_enum = next(option["enum"] for option in grade_options if "enum" in option)
+    assert grade_enum == [1, 2, 3, 4]
     assert "limit" not in deep_tool["inputSchema"]["properties"]
 
 
@@ -180,8 +191,6 @@ def test_knu_list_notices_returns_server_total(monkeypatch):
             {
                 "category": "장학",
                 "status": "open",
-                "as_of": "2026-07-31",
-                "sort": "end_date",
             },
         )
 
@@ -190,9 +199,61 @@ def test_knu_list_notices_returns_server_total(monkeypatch):
     assert seen[0][0:4] == (
         "장학",
         "open",
-        datetime.date(2026, 7, 31),
+        datetime.date.today(),
         "current",
     )
+    assert seen[0][8:10] == ("posted_at", 0)
+
+
+def test_mcp_department_is_enum_and_school_alias_uses_profile_scope(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+
+    scan_calls = []
+    monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", None)
+    monkeypatch.setattr(
+        mcp_mod,
+        "get_user",
+        lambda student_id: {
+            "student_id": student_id,
+            "major": "컴퓨터공학과",
+            "year": 3,
+        },
+    )
+    monkeypatch.setattr(
+        mcp_mod,
+        "list_notices_for_scan",
+        lambda *args: scan_calls.append(args) or {"total": 1, "items": []},
+    )
+    token = create_portal_access_token("20260004")
+
+    with TestClient(app) as client:
+        corrected = _tool_call(
+            client,
+            token,
+            "knu_list_notices",
+            {"department": "공주대"},
+        )
+        explicit = _tool_call(
+            client,
+            token,
+            "knu_list_notices",
+            {"department": "경영학과", "grade": "2학년"},
+        )
+        invalid = _tool_call_result(
+            client,
+            token,
+            "knu_list_notices",
+            {"department": "존재하지않는학과"},
+        )
+
+    assert scan_calls[0][4:6] == ("컴퓨터공학과", 3)
+    assert corrected["personalization"]["automatic_department"] is True
+    assert scan_calls[1][4:6] == ("경영학과", 2)
+    assert explicit["personalization"]["automatic_department"] is False
+    assert explicit["personalization"]["automatic_grade"] is False
+    assert invalid["isError"] is True
+    assert "department" in invalid["content"][0]["text"]
+    assert len(scan_calls) == 2
 
 
 def test_mcp_automatically_scopes_scan_and_deep_to_student_profile(monkeypatch):

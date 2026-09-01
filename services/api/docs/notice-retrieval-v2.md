@@ -130,17 +130,22 @@ LLM router를 호출하지 않는다.
 {
   "category": "장학",
   "status": "open",
-  "timeScope": "current",
+  "time_scope": "current",
   "department": "컴퓨터공학과",
-  "grade": 3,
-  "year": 2026,
-  "sort": "end_date",
-  "offset": 0
+  "grade": 2,
+  "year": 2026
 }
 ```
 
-서버는 조회 기준일을 직접 정하고 `total`을 전체 조건 결과로 계산한다. 페이지 크기는
-서버 정책이며 `total`에 영향을 주지 않는다.
+모델에는 `category`, `status`, `time_scope`, `department`, `grade`, `year`, `topic`만
+노출한다. `department`는 지원하는 학과 enum이며 학교 전체 또는 기본
+개인화 조회에서는 생략한다. `grade`는 1–4학년 enum이며 명시하면 로그인
+학년을 덮어쓴다. 서버는 조회 기준일, 최신순 정렬과 pagination을 자동
+적용하고 `total`을 전체 조건 결과로 계산한다.
+
+학과 또는 학년 필터가 있어도 대상 제한이 기록되지 않은 일반 공지는 제외하지
+않는다. 즉 `department=경영학과`, `grade=2`는 경영학과·2학년 전용 공지뿐
+아니라 경영학과 출처의 전체 학년 공지와 학교 공통 공지도 함께 반환한다.
 
 ### `knu_search_notice_details`
 

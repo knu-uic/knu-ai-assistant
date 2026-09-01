@@ -5,12 +5,13 @@ from contextvars import ContextVar
 from hashlib import sha256
 from datetime import date, datetime
 from math import isfinite
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import anyio
 from fastapi import HTTPException
 from fastmcp import FastMCP
 from fastmcp.tools.tool import ToolResult
+from pydantic import BeforeValidator
 from starlette.middleware import Middleware
 from starlette.responses import JSONResponse
 
@@ -29,6 +30,48 @@ _MCP_PRINCIPAL: ContextVar[str | None] = ContextVar(
     "knu_mcp_principal",
     default=None,
 )
+_SCHOOL_DEPARTMENT_ALIASES = frozenset(
+    {
+        "knu",
+        "kongju national university",
+        "공주대",
+        "공주대학교",
+        "국립공주대",
+        "국립공주대학교",
+    }
+)
+
+
+def _normalize_department_input(value: Any) -> Any:
+    """Treat school-wide aliases as an omitted filter before enum validation."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.casefold() in _SCHOOL_DEPARTMENT_ALIASES:
+        return None
+    return text
+
+
+def _normalize_grade_input(value: Any) -> Any:
+    """Recover common small-model spellings while keeping the public schema numeric."""
+    if value is None or isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if text.endswith("학년"):
+        text = text.removesuffix("학년").strip()
+    if text in {"1", "2", "3", "4"}:
+        return int(text)
+    return value
+
+
+DepartmentFilter = Annotated[
+    Literal["컴퓨터공학과", "경영학과"] | None,
+    BeforeValidator(_normalize_department_input),
+]
+GradeFilter = Annotated[
+    Literal[1, 2, 3, 4] | None,
+    BeforeValidator(_normalize_grade_input),
+]
 
 
 def _profile_for_principal(principal: str | None) -> dict:
@@ -212,6 +255,7 @@ mcp = FastMCP(
     "KNU Notice Evidence",
     instructions=(
         "Use knu_list_notices for counts, lists, filters, current/open status, and sorting. "
+        "Omit department for a school-wide or personalized request; it only accepts a supported specific department. "
         "Use knu_search_notice_details for a specific notice's dates, requirements, procedures, "
         "or attachment evidence. Combine them for comparison questions. "
         "If the evidence is insufficient, say so instead of making up an answer."
@@ -224,29 +268,25 @@ async def knu_list_notices(
     category: Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"] | None = None,
     status: Literal["any", "open", "upcoming", "closed"] = "any",
     time_scope: Literal["current", "historical", "all"] = "current",
-    as_of: str | None = None,
-    department: str | None = None,
-    grade: int | None = None,
+    department: DepartmentFilter = None,
+    grade: GradeFilter = None,
     year: int | None = None,
     topic: str | None = None,
-    sort: Literal["posted_at", "start_date", "end_date"] = "posted_at",
-    offset: int = 0,
 ) -> dict:
-    """List, filter, sort, or count KNU notices from structured metadata. Use this for broad or current-status questions; total is the full matching count."""
-    reference_date = date.fromisoformat(as_of) if as_of else date.today()
+    """List, filter, or count KNU notices. Omit department to use the signed-in student's department plus university-wide notices."""
     user_scope = await _personalization(department, grade)
     result = await anyio.to_thread.run_sync(
         list_notices_for_scan,
         category,
         status,
-        reference_date,
+        date.today(),
         time_scope,
         user_scope["department"],
         user_scope["grade"],
         year,
         topic,
-        sort,
-        offset,
+        "posted_at",
+        0,
     )
     result["personalization"] = user_scope
     return result
@@ -255,7 +295,7 @@ async def knu_list_notices(
 @mcp.tool
 async def knu_search_notice_details(
     query: str,
-    department: str | None = None,
+    department: DepartmentFilter = None,
     category: Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"] | None = None,
     time_scope: Literal["current", "historical", "all"] = "current",
     year: int | None = None,
