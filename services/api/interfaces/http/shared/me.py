@@ -22,7 +22,7 @@ from interfaces.http.schemas.me import (
     TaskDoneRequest,
     TimetableResponse,
 )
-from config import HIDDEN_NOTICE_SOURCE_CODES, RATE_LIMIT_READ
+from config import HIDDEN_NOTICE_SOURCE_CODES, RATE_LIMIT_POLL, RATE_LIMIT_READ
 from db.accounts import get_account
 from db.documents import get_documents
 from db.lms import delete_lms_task, get_lms_courses, get_lms_tasks, set_lms_task_done
@@ -43,7 +43,7 @@ def _iso(d) -> str | None:
 
 
 @router.get("/me", response_model=MeProfile)
-@limiter.limit(RATE_LIMIT_READ, key_func=user_or_ip)
+@limiter.limit(RATE_LIMIT_POLL, key_func=user_or_ip)
 async def me(request: Request, username: str = Depends(require_user)) -> MeProfile:
     from sync.portal_auth import portal_sync_status
 
