@@ -126,6 +126,36 @@ async def lms_sync(ctx: dict, username: str, student_id: str, enc_password: str 
         r.close()
 
 
+async def counseling_prepare(ctx: dict, student_id: str) -> dict:
+    from api.sessions import load_portal_session
+    from sync.counseling import prepare_online_counseling
+
+    storage_state = await asyncio.to_thread(load_portal_session, student_id)
+    if storage_state is None:
+        return {"success": False, "needs_reconnect": True,
+                "message": "포털 세션이 만료되었습니다. Codmes에서 포털을 다시 연결해주세요."}
+    return await asyncio.to_thread(prepare_online_counseling, student_id, storage_state)
+
+
+async def counseling_submit(
+    ctx: dict,
+    student_id: str,
+    title: str,
+    content: str,
+    topics: list[str],
+) -> dict:
+    from api.sessions import load_portal_session
+    from sync.counseling import submit_online_counseling
+
+    storage_state = await asyncio.to_thread(load_portal_session, student_id)
+    if storage_state is None:
+        return {"success": False, "needs_reconnect": True,
+                "message": "포털 세션이 만료되었습니다. Codmes에서 포털을 다시 연결해주세요."}
+    return await asyncio.to_thread(
+        submit_online_counseling, student_id, storage_state, title, content, topics
+    )
+
+
 async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
     redis = ctx.get("redis")
     lock_key = "notice-crawl:active"
@@ -162,7 +192,7 @@ async def scheduled_poll_notices(ctx: dict) -> dict:
 
 class WorkerSettings:
     # 크롤링은 대용량 첨부·재시도를 포함하므로 포털 동기화(3분)와 다른 timeout을 쓴다.
-    functions = [portal_sync, lms_sync, func(poll_notices, timeout=21600)]
+    functions = [portal_sync, lms_sync, counseling_prepare, counseling_submit, func(poll_notices, timeout=21600)]
     # 포털 동기화는 Playwright 동시 실행 RAM 피크 제한 — 워커당 잡 2개까지
     max_jobs = 2
     job_timeout = PORTAL_SYNC_TIMEOUT_SECONDS

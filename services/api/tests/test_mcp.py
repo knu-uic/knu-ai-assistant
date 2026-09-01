@@ -125,7 +125,7 @@ def test_mcp_rate_limit_is_scoped_to_authenticated_principal(monkeypatch):
     assert all(limit == mcp_mod.RATE_LIMIT_MCP for _, limit in seen)
 
 
-def test_mcp_lists_grouped_notice_and_student_data_tools(monkeypatch):
+def test_mcp_lists_grouped_notice_student_and_counseling_tools(monkeypatch):
     import interfaces.mcp.server as mcp_mod
 
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
@@ -146,6 +146,9 @@ def test_mcp_lists_grouped_notice_and_student_data_tools(monkeypatch):
         "knu_list_lms_tasks",
         "knu_list_lms_courses",
         "knu_get_student_profile",
+        "knu_prepare_online_counseling",
+        "knu_counseling_job_status",
+        "knu_submit_online_counseling",
     }
     scan_tool = next(tool for tool in tools if tool["name"] == "knu_list_notices")
     deep_tool = next(tool for tool in tools if tool["name"] == "knu_search_notice_details")

@@ -1,6 +1,12 @@
 import asyncio
 
-from workers.arq_worker import WorkerSettings, poll_notices, scheduled_poll_notices
+from workers.arq_worker import (
+    WorkerSettings,
+    counseling_prepare,
+    counseling_submit,
+    poll_notices,
+    scheduled_poll_notices,
+)
 from workers import arq_worker
 
 
@@ -63,3 +69,8 @@ def test_scheduled_poll_skips_when_automatic_crawl_is_disabled(monkeypatch):
 
     assert result == {"skipped": True, "reason": "automatic_crawl_disabled"}
     assert called is False
+
+
+def test_worker_registers_counseling_jobs():
+    assert counseling_prepare in WorkerSettings.functions
+    assert counseling_submit in WorkerSettings.functions

@@ -170,10 +170,12 @@ def test_login_unknown_username_401(monkeypatch):
 
 def test_portal_login_issues_direct_student_token(monkeypatch):
     import jwt
+    import api.sessions as sessions
     import sync.portal_auth as portal_auth
 
     synced = []
     saved = []
+    saved_sessions = []
     monkeypatch.setattr(
         portal_auth,
         "authenticate_portal",
@@ -185,6 +187,11 @@ def test_portal_login_issues_direct_student_token(monkeypatch):
                 "academic_status": "학부생",
             },
         },
+    )
+    monkeypatch.setattr(
+        sessions,
+        "save_portal_session",
+        lambda sid, state: saved_sessions.append((sid, state)),
     )
     monkeypatch.setattr(portal_auth, "mark_portal_sync_started", lambda sid: None)
     monkeypatch.setattr(
@@ -232,11 +239,16 @@ def test_portal_login_issues_direct_student_token(monkeypatch):
             "academic_status": "학부생",
         },
     )]
+    assert saved_sessions == [("20260001", {"cookies": [], "origins": []})]
 
 
 @pytest.mark.real_auth
-def test_portal_logout_revokes_only_the_presented_session():
+def test_portal_logout_revokes_only_the_presented_session(monkeypatch):
     from api.deps import create_portal_access_token, decode_access_token
+    import api.sessions as sessions
+
+    deleted = []
+    monkeypatch.setattr(sessions, "delete_portal_session", deleted.append)
 
     first = create_portal_access_token("20260001")
     second = create_portal_access_token("20260001")
@@ -249,6 +261,7 @@ def test_portal_logout_revokes_only_the_presented_session():
 
     assert response.status_code == 200
     assert response.json() == {"logged_out": True, "session_revoked": True}
+    assert deleted == ["20260001"]
     with pytest.raises(Exception, match="로그아웃되었거나"):
         decode_access_token(first)
     assert decode_access_token(second) == "portal:20260001"
