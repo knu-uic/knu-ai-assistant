@@ -29,7 +29,10 @@ class _Locator:
 class _TopicFrame:
     def __init__(self):
         self.checked = []
-        self.labels = {"#G2.ONE_NM0": "학업", "#G2.TWO_NM0": "진로상담"}
+        self.labels = {
+            '[id="G2.ONE_NM0"]': "학업",
+            '[id="G2.TWO_NM0"]': "진로상담",
+        }
 
     def locator(self, selector):
         if selector in self.labels:
@@ -42,7 +45,7 @@ def test_counseling_topics_are_read_and_selected_by_visible_label():
 
     assert _topics(frame) == ["학업", "진로상담"]
     _select_topics(frame, ["진로상담"])
-    assert frame.checked == ["#G2.TWO0"]
+    assert frame.checked == ['[id="G2.TWO0"]']
     with pytest.raises(RuntimeError, match="지원하지 않는"):
         _select_topics(frame, ["없는 주제"])
 
@@ -56,7 +59,7 @@ def test_counseling_text_reads_webcrea_input_value_when_text_is_empty():
         def locator(self, _selector):
             return InputOnlyLocator(value="지도교수")
 
-    assert _text(Frame(), "#G1.KOR_NM0") == "지도교수"
+    assert _text(Frame(), '[id="G1.KOR_NM0"]') == "지도교수"
 
 
 def test_counseling_text_skips_missing_selector_without_waiting_for_value():
@@ -64,7 +67,7 @@ def test_counseling_text_skips_missing_selector_without_waiting_for_value():
         def locator(self, _selector):
             return _Locator(exists=False)
 
-    assert _text(MissingFrame(), "#G1.KOR_NM0") == ""
+    assert _text(MissingFrame(), '[id="G1.KOR_NM0"]') == ""
 
 
 def test_counseling_form_frame_uses_loaded_child_frame():
@@ -90,7 +93,7 @@ def test_counseling_frame_state_contains_only_selector_counts():
         name = "WorkFrame"
 
         def locator(self, selector):
-            return _Locator(exists=selector == "#G1.Header")
+            return _Locator(exists=selector == '[id="G1.Header"]')
 
     class Page:
         frames = [Frame()]

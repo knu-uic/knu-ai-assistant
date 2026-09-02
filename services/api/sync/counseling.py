@@ -12,10 +12,15 @@ from sync.knuis_sync import (
     open_menu,
     wait_and_click_in_any_frame,
 )
+from sync.portal_auth import _browser_context_options
 
 _MENU_ID = "1000000248"
 _FRAME_ID = "WEESDV0060"
 _TOPIC_COLUMNS = ("ONE", "TWO", "THREE", "FOUR")
+
+
+def _webcrea_id(value: str) -> str:
+    return f'[id="{value}"]'
 
 
 def _has_system_button(page) -> bool:
@@ -33,7 +38,7 @@ def _find_counseling_form_frame(context):
     for page in context.pages:
         for frame in page.frames:
             try:
-                if frame.locator("#G1.KOR_NM0").count() > 0:
+                if frame.locator(_webcrea_id("G1.KOR_NM0")).count() > 0:
                     return frame
             except Exception:
                 continue
@@ -45,8 +50,8 @@ def _counseling_frame_state(context) -> str:
     for page in context.pages:
         for frame in page.frames:
             try:
-                header = frame.locator("#G1.Header").count()
-                advisor = frame.locator("#G1.KOR_NM0").count()
+                header = frame.locator(_webcrea_id("G1.Header")).count()
+                advisor = frame.locator(_webcrea_id("G1.KOR_NM0")).count()
                 if header or advisor:
                     states.append(f"{frame.name or 'unnamed'}:header={header},advisor={advisor}")
             except Exception:
@@ -139,7 +144,7 @@ def _topics(frame) -> list[str]:
     values = []
     for row in range(10):
         for column in _TOPIC_COLUMNS:
-            value = _text(frame, f"#G2.{column}_NM{row}")
+            value = _text(frame, _webcrea_id(f"G2.{column}_NM{row}"))
             if value:
                 values.append(value)
     return values
@@ -149,9 +154,9 @@ def _select_topics(frame, topics: list[str]) -> None:
     available = {}
     for row in range(10):
         for column in _TOPIC_COLUMNS:
-            label = _text(frame, f"#G2.{column}_NM{row}")
+            label = _text(frame, _webcrea_id(f"G2.{column}_NM{row}"))
             if label:
-                available[label] = f"#G2.{column}{row}"
+                available[label] = _webcrea_id(f"G2.{column}{row}")
     missing = [topic for topic in topics if topic not in available]
     if missing:
         raise RuntimeError(f"지원하지 않는 상담 주제입니다: {', '.join(missing)}")
@@ -164,10 +169,16 @@ def prepare_online_counseling(student_id: str, storage_state: dict) -> dict:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
-            context = browser.new_context(storage_state=storage_state)
+            context = browser.new_context(
+                storage_state=storage_state, **_browser_context_options()
+            )
             _, frame = _open_counseling_page(context)
-            advisor = _text(frame, "#G1.KOR_NM0") or _text(frame, "#G1.CNSLR_NM0")
-            department = _text(frame, "#G1.DEPT_NM0") or _text(frame, "#G1.SUST_NM0")
+            advisor = _text(frame, _webcrea_id("G1.KOR_NM0")) or _text(
+                frame, _webcrea_id("G1.CNSLR_NM0")
+            )
+            department = _text(frame, _webcrea_id("G1.DEPT_NM0")) or _text(
+                frame, _webcrea_id("G1.SUST_NM0")
+            )
             if not advisor:
                 raise RuntimeError("기본 상담교수를 확인하지 못했습니다.")
             return {
@@ -192,18 +203,22 @@ def submit_online_counseling(
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
-            context = browser.new_context(storage_state=storage_state)
+            context = browser.new_context(
+                storage_state=storage_state, **_browser_context_options()
+            )
             page, frame = _open_counseling_page(context)
-            advisor = _text(frame, "#G1.KOR_NM0") or _text(frame, "#G1.CNSLR_NM0")
+            advisor = _text(frame, _webcrea_id("G1.KOR_NM0")) or _text(
+                frame, _webcrea_id("G1.CNSLR_NM0")
+            )
             if not advisor:
                 raise RuntimeError("기본 상담교수를 확인하지 못했습니다.")
 
-            frame.locator("#G1.ON_CNSL0").click()
+            frame.locator(_webcrea_id("G1.ON_CNSL0")).click()
             _select_topics(frame, topics)
-            frame.locator("#F1.CNSL_TTL_my_inputBox").fill(title)
-            frame.locator("#F1.ASK_CTNT").click()
+            frame.locator(_webcrea_id("F1.CNSL_TTL_my_inputBox")).fill(title)
+            frame.locator(_webcrea_id("F1.ASK_CTNT")).click()
             page.keyboard.insert_text(content)
-            frame.locator("#F_TOPMENU.BTN_SAVE").click()
+            frame.locator(_webcrea_id("F_TOPMENU.BTN_SAVE")).click()
             page.wait_for_timeout(1_000)
             return {
                 "success": True,
