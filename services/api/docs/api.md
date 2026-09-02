@@ -513,8 +513,8 @@ DOM 대신 JavaScript `Webcrea.GetObjectById(gid).arrData`에서 컬럼지향 �
 | 본문 이미지 | 이미지 다운로드 후 VLM OCR, `inline_image` asset 저장 |
 | 이미지 첨부 | VLM OCR, 원본 이미지 sha1 파일 저장 |
 | PDF | `pdfplumber` 텍스트 추출, 텍스트가 없으면 `pdf2image` + VLM OCR |
-| HWPX | synapView 미리보기 또는 ZIP XML 파싱 |
-| HWP | synapView 미리보기 → `pyhwp2md` Markdown 변환 → LibreOffice headless PDF 변환 → 내부 문자열 fallback |
+| HWPX | ZIP 내부 section XML 직접 파싱, 비면 LibreOffice PDF 폴백 |
+| HWP | 원본 HWP 5.x OLE의 압축 BodyText 문단 직접 추출 → LibreOffice PDF 변환 → 내부 문자열 폴백; 원본 실패 시에만 synapView |
 | XLSX | `openpyxl`로 전체 추출, 표 헤더 보존 |
 | XLS | `xlrd`로 전체 추출, 표 헤더 보존 |
 | ZIP | 내부의 PDF/HWPX/HWP/XLSX/이미지를 풀어 각각 기존 파이프라인으로 처리 |
@@ -700,6 +700,16 @@ python3 debugtools/crawl_one.py "https://www.kongju.ac.kr/bbs/KNU/2132/427500/ar
 첨부 다운로드에는 Chromium을 사용하지 않는다. JavaScript 기반 Synap HWP
 미리보기가 필요할 때만 Chromium을 lazy 실행하며, 한 크롤링 실행 안에서는 같은
 browser/context를 재사용한다.
+
+HWP는 synapView를 우선하지 않는다. 대형 문서는 미리보기가 깨지거나 현재
+렌더된 일부 페이지만 반환할 수 있기 때문이다. 원본 HWP 5.x는 `olefile`로
+BodyText section을 직접 해제하고, 지원하지 않는/손상된 파일에서만
+LibreOffice와 synapView로 넘어간다. LibreOffice timeout 시에는 process group
+전체를 종료해 `soffice` 자식 프로세스가 남지 않도록 한다.
+
+2024 국립공주대학교 요람 실물 테스트(24,569,856 bytes)에서 synapView는
+7,677자만 회수했지만, 원본 문단 추출은 808,777자를 약 0.35초에 복원했다.
+공지 HTML 요청과 첨부 다운로드를 포함한 단일 URL 전체 처리는 약 5.9초였다.
 
 공주대학교 공통 게시판 `main_notice`는 서버 실측 결과에 따라 `max_workers=2`를
 사용한다. 전역 기본값은 `MAX_CRAWL_WORKERS=4`이며 다른 출처는 필요하면

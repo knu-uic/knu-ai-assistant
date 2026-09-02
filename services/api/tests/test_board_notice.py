@@ -95,7 +95,7 @@ def test_detail_uses_fetched_html_without_opening_chromium(monkeypatch):
     assert browser.closed is True
 
 
-def test_hwp_previews_reuse_one_lazy_browser_context(monkeypatch):
+def test_failed_hwp_originals_fall_back_to_one_reused_browser_context(monkeypatch):
     import crawlers.methods.board_notice as board_notice
 
     crawler = BoardNoticeCrawler(_config())
@@ -120,12 +120,68 @@ def test_hwp_previews_reuse_one_lazy_browser_context(monkeypatch):
         "hwp_via_preview",
         lambda url, context: seen_contexts.append(context) or f"{url} 본문",
     )
+    monkeypatch.setattr(
+        board_notice,
+        "attachment_to_text",
+        lambda att, context, include_xlsx=False: (
+            f"[첨부: {att['filename']}]\n(처리 실패: test)",
+            {
+                "kind": "attachment_hwp",
+                "filename": att["filename"],
+                "source_url": att["download_url"],
+                "mime_type": "application/x-hwp",
+                "raw_bytes": None,
+                "extracted_text": "(처리 실패: test)",
+            },
+        ),
+    )
 
     item = crawler.crawl_detail("https://example.test/notice/hwp")
 
     assert item["attachment_names"] == ["첫째.hwp", "둘째.hwp"]
     assert browser.run_count == 2
     assert seen_contexts == [browser.context, browser.context]
+    assert browser.closed is True
+
+
+def test_successful_hwp_original_does_not_open_browser(monkeypatch):
+    import crawlers.methods.board_notice as board_notice
+
+    crawler = BoardNoticeCrawler(_config())
+    browser = _BrowserContext()
+    crawler._browser_context_factory = lambda: browser
+    monkeypatch.setattr(
+        crawler,
+        "_fetch_html_text",
+        lambda url: """
+            <h1 class="view-title">HWP 첨부 공지</h1>
+            <div class="write"><dd>2026.09.02</dd></div>
+            <div class="view-con">본문입니다.</div>
+            <ul class="view-file">
+              <li><a href="/1/download.do">요람.hwp</a><a href="/1/synapView.do">미리보기</a></li>
+            </ul>
+        """,
+    )
+    monkeypatch.setattr(
+        board_notice,
+        "attachment_to_text",
+        lambda att, context, include_xlsx=False: (
+            "[첨부: 요람.hwp]\n원본에서 추출한 전체 본문",
+            {
+                "kind": "attachment_hwp",
+                "filename": "요람.hwp",
+                "source_url": att["download_url"],
+                "mime_type": "application/x-hwp",
+                "raw_bytes": None,
+                "extracted_text": "원본에서 추출한 전체 본문",
+            },
+        ),
+    )
+
+    item = crawler.crawl_detail("https://example.test/notice/hwp")
+
+    assert item["attachment_contents"][0]["type"] == "attachment_hwp"
+    assert browser.run_count == 0
     assert browser.closed is True
 
 

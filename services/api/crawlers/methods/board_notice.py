@@ -591,49 +591,39 @@ class BoardNoticeCrawler:
             filename_lower = att["filename"].lower()
             preview_url = att.get("preview_url")
 
-            # 공주대 요람 같은 대형 HWP는
-            # download.do 대신 synap viewer 자체를 직접 스크롤 수집한다.
-            # (synap 미리보기는 HWP 전용 — HWPX는 attachment_to_text에서 XML 추출로 처리)
-            if preview_url and filename_lower.endswith(".hwp"):
-                try:
-                    viewer_text = browser_context.run(
-                        lambda context: hwp_via_preview(preview_url, context)
-                    )
-
-                    if viewer_text and viewer_text.strip():
-                        attachment_names.append(att["filename"])
-
-                        attachment_contents.append({
-                            "name": att["filename"],
-                            "text": viewer_text,
-                            "type": "attachment_hwpx_preview",
-                        })
-
-                        content_parts.append(
-                            f"[첨부: {att['filename']}]\n{viewer_text}"
-                        )
-
-                        assets.append({
-                            "kind": "attachment_hwpx_preview",
-                            "filename": att["filename"],
-                            "source_url": preview_url,
-                            "storage_path": None,
-                            "mime_type": "text/plain",
-                            "extracted_text": viewer_text,
-                            "order_idx": order,
-                        })
-
-                        order += 1
-                        continue
-
-                except Exception as e:
-                    print(f"  - synap viewer 수집 실패: {e}")
-
+            # HWP는 원본 OLE 문단을 먼저 읽는다. synap viewer는 대형 문서의
+            # 일부 페이지만 렌더하거나 깨질 수 있으므로, 원본 추출 실패 시에만 연다.
             txt, meta = attachment_to_text(
                 {**att, "preview_url": None},
                 http_context,
                 include_xlsx=include_xlsx,
             )
+
+            extracted = str(meta.get("extracted_text") or "").strip()
+            extraction_failed = (
+                not extracted
+                or extracted.startswith("(처리 실패:")
+                or extracted in {"(원본 HWP 다운로드 실패)", "(추출 텍스트 없음)"}
+            )
+            if (
+                extraction_failed
+                and preview_url
+                and filename_lower.endswith(".hwp")
+            ):
+                try:
+                    viewer_text = browser_context.run(
+                        lambda context: hwp_via_preview(preview_url, context)
+                    ).strip()
+                    if viewer_text:
+                        txt = f"[첨부: {att['filename']}]\n{viewer_text}"
+                        meta.update({
+                            "kind": "attachment_hwp_preview",
+                            "source_url": preview_url,
+                            "mime_type": "text/plain",
+                            "extracted_text": viewer_text,
+                        })
+                except Exception as e:
+                    print(f"  - synap viewer 폴백 실패: {e}")
 
             if txt:
                 attachment_names.append(att["filename"])

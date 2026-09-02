@@ -13,15 +13,19 @@ import zipfile      # HWPX 파일은 사실상 ZIP 컨테이너라서 직접 열
 import json
 import os
 import re
+import signal
 import shutil
+import struct
 import subprocess
 import tempfile
+import zlib
 from pathlib import Path                       # 파일 확장자(.pdf, .hwpx 등) 추출용
 from typing import Any
 from xml.etree import ElementTree as ET        # HWPX 내부 XML 파싱
 
 # --- 외부 라이브러리 ---
 import openpyxl                                # XLSX 읽기 (현재 라우터에서는 미사용)
+import olefile                                 # HWP 5.x OLE 컨테이너/압축 문단 직접 추출
 import xlrd                                    # XLS 읽기
 from langchain_core.messages import HumanMessage          # LangChain 멀티모달 메시지 포맷
 
@@ -176,18 +180,44 @@ def run_soffice_convert(input_path: Path, out_dir: Path, page_range: str | None 
         "--outdir",
         str(out_dir.resolve()),
     ]
+    popen_kwargs: dict[str, Any] = {}
+    if os.name == "posix":
+        # timeout 시 wrapper 프로세스만 종료하면 soffice 자식이 고아로 남는다.
+        # 독립 process group으로 시작해 변환기 트리 전체를 종료한다.
+        popen_kwargs["start_new_session"] = True
+    elif os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+
+    process = subprocess.Popen(
+        cmd,
+        cwd=input_path.parent,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **popen_kwargs,
+    )
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=input_path.parent,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=int(os.getenv("LIBREOFFICE_TIMEOUT_SECONDS", "90")),
-            check=False,
+        stdout, stderr = process.communicate(
+            timeout=int(os.getenv("LIBREOFFICE_TIMEOUT_SECONDS", "90"))
         )
     except subprocess.TimeoutExpired:
+        if os.name == "posix":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        elif os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        else:
+            process.kill()
+        process.communicate()
         return None
+    result = subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
     if result.returncode != 0:
         return None
     pdf_path = out_dir / f"{input_path.stem}.pdf"
@@ -210,6 +240,90 @@ def _hwp_ole_strings_to_text(data: bytes) -> str:
     if cut_points:
         extracted = extracted[:min(cut_points)].rstrip()
     return extracted
+
+
+def _hwp_para_payload_to_text(payload: bytes) -> str:
+    """HWP 5.x HWPTAG_PARA_TEXT payload에서 제어 문자를 빼고 글자만 복원."""
+    units = struct.unpack(f"<{len(payload) // 2}H", payload[: len(payload) // 2 * 2])
+    extended_controls = set(range(1, 10)) | set(range(11, 13)) | set(range(14, 24))
+    out: list[str] = []
+    index = 0
+    while index < len(units):
+        code = units[index]
+        if code in extended_controls:
+            if code == 9:
+                out.append(" ")
+            # 필드/표/그림 등 inline control은 8 UTF-16 code unit 고정 길이다.
+            index += 8
+            continue
+        if code in (10, 13):
+            out.append("\n")
+        elif code in (24, 30, 31):
+            out.append(" ")
+        elif code >= 32:
+            out.append(chr(code))
+        index += 1
+
+    text = "".join(out).replace("\x00", " ")
+    text = re.sub(r"[ \t\u3000]+", " ", text)
+    text = re.sub(r" *\n *", "\n", text)
+    return text.strip()
+
+
+def _hwp_record_stream_text(stream: bytes) -> str:
+    """HWP record stream의 HWPTAG_PARA_TEXT(tag 67) 레코드만 순서대로 추출."""
+    paragraphs: list[str] = []
+    offset = 0
+    while offset + 4 <= len(stream):
+        header = struct.unpack_from("<I", stream, offset)[0]
+        offset += 4
+        tag_id = header & 0x3FF
+        size = (header >> 20) & 0xFFF
+        if size == 0xFFF:
+            if offset + 4 > len(stream):
+                break
+            size = struct.unpack_from("<I", stream, offset)[0]
+            offset += 4
+        if offset + size > len(stream):
+            break
+        payload = stream[offset : offset + size]
+        offset += size
+        if tag_id == 67:
+            text = _hwp_para_payload_to_text(payload)
+            if text:
+                paragraphs.append(text)
+    return "\n".join(paragraphs).strip()
+
+
+def _hwp5_ole_body_text(data: bytes) -> str:
+    """HWP 5.x OLE BodyText section을 직접 풀어 LibreOffice 없이 본문 추출."""
+    with olefile.OleFileIO(io.BytesIO(data)) as document:
+        if not document.exists("FileHeader"):
+            return ""
+        header = document.openstream("FileHeader").read()
+        if len(header) < 40:
+            return ""
+        compressed = bool(struct.unpack_from("<I", header, 36)[0] & 1)
+        section_names = [
+            "/".join(parts)
+            for parts in document.listdir()
+            if len(parts) == 2
+            and parts[0] == "BodyText"
+            and parts[1].startswith("Section")
+        ]
+        section_names.sort(key=lambda name: int(name.rsplit("Section", 1)[1]))
+
+        sections: list[str] = []
+        for name in section_names:
+            raw = document.openstream(name).read()
+            try:
+                stream = zlib.decompress(raw, -15) if compressed else raw
+            except zlib.error:
+                continue
+            text = _hwp_record_stream_text(stream)
+            if text:
+                sections.append(text)
+        return "\n".join(sections).strip()
 
 
 def _office_pdf_text(data: bytes, filename: str) -> str:
@@ -257,7 +371,14 @@ def _office_pdf_text(data: bytes, filename: str) -> str:
 
 
 def hwp_bytes_to_text(data: bytes, filename: str = "attachment.hwp") -> str:
-    """HWP(5.x)를 LibreOffice→PDF로 텍스트화. 실패 시 OLE 내부 문자열 회수."""
+    """HWP 5.x 문단 직접 추출 → Office 변환 → 원시 문자열 순으로 폴백."""
+    try:
+        text = _hwp5_ole_body_text(data)
+    except (OSError, ValueError, struct.error, olefile.OleFileError):
+        text = ""
+    if text:
+        return text
+
     text = _office_pdf_text(data, filename)
     if text:
         return text
@@ -786,19 +907,18 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
 
         # ───────── 분기 3: HWPX / HWP ─────────
         elif ext in (".hwpx", ".hwp"):
-            meta["kind"] = "attachment_hwpx"
+            meta["kind"] = "attachment_hwpx" if ext == ".hwpx" else "attachment_hwp"
             meta["mime_type"] = (
                 "application/vnd.hancom.hwpx" if ext == ".hwpx" else "application/x-hwp"
             )
             if ext == ".hwp":
-                # HWP: synap 미리보기 → 실패 → 다운로드 → LibreOffice→PDF(→OLE)
-                body = _office_preview_fallback(att, context)
-                if not body or not body.strip():
-                    file_data = _download(source_url, context)
-                    if not file_data:
-                        body = "(원본 HWP 다운로드 실패)"
-                    else:
-                        body = hwp_bytes_to_text(file_data, name)
+                # HWP: 원본 압축 문단 직접 추출. preview는 browser context가
+                # 필요하므로 호출자(board crawler)가 이 경로 실패 시에만 수행한다.
+                file_data = _download(source_url, context)
+                if not file_data:
+                    body = "(원본 HWP 다운로드 실패)"
+                else:
+                    body = hwp_bytes_to_text(file_data, name)
             else:
                 # HWPX: synap 미리보기 미지원 → ZIP 내부 XML 직추출 → 비면 LibreOffice→PDF 폴백.
                 file_data = _download(source_url, context)

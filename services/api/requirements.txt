@@ -55,13 +55,14 @@ lxml
 # - opendataloader-pdf: PDF → 마크다운/표 추출 (ODL, Java 11+ 필요 — Dockerfile에 JRE 설치)
 # - pdf2image: 스캔 PDF를 이미지로 렌더링 (VLM OCR 폴백)
 # - openpyxl/xlrd: XLSX/XLS 추출
-# - HWP/HWPX: LibreOffice(soffice)로 PDF 변환 후 추출 (별도 시스템 의존: soffice)
+# - HWP 5.x: olefile로 압축 문단 직접 추출, 실패 시 LibreOffice 폴백
 # macOS 로컬에서 pdf2image를 쓰려면:
 #   brew install poppler
 opendataloader-pdf
 openpyxl
 xlrd
 pdf2image
+olefile==0.47
 
 # 이미지/OCR 처리
 pillow
