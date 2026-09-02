@@ -1,6 +1,6 @@
 import pytest
 
-from sync.counseling import _counseling_frame_state, _find_counseling_form_frame, _has_system_button, _select_topics, _text, _topics
+from sync.counseling import _counseling_frame_state, _find_counseling_form_frame, _has_portal_message, _has_system_button, _select_topics, _text, _topics
 
 
 class _Locator:
@@ -117,3 +117,21 @@ def test_system_button_detection_ignores_stale_frames():
         frames = [BrokenFrame(), ReadyFrame()]
 
     assert _has_system_button(Page()) is True
+
+
+def test_portal_message_is_found_across_child_frames():
+    class BodyLocator(_Locator):
+        def inner_text(self, timeout):
+            return "상담신청이 완료되었습니다."
+
+    class Frame:
+        def locator(self, _selector):
+            return BodyLocator()
+
+    class Page:
+        frames = [Frame()]
+
+    class Context:
+        pages = [Page()]
+
+    assert _has_portal_message(Context(), "상담신청이 완료되었습니다.") is True

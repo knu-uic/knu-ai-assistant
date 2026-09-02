@@ -63,6 +63,27 @@ def _find_frame_with_id(context, value: str):
     return None
 
 
+def _has_portal_message(context, message: str) -> bool:
+    for page in context.pages:
+        for frame in page.frames:
+            try:
+                if message in (frame.locator("body").inner_text(timeout=250) or ""):
+                    return True
+            except Exception:
+                continue
+    return False
+
+
+def _wait_for_frame(context, value: str, timeout_sec: float = 5):
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        frame = _find_frame_with_id(context, value)
+        if frame is not None:
+            return frame
+        time.sleep(0.1)
+    return None
+
+
 def _counseling_frame_state(context) -> str:
     states = []
     for page in context.pages:
@@ -241,8 +262,19 @@ def submit_online_counseling(
             save_frame = _find_frame_with_id(context, "F_TOPMENU.BTN_SAVE")
             if save_frame is None:
                 raise RuntimeError("상담신청 저장 버튼을 찾지 못했습니다.")
-            save_frame.locator(_webcrea_id("F_TOPMENU.BTN_SAVE")).click()
-            page.wait_for_timeout(1_000)
+            _webcrea_click(save_frame, "F_TOPMENU.BTN_SAVE")
+            confirm_frame = _wait_for_frame(context, "frmBtn5.btnOk")
+            if confirm_frame is None:
+                raise RuntimeError("상담신청 확인창을 열지 못했습니다.")
+            _webcrea_click(confirm_frame, "frmBtn5.btnOk")
+
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                if _has_portal_message(context, "상담신청이 완료되었습니다."):
+                    break
+                time.sleep(0.1)
+            else:
+                raise RuntimeError("포털에서 상담신청 완료를 확인하지 못했습니다.")
             return {
                 "success": True,
                 "submitted": True,
