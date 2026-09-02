@@ -142,8 +142,12 @@ async def _start_counseling_job(name: str, student_id: str, *args: Any) -> str:
     job_id = f"counseling:{name}:{student_id}"
     job = Job(job_id, redis=pool)
     status = await job.status()
-    if status in (JobStatus.queued, JobStatus.deferred, JobStatus.in_progress, JobStatus.complete):
+    if status in (JobStatus.queued, JobStatus.deferred, JobStatus.in_progress):
         return job_id
+    if status == JobStatus.complete:
+        result = await job.result_info()
+        if result is not None and result.success:
+            return job_id
     if await pool.enqueue_job(name, student_id, *args, _job_id=job_id) is not None:
         return job_id
     # A cancelled worker can leave an expired idempotency key behind briefly.

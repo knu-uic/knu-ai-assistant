@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 
@@ -208,6 +209,45 @@ def test_counseling_prepare_enqueues_only_for_portal_session(monkeypatch):
         ("20260009",),
         {"_job_id": "counseling:counseling_prepare:20260009"},
     )]
+
+
+def test_counseling_retry_requeues_after_failed_completion(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+    from arq.jobs import JobStatus
+
+    class FailedJob:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def status(self):
+            return JobStatus.complete
+
+        async def result_info(self):
+            return type("Result", (), {"success": False})()
+
+    class Pool:
+        def __init__(self):
+            self.calls = 0
+
+        async def enqueue_job(self, *_args, **_kwargs):
+            self.calls += 1
+            return None if self.calls == 1 else object()
+
+    pool = Pool()
+
+    async def get_pool():
+        return pool
+
+    monkeypatch.setattr(mcp_mod, "Job", FailedJob)
+    monkeypatch.setattr(mcp_mod, "get_arq_pool", get_pool)
+
+    job_id = asyncio.run(
+        mcp_mod._start_counseling_job("counseling_submit", "20260009", "t", "c", ["학업"])
+    )
+
+    assert job_id.startswith("counseling:counseling_submit:")
+    assert job_id.endswith(":20260009")
+    assert pool.calls == 2
 
 
 def test_knu_list_notices_returns_server_total(monkeypatch):

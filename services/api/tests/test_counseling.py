@@ -22,10 +22,6 @@ class _Locator:
     def get_attribute(self, _name):
         return self.value
 
-    def check(self):
-        self.checked.append(self.selector)
-
-
 class _TopicFrame:
     def __init__(self):
         self.checked = []
@@ -39,13 +35,17 @@ class _TopicFrame:
             return _Locator(value=self.labels[selector])
         return _Locator(exists=False, checked=self.checked, selector=selector)
 
+    def evaluate(self, _script, value):
+        self.checked.append(value)
+        return True
+
 
 def test_counseling_topics_are_read_and_selected_by_visible_label():
     frame = _TopicFrame()
 
     assert _topics(frame) == ["학업", "진로상담"]
     _select_topics(frame, ["진로상담"])
-    assert frame.checked == ['[id="G2.TWO0"]']
+    assert frame.checked == ["G2.TWO0"]
     with pytest.raises(RuntimeError, match="지원하지 않는"):
         _select_topics(frame, ["없는 주제"])
 
