@@ -6,6 +6,7 @@ from hashlib import sha256
 from datetime import date, datetime
 from math import isfinite
 from typing import Annotated, Any, Literal
+from uuid import uuid4
 
 import anyio
 from fastapi import HTTPException
@@ -143,8 +144,12 @@ async def _start_counseling_job(name: str, student_id: str, *args: Any) -> str:
     status = await job.status()
     if status in (JobStatus.queued, JobStatus.deferred, JobStatus.in_progress, JobStatus.complete):
         return job_id
-    await pool.enqueue_job(name, student_id, *args, _job_id=job_id)
-    return job_id
+    if await pool.enqueue_job(name, student_id, *args, _job_id=job_id) is not None:
+        return job_id
+    # A cancelled worker can leave an expired idempotency key behind briefly.
+    retry_job_id = f"counseling:{name}:{uuid4().hex[:12]}:{student_id}"
+    await pool.enqueue_job(name, student_id, *args, _job_id=retry_job_id)
+    return retry_job_id
 
 
 async def _counseling_job_status(student_id: str, job_id: str) -> dict:

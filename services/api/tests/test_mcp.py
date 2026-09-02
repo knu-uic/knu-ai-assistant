@@ -176,6 +176,7 @@ def test_counseling_prepare_enqueues_only_for_portal_session(monkeypatch):
 
         async def enqueue_job(self, name, *args, **kwargs):
             self.calls.append((name, args, kwargs))
+            return object()
 
     class MissingJob:
         def __init__(self, *_args, **_kwargs):
