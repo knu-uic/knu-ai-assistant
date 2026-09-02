@@ -7,7 +7,6 @@ from urllib.parse import urlparse
 from typing import Callable
 
 from parsers.curriculum import parse, render_text
-from extractors.attachments import run_soffice_convert
 
 
 @dataclass(frozen=True)
@@ -57,41 +56,37 @@ class CurriculumCrawler:
         suffix = document_path.suffix.lower()
         results = []
 
-        converted_pdf_path = None
         if suffix != ".pdf":
-            # PDF가 아닌 포맷(HWP, HWPX, XLSX 등)은 LibreOffice로 PDF 변환
-            converted_pdf_path = run_soffice_convert(document_path, document_path.parent)
-            if not converted_pdf_path or not converted_pdf_path.exists():
-                raise RuntimeError(
-                    f"[{self.SOURCE_CODE}] PDF 변환에 실패했습니다: {document_path}"
-                )
-            target_pdf_path = converted_pdf_path
-        else:
-            target_pdf_path = document_path
+            raise RuntimeError(
+                f"[{self.SOURCE_CODE}] 좌표 기반 교육과정 파서는 PDF만 지원합니다: "
+                f"{document_path}. 비PDF 문서는 정확한 전용 구조 파서가 필요합니다."
+            )
+        target_pdf_path = document_path
 
-        try:
-            parsed = parse(target_pdf_path)
+        parsed = parse(target_pdf_path)
 
-            if not parsed:
-                raise RuntimeError(f"[{self.SOURCE_CODE}] curriculum parse 결과 없음")
+        if not parsed:
+            raise RuntimeError(f"[{self.SOURCE_CODE}] curriculum parse 결과 없음")
 
-            years = parsed.get("years")
-            if not years:
-                raise RuntimeError(f"[{self.SOURCE_CODE}] 파싱된 연도 데이터 없음")
+        years = parsed.get("years")
+        if not years:
+            raise RuntimeError(f"[{self.SOURCE_CODE}] 파싱된 연도 데이터 없음")
 
-            # 모든 입학년도별 페이지를 개별 문서로 분리하여 RAG에 적재
-            for item in years:
-                year_label = item.get("year_label") or "최신"
-                title = f"{self.SOURCE_NAME} ({year_label})"
-                content = render_text(item).strip()
-                applicable_years = item.get("applicable_years") or []
-                
-                # DB의 URL 유니크 제약을 피하고 각각 고유 문서로 색인하기 위해 쿼리 파라미터 부여
-                doc_url = f"{self.config.pdf_url}?year={urllib.parse.quote(year_label)}&page={item['page_number']}"
+        # 모든 입학년도별 페이지를 개별 문서로 분리하여 RAG에 적재
+        for item in years:
+            year_label = item.get("year_label") or "최신"
+            title = f"{self.SOURCE_NAME} ({year_label})"
+            content = render_text(item).strip()
+            applicable_years = item.get("applicable_years") or []
 
-                keywords = ["교육과정", "전공", "학점", year_label] + [f"{y}학년도" for y in applicable_years]
+            # DB의 URL 유니크 제약을 피하고 각각 고유 문서로 색인하기 위해 쿼리 파라미터 부여
+            doc_url = f"{self.config.pdf_url}?year={urllib.parse.quote(year_label)}&page={item['page_number']}"
 
-                results.append({
+            keywords = ["교육과정", "전공", "학점", year_label] + [
+                f"{year}학년도" for year in applicable_years
+            ]
+
+            results.append({
                     "title": title,
                     "date": "",
                     "content": content,
@@ -120,13 +115,5 @@ class CurriculumCrawler:
                         "document_type": ".pdf",
                         "page_url": self.config.page_url,
                     },
-                })
-        finally:
-            if converted_pdf_path and converted_pdf_path.exists():
-                try:
-                    converted_pdf_path.unlink()
-                except Exception as e:
-                    print(f"[{self.SOURCE_CODE}] 임시 변환 PDF 파일 삭제 실패 ({converted_pdf_path}): {e}")
-
+            })
         return results
-

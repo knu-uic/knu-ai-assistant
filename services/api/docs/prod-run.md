@@ -12,7 +12,7 @@
 | db | pgvector/pgvector:pg16 | ❌ 내부 전용 | postgres + pgvector |
 | redis | redis:7-alpine | ❌ 내부 전용 | 잡 큐 · LMS 세션 보관 |
 | api | `Dockerfile.api` (슬림) | ❌ 내부 전용 | FastAPI |
-| worker | `Dockerfile` (헤비, playwright·libreoffice) | ❌ 내부 전용 | arq — 동기화·공지 수집 |
+| worker | `Dockerfile` (playwright·문서 구조 파서) | ❌ 내부 전용 | arq — 동기화·공지 수집 |
 | web | `../../apps/web/Dockerfile` (node 빌드 → caddy) | ✅ **80포트** | SPA 정적 서빙 + `/api/*` 프록시 |
 
 **외부로 열리는 문은 web(80) 하나뿐.** db·redis·api·worker는 컨테이너 네트워크

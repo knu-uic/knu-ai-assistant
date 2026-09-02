@@ -5,28 +5,25 @@
 """
 from model import get_llm
 from parsers.pdf_parser import parse_pdf      # ODL 기반 PDF→마크다운 공유 헬퍼
+from extractors.hwp_structured import extract_hwp_structured
 
 # --- 표준 라이브러리 ---
 import io           # 바이트 데이터를 "파일처럼" 다루기 위한 BytesIO 용도 (zipfile/이미지 버퍼가 파일객체를 요구함)
 import base64       # 이미지 바이트를 Gemini에 보낼 때 base64 문자열로 인코딩
-import zipfile      # HWPX 파일은 사실상 ZIP 컨테이너라서 직접 열어서 내부 XML을 꺼냄
 import json
+import zipfile      # HWPX 파일은 사실상 ZIP 컨테이너라서 직접 열어서 내부 XML을 꺼냄
 import os
 import re
-import signal
-import shutil
 import struct
-import subprocess
-import tempfile
 import zlib
 from pathlib import Path                       # 파일 확장자(.pdf, .hwpx 등) 추출용
-from typing import Any
 from xml.etree import ElementTree as ET        # HWPX 내부 XML 파싱
 
 # --- 외부 라이브러리 ---
 import openpyxl                                # XLSX 읽기 (현재 라우터에서는 미사용)
 import olefile                                 # HWP 5.x OLE 컨테이너/압축 문단 직접 추출
 import xlrd                                    # XLS 읽기
+from pptx import Presentation
 from langchain_core.messages import HumanMessage          # LangChain 멀티모달 메시지 포맷
 
 
@@ -77,14 +74,14 @@ _VLM_PROMPT = """이 이미지는 대학 공지글의 일부다. 이미지에 �
 - 텍스트만 출력하고 설명 문장은 붙이지 않는다."""
 
 
-def _image_to_text(image_bytes: bytes, mime: str) -> str:
+def _image_to_text(image_bytes: bytes, mime: str, prompt: str = _VLM_PROMPT) -> str:
     """이미지 바이트를 Gemini에 던져 텍스트만 받아오는 저수준 헬퍼."""
     # Gemini 멀티모달 API는 data URL 형태(base64 인코딩)로 이미지를 받는다
     b64 = base64.b64encode(image_bytes).decode()
 
     # LangChain의 멀티모달 메시지: 텍스트 블록 + 이미지 블록을 한 메시지에 같이 넣는다
     msg = HumanMessage(content=[
-        {"type": "text", "text": _VLM_PROMPT},
+        {"type": "text", "text": prompt},
         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
     ])
 
@@ -144,102 +141,6 @@ def _pdf_bytes_full(data: bytes) -> str:
         im.save(buf, format="PNG")
         chunks.append(_image_to_text(buf.getvalue(), "image/png"))
     return "\n".join(chunks).strip()
-
-
-def _find_soffice() -> str | None:
-    configured = os.getenv("LIBREOFFICE_BIN")
-    candidates = [
-        configured,
-        shutil.which("soffice"),
-        shutil.which("libreoffice"),
-        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-    ]
-    return next((c for c in candidates if c and Path(c).exists()), None)
-
-
-def run_soffice_convert(input_path: Path, out_dir: Path, page_range: str | None = None) -> Path | None:
-    soffice = _find_soffice()
-    if not soffice:
-        raise RuntimeError("LibreOffice(soffice)를 찾을 수 없습니다. LIBREOFFICE_BIN을 설정하세요.")
-
-    convert_to = "pdf:writer_pdf_Export"
-    if page_range:
-        options = {"PageRange": {"type": "string", "value": page_range}}
-        convert_to = f"{convert_to}:{json.dumps(options, separators=(',', ':'))}"
-
-    cmd = [
-        soffice,
-        "--headless",
-        "--nologo",
-        "--nofirststartwizard",
-        "--nodefault",
-        "--norestore",
-        "--convert-to",
-        convert_to,
-        input_path.name,
-        "--outdir",
-        str(out_dir.resolve()),
-    ]
-    popen_kwargs: dict[str, Any] = {}
-    if os.name == "posix":
-        # timeout 시 wrapper 프로세스만 종료하면 soffice 자식이 고아로 남는다.
-        # 독립 process group으로 시작해 변환기 트리 전체를 종료한다.
-        popen_kwargs["start_new_session"] = True
-    elif os.name == "nt":
-        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-
-    process = subprocess.Popen(
-        cmd,
-        cwd=input_path.parent,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        **popen_kwargs,
-    )
-    try:
-        stdout, stderr = process.communicate(
-            timeout=int(os.getenv("LIBREOFFICE_TIMEOUT_SECONDS", "90"))
-        )
-    except subprocess.TimeoutExpired:
-        if os.name == "posix":
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        elif os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
-        else:
-            process.kill()
-        process.communicate()
-        return None
-    result = subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
-    if result.returncode != 0:
-        return None
-    pdf_path = out_dir / f"{input_path.stem}.pdf"
-    return pdf_path if pdf_path.exists() and pdf_path.stat().st_size > 0 else None
-
-
-def _hwp_ole_strings_to_text(data: bytes) -> str:
-    """LibreOffice 변환 실패 시 HWP 5.x 내부 UTF-16LE 문자열을 최대한 회수."""
-    decoded = data.decode("utf-16le", "ignore")
-    runs: list[str] = []
-    pattern = r"[\uAC00-\uD7A3A-Za-z0-9\s().,/%·\-:]{3,}"
-    for match in re.finditer(pattern, decoded):
-        text = " ".join(match.group(0).split())
-        if any("가" <= ch <= "힣" for ch in text):
-            runs.append(text)
-
-    extracted = "\n".join(dict.fromkeys(runs))
-    meta_markers = ["표 및 글자", "문단모양 등의 변경 금지"]
-    cut_points = [extracted.find(marker) for marker in meta_markers if marker in extracted]
-    if cut_points:
-        extracted = extracted[:min(cut_points)].rstrip()
-    return extracted
 
 
 def _hwp_para_payload_to_text(payload: bytes) -> str:
@@ -335,52 +236,8 @@ def _hwp5_ole_body_text(data: bytes) -> str:
         return "\n".join(sections).strip()
 
 
-def _office_pdf_text(data: bytes, filename: str) -> str:
-    """오피스 문서(HWP/HWPX 등)를 LibreOffice로 PDF 변환 후 텍스트 추출. 실패 시 "".
-    전체 변환 → 실패하면 페이지 단위 프로빙. hwp·hwpx 폴백 경로에서 공유한다.
-    스캔본은 _pdf_bytes_full 내부에서 pdf2image+VLM로 처리된다."""
-    suffix = Path(filename).suffix or ".hwp"
-    with tempfile.TemporaryDirectory(prefix="office-convert-") as tmp:
-        tmp_dir = Path(tmp)
-        input_path = tmp_dir / f"input{suffix}"
-        input_path.write_bytes(data)
-        full_dir = tmp_dir / "full"
-        full_dir.mkdir()
-
-        pdf_path = run_soffice_convert(input_path, full_dir)
-        if pdf_path:
-            return _pdf_bytes_full(pdf_path.read_bytes())
-
-        page_texts: list[str] = []
-        max_pages = int(os.getenv("HWP_CONVERT_MAX_PAGE_PROBES", "3"))
-        empty_streak = 0
-        for page_no in range(1, max_pages + 1):
-            page_dir = tmp_dir / f"page-{page_no}"
-            page_dir.mkdir()
-            page_pdf = run_soffice_convert(input_path, page_dir, str(page_no))
-            if not page_pdf:
-                empty_streak += 1
-                if empty_streak >= 3:
-                    break
-                continue
-
-            text = _pdf_bytes_full(page_pdf.read_bytes()).strip()
-            if text:
-                page_texts.append(text)
-                empty_streak = 0
-            else:
-                empty_streak += 1
-                if empty_streak >= 3:
-                    break
-
-        if page_texts:
-            return "\n\n".join(page_texts).strip()
-
-    return ""
-
-
 def hwp_bytes_to_text(data: bytes, filename: str = "attachment.hwp") -> str:
-    """HWP 5.x 문단 직접 추출 → Office 변환 → 원시 문자열 순으로 폴백."""
+    """독립적인 HWP 5.x BodyText 레코드 파서로 문단을 추출한다."""
     try:
         text = _hwp5_ole_body_text(data)
     except (OSError, ValueError, struct.error, olefile.OleFileError):
@@ -388,30 +245,7 @@ def hwp_bytes_to_text(data: bytes, filename: str = "attachment.hwp") -> str:
     if text:
         return text
 
-    text = _office_pdf_text(data, filename)
-    if text:
-        return text
-
-    # 최후수단: HWP5 OLE 바이너리 내부 UTF-16 문자열 직접 회수(hwp 전용).
-    fallback = _hwp_ole_strings_to_text(data)
-    if fallback:
-        return fallback
-
-    raise RuntimeError("LibreOffice HWP→PDF 변환 실패")
-
-
-def _preview_failed(text: str) -> bool:
-    """synapView 미리보기 결과가 "실패"인지 판정."""
-    if not text:
-        return True
-    # 공주대 synapView는 변환 실패 시 페이지에 안내 문구를 그대로 박아둔다 → 텍스트로 잡힘
-    if "변환이 실패" in text or "변환에 실패" in text:
-        return True
-    # preview가 일부만 로드되어도 fallback 없이 우선 사용한다.
-    # 대형 HWP(수백 페이지)는 synapView 전체 렌더가 매우 느려
-    # 제목/일부 본문만 먼저 도착하는 경우가 많다.
-    # 완전 빈 문자열 수준일 때만 실패로 본다.
-    return len(text.strip()) < 5
+    raise RuntimeError(f"HWP 5.x BodyText 구조 추출 실패: {filename}")
 
 
 def _zip_member_text(
@@ -432,8 +266,11 @@ def _zip_member_text(
     if ext == ".pdf":
         return f"{label}\n{_pdf_bytes_full(data)}"
 
-    if ext in (".ppt", ".pptx"):
-        return f"{label}\n{_office_pdf_text(data, member_name)}"
+    if ext == ".pptx":
+        return f"{label}\n{pptx_to_text(data)}"
+
+    if ext == ".ppt":
+        return f"{label}\n(구형 PPT는 정확한 구조 추출기가 없어 검토 대상으로 보존)"
 
     if ext == ".hwpx":
         return f"{label}\n{hwpx_bytes_to_text(data)}"
@@ -553,6 +390,60 @@ def _dedupe_headers(row: list[str]) -> list[str]:
     return headers
 
 
+def pptx_to_text(data: bytes) -> str:
+    """PPTX의 텍스트 프레임과 표를 슬라이드 순서대로 추출한다."""
+    presentation = Presentation(io.BytesIO(data))
+    chunks: list[str] = []
+    for slide_no, slide in enumerate(presentation.slides, start=1):
+        parts = [f"[슬라이드 {slide_no}]"]
+        for shape in slide.shapes:
+            text = str(getattr(shape, "text", "") or "").strip()
+            if text:
+                parts.append(text)
+            if getattr(shape, "has_table", False):
+                for row in shape.table.rows:
+                    parts.append(" | ".join(cell.text.strip() for cell in row.cells))
+        chunks.append("\n".join(parts))
+    return "\n\n".join(chunks).strip()
+
+
+_HWP_IMAGE_PROMPT = """이 이미지는 대학 HWP 문서에서 추출한 원본 이미지다.
+반드시 아래 JSON 객체 하나만 출력하라.
+{"kind":"music_score|scanned_text|table_image|map|chart|photo|logo|other","ocrText":"보이는 글자를 원문 그대로","description":"검색에 필요한 짧은 설명","confidence":0.0,"music":{"title":"","lyricist":"","composer":"","lyrics":"","notationStatus":"preserved_as_image"}}
+악보이면 제목·작사·작곡·가사처럼 눈으로 확실히 읽히는 정보만 기록한다. 음표나 음정을 추측하거나 악보를 텍스트 음계로 만들어내지 말고 notationStatus는 preserved_as_image로 둔다.
+일반 이미지도 보이지 않는 내용을 추측하지 않는다."""
+
+
+def _hwp_image_analysis(image_bytes: bytes, mime: str, filename: str) -> dict:
+    """HWP BinData 이미지를 OCR/VLM으로 분류하되 악보 음표는 추측하지 않는다."""
+    raw = _image_to_text(
+        image_bytes,
+        mime,
+        f"파일명: {filename}\n{_HWP_IMAGE_PROMPT}",
+    ).strip()
+    fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I | re.S).strip()
+    try:
+        value = json.loads(fenced)
+    except json.JSONDecodeError:
+        return {
+            "kind": "other",
+            "ocrText": "",
+            "description": raw,
+            "confidence": 0.0,
+            "status": "unstructured_response",
+        }
+    if not isinstance(value, dict):
+        return {"kind": "other", "description": raw, "confidence": 0.0}
+    allowed = {"music_score", "scanned_text", "table_image", "map", "chart", "photo", "logo", "other"}
+    if value.get("kind") not in allowed:
+        value["kind"] = "other"
+    if value["kind"] == "music_score":
+        music = value.get("music") if isinstance(value.get("music"), dict) else {}
+        music["notationStatus"] = "preserved_as_image"
+        value["music"] = music
+    return value
+
+
 def xlsx_relevant(*texts: str) -> bool:
     """제목·본문 등을 합쳐 XLSX_KEYWORDS 중 하나라도 포함하면 True."""
     blob = "\n".join(t for t in texts if t)
@@ -633,7 +524,7 @@ def _office_preview_fallback(att: dict, context) -> str:
         return ""
 
     try:
-        text = hwp_via_preview(preview_url, context)
+        text = _preview_via_browser(preview_url, context)
 
         # viewer에서 일부 텍스트라도 확보되면 그대로 사용한다.
         # 공주대처럼 download.do는 막혀 있지만 synapView 렌더는 허용하는
@@ -645,8 +536,8 @@ def _office_preview_fallback(att: dict, context) -> str:
         return ""
 
 
-def hwp_via_preview(preview_url: str, context) -> str:
-    """synapView 전체 스크롤 기반 텍스트 추출.
+def _preview_via_browser(preview_url: str, context) -> str:
+    """구조 파서가 없는 레거시 첨부에만 쓰는 synapView 최후 폴백.
 
     synapView는 대형 HWP/HWPX를 lazy rendering 하는 경우가 많아
     단순 body 추출만으로는 앞부분 일부만 수집된다.
@@ -884,7 +775,12 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                 if ext == ".pptx" else "application/vnd.ms-powerpoint"
             )
             data = _download(source_url, context)
-            body = _office_pdf_text(data, name)   # LibreOffice→PDF→텍스트(+스캔본 VLM 폴백). HWP와 공유.
+            if ext == ".pptx":
+                body = pptx_to_text(data)
+            else:
+                body = "(구형 PPT는 정확한 구조 추출기가 없어 검토 대상으로 보존)"
+                meta["review_required"] = True
+                meta["review_reason"] = "unsupported_legacy_ppt"
 
         # ───────── 분기 2: 엑셀 ─────────
         elif ext in (".xlsx", ".xls"):
@@ -921,22 +817,74 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                 "application/vnd.hancom.hwpx" if ext == ".hwpx" else "application/x-hwp"
             )
             if ext == ".hwp":
-                # HWP: 원본 압축 문단 직접 추출. preview는 browser context가
-                # 필요하므로 호출자(board crawler)가 이 경로 실패 시에만 수행한다.
                 file_data = _download(source_url, context)
                 if not file_data:
                     body = "(원본 HWP 다운로드 실패)"
+                    meta["review_required"] = True
+                    meta["review_reason"] = "hwp_download_failed"
                 else:
-                    body = hwp_bytes_to_text(file_data, name)
+                    secondary_text = hwp_bytes_to_text(file_data, name)
+                    structured = extract_hwp_structured(
+                        file_data,
+                        name,
+                        secondary_text=secondary_text,
+                        assets_root=Path(os.getenv("HWP_ASSETS_ROOT", "data/assets")),
+                        image_analyzer=(
+                            _hwp_image_analysis
+                            if os.getenv("HWP_IMAGE_ANALYSIS_ENABLED", "false").lower()
+                            in {"1", "true", "yes", "on"}
+                            else None
+                        ),
+                    )
+                    derived_assets = [
+                        {
+                            "kind": "attachment_hwp_structure",
+                            "filename": "document.json",
+                            "storage_path": structured["structure_path"],
+                            "mime_type": "application/json",
+                            "extracted_text": json.dumps(
+                                structured["quality"], ensure_ascii=False
+                            ),
+                        },
+                        {
+                            "kind": "attachment_hwp_markdown",
+                            "filename": "document.md",
+                            "storage_path": structured["markdown_path"],
+                            "mime_type": "text/markdown",
+                            "extracted_text": "",
+                        },
+                    ]
+                    if structured.get("converted_hwpx_path"):
+                        derived_assets.append({
+                            "kind": "attachment_hwp_validation",
+                            "filename": "validation.hwpx",
+                            "storage_path": structured["converted_hwpx_path"],
+                            "mime_type": "application/vnd.hancom.hwpx",
+                            "extracted_text": "",
+                        })
+                    derived_assets.extend(structured["binary_assets"])
+                    body = structured["markdown"]
+                    meta.update({
+                        "storage_path": structured["original_path"],
+                        "bundle_dir": structured["bundle_dir"],
+                        "markdown_path": structured["markdown_path"],
+                        "structure_path": structured["structure_path"],
+                        "quality": structured["quality"],
+                        "review_required": structured["review_required"],
+                        "review_reason": (
+                            "hwp_cross_validation_below_threshold"
+                            if structured["review_required"] else None
+                        ),
+                        "derived_assets": derived_assets,
+                    })
             else:
-                # HWPX: synap 미리보기 미지원 → ZIP 내부 XML 직추출 → 비면 LibreOffice→PDF 폴백.
                 file_data = _download(source_url, context)
                 if not file_data:
                     body = "(원본 HWPX 다운로드 실패)"
                 else:
                     body = hwpx_bytes_to_text(file_data)
                     if not body or not body.strip():
-                        body = _office_pdf_text(file_data, name)
+                        raise RuntimeError("HWPX 구조 XML에서 텍스트를 추출하지 못함")
 
         # ───────── 분기 4: 이미지 첨부 ─────────
         elif ext in _IMAGE_EXTS:
@@ -965,6 +913,9 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
     except Exception as e:
         # 모듈 docstring의 약속: 예외를 던지지 않고 "(처리 실패: ...)" 문자열로 회수
         body = f"(처리 실패: {e})"
+        if ext in {".hwp", ".hwpx", ".ppt"}:
+            meta["review_required"] = True
+            meta["review_reason"] = f"structured_extraction_failed:{type(e).__name__}"
         meta["extracted_text"] = body
         return f"{label}\n{body}", meta
 
@@ -987,8 +938,11 @@ def extract_attachment_text(path: str | Path) -> str:
     if ext == ".pdf":
         return _pdf_bytes_full(data)
 
-    if ext in (".ppt", ".pptx"):
-        return _office_pdf_text(data, file_path.name)
+    if ext == ".pptx":
+        return pptx_to_text(data)
+
+    if ext == ".ppt":
+        raise ValueError("구형 PPT는 정확한 구조 추출기가 없어 지원하지 않습니다")
 
     if ext == ".hwpx":
         return hwpx_bytes_to_text(data)

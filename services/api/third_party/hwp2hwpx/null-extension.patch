@@ -1,0 +1,48 @@
+--- ForContentHPFFile.java.orig
++++ ForContentHPFFile.java
+@@ -162,9 +162,10 @@
+                     HWPUtil.mediaTypeFromFilepath(binData.getAbsolutePathForLink()));
+         } else {
+             if (hasEmbeddedBinaryData(binData)) {
++                String extension = extensionForEmbedding(binData);
+                 addNewManifestItemForEmbedding(id,
+-                        hrefForEmbedding(id, binData.getExtensionForEmbedding()),
+-                        HWPUtil.mediaType(binData.getExtensionForEmbedding()),
++                        hrefForEmbedding(id, extension),
++                        HWPUtil.mediaType(extension),
+                         HWPUtil.embeddedBinaryData(binData, parameter.hwp()));
+             }
+          }
+@@ -173,13 +174,31 @@
+     }
+ 
+     private String makeBinDataID(BinData binData) {
+-        if ("OLE".equalsIgnoreCase(binData.getExtensionForEmbedding())) {
++        if ("OLE".equalsIgnoreCase(extensionForEmbedding(binData))) {
+             return "ole" + binData.getBinDataID();
+         } else {
+             return "image" + binData.getBinDataID();
+         }
+     }
+ 
++    private String extensionForEmbedding(BinData binData) {
++        String extension = binData.getExtensionForEmbedding();
++        if (extension != null && !extension.isEmpty()) {
++            return extension;
++        }
++
++        for (EmbeddedBinaryData data : parameter.hwp().binData().getEmbeddedBinaryDataList()) {
++            String name = data.getName();
++            if (name == null) continue;
++            String[] nameExt = name.split("\\.");
++            if (nameExt.length >= 2
++                    && nameExt[0].endsWith(String.format("%03X", binData.getBinDataID()))) {
++                return nameExt[nameExt.length - 1];
++            }
++        }
++        return "bin";
++    }
++
+     private boolean hasEmbeddedBinaryData(BinData binData) {
+         for(EmbeddedBinaryData data : parameter.hwp().binData().getEmbeddedBinaryDataList()) {
+             String[] name_ext = data.getName().split("\\.");

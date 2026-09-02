@@ -13,6 +13,8 @@ from db import (
     insert_assets,
     insert_chunks,
     document_exists,
+    upsert_extraction_review,
+    clear_extraction_review,
     delete_documents_by_source,
 )
 from embedding.embed import embed_document_chunks
@@ -48,7 +50,7 @@ def run_ingest() -> dict:
     DB에 이미 있는 글은 should_skip으로 건너뛰므로 반복 실행해도 안전하다.
     """
     init_db()
-    total = {"crawled": 0, "inserted": 0, "skipped": 0, "dropped": 0}
+    total = {"crawled": 0, "inserted": 0, "skipped": 0, "dropped": 0, "review": 0}
     pinned_urls: set[str] = set()
     for crawler in CRAWLERS:
         collect_pinned_urls = getattr(crawler, "collect_pinned_urls", None)
@@ -76,6 +78,7 @@ def run_ingest() -> dict:
         inserted_count = 0
         skipped_count = 0
         dropped_count = 0
+        review_count = 0
 
         for item in mod.crawling(should_skip=document_exists):
             crawled_count += 1
@@ -92,6 +95,15 @@ def run_ingest() -> dict:
             if (not replace_by_source) and document_exists(item["url"]):
                 skipped_count += 1
                 print(f"   ↳ 이미 적재됨: {item['url']}")
+                continue
+
+            if item.get("review_required"):
+                upsert_extraction_review(source_id, item)
+                review_count += 1
+                print(
+                    f"   ↳ 추출 품질 검토함으로 격리: {item['url']} "
+                    f"({item.get('review_reason') or 'reason unavailable'})"
+                )
                 continue
 
             posted_at = _parse_posted_date(item.get("date"))
@@ -135,6 +147,7 @@ def run_ingest() -> dict:
                 is_pinned=bool(item.get("is_pinned")),
             )
             insert_assets(document_id, assets)
+            clear_extraction_review(doc.url)
 
             base_body_content = (
                 item.get("body_content")
@@ -178,7 +191,8 @@ def run_ingest() -> dict:
 
         print(
             f"2. 크롤링/적재 완료: 수집 {crawled_count}개, "
-            f"신규 저장 {inserted_count}개, 중복 스킵 {skipped_count}개, refine 드롭 {dropped_count}개"
+            f"신규 저장 {inserted_count}개, 중복 스킵 {skipped_count}개, "
+            f"검토 격리 {review_count}개, refine 드롭 {dropped_count}개"
         )
         crawl_stats = getattr(mod, "last_run_stats", None)
         if crawl_stats:
@@ -194,6 +208,7 @@ def run_ingest() -> dict:
         total["inserted"] += inserted_count
         total["skipped"] += skipped_count
         total["dropped"] += dropped_count
+        total["review"] += review_count
 
     return total
 

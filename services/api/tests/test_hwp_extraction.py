@@ -1,12 +1,6 @@
-import os
-import signal
 import struct
-import subprocess
-
-import pytest
-
-import extractors.attachments as attachments
-from extractors.attachments import _hwp_record_stream_text, run_soffice_convert
+from extractors.attachments import _hwp_record_stream_text
+from extractors.hwp_structured import _counter_f1
 
 
 def _record(tag_id: int, payload: bytes) -> bytes:
@@ -30,35 +24,10 @@ def test_hwp_record_stream_combines_utf16_surrogate_pairs():
     assert _hwp_record_stream_text(_record(67, payload)) == "학교 U0001F3EB"
 
 
-@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group behavior")
-def test_soffice_timeout_kills_the_whole_process_group(monkeypatch, tmp_path):
-    calls = []
+def test_cross_parser_score_ignores_spacing_but_detects_missing_content():
+    complete = "2026학년도 장학금 신청 기간 9월 1일 문의 학생복지과"
+    spacing_only = "2026학년도   장학금\n신청 기간 9월 1일 문의 학생복지과"
+    missing = "2026학년도 장학금"
 
-    class FakeProcess:
-        pid = 4321
-        returncode = None
-
-        def __init__(self, *args, **kwargs):
-            calls.append((args, kwargs))
-            self.communications = 0
-
-        def communicate(self, timeout=None):
-            self.communications += 1
-            if self.communications == 1:
-                raise subprocess.TimeoutExpired("soffice", timeout)
-            self.returncode = -signal.SIGKILL
-            return "", ""
-
-    killed = []
-    monkeypatch.setattr(attachments, "_find_soffice", lambda: "/fake/soffice")
-    monkeypatch.setattr(attachments.subprocess, "Popen", FakeProcess)
-    monkeypatch.setattr(attachments.os, "killpg", lambda pid, sig: killed.append((pid, sig)))
-    monkeypatch.setenv("LIBREOFFICE_TIMEOUT_SECONDS", "1")
-    input_path = tmp_path / "input.hwp"
-    input_path.write_bytes(b"test")
-    out_dir = tmp_path / "out"
-    out_dir.mkdir()
-
-    assert run_soffice_convert(input_path, out_dir) is None
-    assert killed == [(4321, signal.SIGKILL)]
-    assert calls[0][1]["start_new_session"] is True
+    assert _counter_f1(complete, spacing_only) == 1.0
+    assert _counter_f1(complete, missing) < _counter_f1(complete, spacing_only)

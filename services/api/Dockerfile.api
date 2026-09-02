@@ -1,6 +1,6 @@
 # prod api 슬림 이미지.
 # 기존 Dockerfile(worker용 헤비)과 분리 — api는 크롤링/문서변환을 안 하므로
-# poppler·libreoffice·JRE·playwright 같은 시스템 패키지와 torch가 전부 불필요하다.
+# poppler·JRE·playwright 같은 worker 시스템 패키지와 torch가 전부 불필요하다.
 FROM python:3.12-slim
 
 WORKDIR /app

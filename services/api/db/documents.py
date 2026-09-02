@@ -132,6 +132,49 @@ def document_exists(url: str) -> bool:
         return bool(row and row[0])
 
 
+def upsert_extraction_review(source_id: int, item: dict) -> None:
+    """품질 기준 미달 문서를 RAG 적재와 분리해 재검토 가능하게 보존한다."""
+    qualities = item.get("extraction_quality") or []
+    artifact_path = next(
+        (
+            asset.get("storage_path")
+            for asset in item.get("assets") or []
+            if asset.get("storage_path")
+        ),
+        None,
+    )
+    with sync_pool.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO extraction_review
+                (source_id, url, title, reason, quality, artifact_path)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (url) DO UPDATE SET
+                source_id = EXCLUDED.source_id,
+                title = EXCLUDED.title,
+                reason = EXCLUDED.reason,
+                quality = EXCLUDED.quality,
+                artifact_path = EXCLUDED.artifact_path,
+                updated_at = now()
+            """,
+            (
+                source_id,
+                item["url"],
+                item.get("title") or "(제목 없음)",
+                item.get("review_reason") or "extraction_quality_below_threshold",
+                json.dumps(qualities, ensure_ascii=False),
+                artifact_path,
+            ),
+        )
+        conn.commit()
+
+
+def clear_extraction_review(url: str) -> None:
+    with sync_pool.connection() as conn:
+        conn.execute("DELETE FROM extraction_review WHERE url = %s", (url,))
+        conn.commit()
+
+
 def delete_documents_by_source(source_id: int) -> int:
     with sync_pool.connection() as conn:
         rows = conn.execute(

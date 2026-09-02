@@ -55,7 +55,7 @@ services:
   worker:
     build:
       context: .
-      dockerfile: Dockerfile             # 기존 헤비 이미지 재사용(playwright·libreoffice 등)
+      dockerfile: Dockerfile             # worker 이미지(playwright·문서 구조 파서)
     restart: always
     command: arq workers.arq_worker.WorkerSettings   # 스트림릿 CMD를 워커로 덮어씀
     env_file:

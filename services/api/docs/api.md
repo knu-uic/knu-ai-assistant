@@ -513,8 +513,10 @@ DOM 대신 JavaScript `Webcrea.GetObjectById(gid).arrData`에서 컬럼지향 �
 | 본문 이미지 | 이미지 다운로드 후 VLM OCR, `inline_image` asset 저장 |
 | 이미지 첨부 | VLM OCR, 원본 이미지 sha1 파일 저장 |
 | PDF | `pdfplumber` 텍스트 추출, 텍스트가 없으면 `pdf2image` + VLM OCR |
-| HWPX | ZIP 내부 section XML 직접 파싱, 비면 LibreOffice PDF 폴백 |
-| HWP | 원본 HWP 5.x OLE의 압축 BodyText 문단 직접 추출 → LibreOffice PDF 변환 → 내부 문자열 폴백; 원본 실패 시에만 synapView |
+| HWPX | ZIP/XML 구조 파싱으로 문단·표 추출 |
+| HWP | `syhwp` 문단·표 구조 + 독립 BodyText 파서 + 패치된 HWP→HWPX 검사본을 교차 비교하고 BinData 원본 보존 |
+| PPTX | `python-pptx`로 텍스트 프레임·표 추출 |
+| PPT | 정확한 구조 파서가 없어 원본을 검토 대상으로 보존 |
 | XLSX | `openpyxl`로 전체 추출, 표 헤더 보존 |
 | XLS | `xlrd`로 전체 추출, 표 헤더 보존 |
 | ZIP | 내부의 PDF/HWPX/HWP/XLSX/이미지를 풀어 각각 기존 파이프라인으로 처리 |
@@ -654,18 +656,24 @@ python3 -m sync.lms_sync                   # 할 일 동기화
 python3 -m sync.knuis_sync --username 학번 --password-stdin <<< "비밀번호"
 ```
 
-스캔 PDF OCR을 쓰려면 로컬에도 poppler가 필요합니다. HWP를 LibreOffice PDF 변환 fallback으로 처리하려면 LibreOffice도 필요합니다. `opendataloader-pdf`로 PDF의 텍스트와 표를 직접 추출하려면 Java 11 이상도 필요합니다.
+스캔 PDF OCR을 쓰려면 로컬에도 poppler가 필요합니다. `opendataloader-pdf`와 선택적 HWP→HWPX 교차 검증에는 Java 11 이상이 필요합니다. Docker worker 이미지는 null BinData 확장자를 복구한 HWP→HWPX 검사기를 빌드해 포함합니다. LibreOffice는 사용하지 않습니다.
 
 macOS:
 
 ```bash
 brew install poppler
 brew install openjdk@21
-brew install --cask libreoffice
 ```
 
 Homebrew의 `openjdk@21`이 시스템 기본 Java보다 뒤에 잡히는 환경에서는 서버를
 실행할 때 `PATH="/opt/homebrew/bin:$PATH"`를 앞에 붙입니다.
+
+로컬에서도 HWP→HWPX 2차 검증을 켜려면 한 번 빌드합니다. 생성된 JAR은 Git에
+포함되지 않으며 코드가 자동으로 발견합니다.
+
+```bash
+./third_party/hwp2hwpx/build-local.sh
+```
 
 ## Docker 실행
 
@@ -697,19 +705,28 @@ python3 debugtools/crawl_one.py "https://www.kongju.ac.kr/bbs/KNU/2132/427500/ar
 
 `BoardNoticeCrawler`는 상세 페이지 HTML을 retry 가능한 HTTP 요청으로 한 번만
 가져와 제목·날짜·본문·첨부 링크·본문 이미지 주소를 파싱한다. 일반 공지와 일반
-첨부 다운로드에는 Chromium을 사용하지 않는다. JavaScript 기반 Synap HWP
-미리보기가 필요할 때만 Chromium을 lazy 실행하며, 한 크롤링 실행 안에서는 같은
-browser/context를 재사용한다.
+첨부 다운로드와 HWP 처리에는 Chromium을 사용하지 않는다. 구조 파서가 없는
+일부 레거시 첨부 미리보기에만 Chromium을 lazy 실행하며, 한 크롤링 실행 안에서는
+같은 browser/context를 재사용한다.
 
-HWP는 synapView를 우선하지 않는다. 대형 문서는 미리보기가 깨지거나 현재
-렌더된 일부 페이지만 반환할 수 있기 때문이다. 원본 HWP 5.x는 `olefile`로
-BodyText section을 직접 해제하고, 지원하지 않는/손상된 파일에서만
-LibreOffice와 synapView로 넘어간다. LibreOffice timeout 시에는 process group
-전체를 종료해 `soffice` 자식 프로세스가 남지 않도록 한다.
+HWP는 미리보기나 PDF 렌더링을 사용하지 않는다. `syhwp` 구조 파서와 독립
+BodyText 레코드 파서의 텍스트를 비교하고, Docker에서는 별도의 HWPX 변환본까지
+비교한다. 기준 점수 0.94 미만 또는 변환 불일치는 `extraction_review`로 격리되어
+검색·답변에 사용되지 않는다.
 
-2024 국립공주대학교 요람 실물 테스트(24,569,856 bytes)에서 synapView는
-7,677자만 회수했지만, 원본 문단 추출은 808,777자를 약 0.35초에 복원했다.
-공지 HTML 요청과 첨부 다운로드를 포함한 단일 URL 전체 처리는 약 5.9초였다.
+2024 국립공주대학교 요람 실물 테스트(24,569,856 bytes)에서 원본 구조 파서는
+806,504자·표 1,488개·표 셀 42,956개·BinData 129개를 복원했다. 독립 BodyText
+결과와 token F1은 0.99547였다. null 확장자 보정 후 생성한 22,344,521-byte HWPX
+검사본은 원본 구조 텍스트와 token F1 0.981682였고, 표 1,490개와 BinData 129개를
+보존했다. 최종 품질 점수는 0.993645로 자동 적재 기준을 통과했다.
+
+HWP bundle은 하나의 Markdown만 저장하지 않는다. 원본 `.hwp`, 검색용
+`document.md`, 표 셀·이미지 메타데이터·품질 수치가 포함된 canonical
+`document.json`, 선택적 `validation.hwpx`, 원본 `images/*`를 함께 저장한다.
+이미지는 기본적으로 VLM에 자동 전송하지 않는다. 후속 개선에서는 글자/표 이미지는
+OCR, 사진·지도·도식은 `[이미지: 검증된 설명]`, 악보는 원본 이미지 + 확인된
+제목·작사·작곡 정보로 구분한다. 음표의 기계 판독은 별도 OMR 및 사람 검토 없이는
+검색 사실로 채택하지 않는다.
 
 공주대학교 공통 게시판 `main_notice`는 서버 실측 결과에 따라 `max_workers=2`를
 사용한다. 전역 기본값은 `MAX_CRAWL_WORKERS=4`이며 다른 출처는 필요하면

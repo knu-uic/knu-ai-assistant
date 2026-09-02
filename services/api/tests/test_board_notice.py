@@ -95,7 +95,7 @@ def test_detail_uses_fetched_html_without_opening_chromium(monkeypatch):
     assert browser.closed is True
 
 
-def test_failed_hwp_originals_fall_back_to_one_reused_browser_context(monkeypatch):
+def test_failed_hwp_originals_are_quarantined_without_opening_preview(monkeypatch):
     import crawlers.methods.board_notice as board_notice
 
     crawler = BoardNoticeCrawler(_config())
@@ -114,12 +114,6 @@ def test_failed_hwp_originals_fall_back_to_one_reused_browser_context(monkeypatc
             </ul>
         """,
     )
-    seen_contexts = []
-    monkeypatch.setattr(
-        board_notice,
-        "hwp_via_preview",
-        lambda url, context: seen_contexts.append(context) or f"{url} 본문",
-    )
     monkeypatch.setattr(
         board_notice,
         "attachment_to_text",
@@ -132,6 +126,8 @@ def test_failed_hwp_originals_fall_back_to_one_reused_browser_context(monkeypatc
                 "mime_type": "application/x-hwp",
                 "raw_bytes": None,
                 "extracted_text": "(처리 실패: test)",
+                "review_required": True,
+                "review_reason": "structured_extraction_failed:RuntimeError",
             },
         ),
     )
@@ -139,8 +135,9 @@ def test_failed_hwp_originals_fall_back_to_one_reused_browser_context(monkeypatc
     item = crawler.crawl_detail("https://example.test/notice/hwp")
 
     assert item["attachment_names"] == ["첫째.hwp", "둘째.hwp"]
-    assert browser.run_count == 2
-    assert seen_contexts == [browser.context, browser.context]
+    assert browser.run_count == 0
+    assert item["review_required"] is True
+    assert "structured_extraction_failed" in item["review_reason"]
     assert browser.closed is True
 
 
