@@ -55,7 +55,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import sitecustomize  # noqa: F401  # project-level pycache routing
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
 
 from crawlers import CRAWLERS
 import crawlers.methods.board_notice as board_notice
@@ -111,20 +110,7 @@ def _write_section(lines: list[str], title: str) -> None:
 
 def crawl_detail(crawler, url: str) -> dict:
     _require_board_crawler(crawler)
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
-        page = context.new_page()
-        try:
-            return crawler._crawl_detail_internal(
-                context,
-                page,
-                url,
-                1,
-                1,
-            )
-        finally:
-            browser.close()
+    return crawler.crawl_detail(url)
 
 
 def build_report(

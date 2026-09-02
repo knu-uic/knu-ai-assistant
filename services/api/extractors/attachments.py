@@ -99,7 +99,7 @@ def _download(url: str, context) -> bytes:
     try:
         response = context.request.get(
             url,
-            timeout=int(os.getenv("ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", "120000")),
+            timeout=int(os.getenv("ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS", "180000")),
             fail_on_status_code=False,
         )
         if response.ok and response.body():

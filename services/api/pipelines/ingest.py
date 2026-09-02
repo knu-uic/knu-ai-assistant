@@ -180,6 +180,16 @@ def run_ingest() -> dict:
             f"2. 크롤링/적재 완료: 수집 {crawled_count}개, "
             f"신규 저장 {inserted_count}개, 중복 스킵 {skipped_count}개, refine 드롭 {dropped_count}개"
         )
+        crawl_stats = getattr(mod, "last_run_stats", None)
+        if crawl_stats:
+            print(
+                "   ↳ 목록 검증: "
+                f"발견 {crawl_stats['discovered']}건, "
+                f"기존 확인 {crawl_stats['known']}건, "
+                f"상세 성공 {crawl_stats['succeeded']}건, "
+                f"상세 실패 {crawl_stats['failed']}건, "
+                f"보류 페이지 {crawl_stats['rejected_pages']}개"
+            )
         total["crawled"] += crawled_count
         total["inserted"] += inserted_count
         total["skipped"] += skipped_count

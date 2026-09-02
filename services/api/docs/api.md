@@ -589,6 +589,12 @@ RERANKER_MAX_LENGTH=512
 
 # Crawling
 MAX_CRAWL_WORKERS=4
+CRAWL_HTTP_TIMEOUT_SECONDS=75
+CRAWL_HTTP_MAX_ATTEMPTS=3
+CRAWL_HTTP_BACKOFF_SECONDS=3
+ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS=180000
+ATTACHMENT_DOWNLOAD_RETRY_ATTEMPTS=3
+ATTACHMENT_DOWNLOAD_BACKOFF_SECONDS=3
 # CHUNK_SIZE/CHUNK_OVERLAP은 환경변수가 아니라 embedding/embed.py의 모듈 상수(280/80)다.
 
 # LangSmith
@@ -686,6 +692,40 @@ python3 debugtools/crawl_one.py "https://www.kongju.ac.kr/bbs/KNU/2132/427500/ar
 결과는 기본적으로 `data/reports/`에 저장됩니다.
 
 리포트에는 크롤링 결과, asset OCR/첨부 추출 결과, LLM refine 결과, embedding chunk가 포함됩니다. DB에는 저장하지 않습니다.
+
+### 게시판 크롤링 안정성 정책
+
+`BoardNoticeCrawler`는 상세 페이지 HTML을 retry 가능한 HTTP 요청으로 한 번만
+가져와 제목·날짜·본문·첨부 링크·본문 이미지 주소를 파싱한다. 일반 공지와 일반
+첨부 다운로드에는 Chromium을 사용하지 않는다. JavaScript 기반 Synap HWP
+미리보기가 필요할 때만 Chromium을 lazy 실행하며, 한 크롤링 실행 안에서는 같은
+browser/context를 재사용한다.
+
+공주대학교 공통 게시판 `main_notice`는 서버 실측 결과에 따라 `max_workers=2`를
+사용한다. 전역 기본값은 `MAX_CRAWL_WORKERS=4`이며 다른 출처는 필요하면
+`BoardNoticeConfig.max_workers`로 별도 제한할 수 있다.
+
+2026-09-02 상세 HTTP 수집을 두 순서로 비교했다. 서버가 빠른 상태에서는 동시성
+4가 더 높은 처리량을 보였지만, 느려진 상태에서는 동시성 4가 전건 실패한 반면
+2는 전건 성공했다. 따라서 `2`는 항상 더 빠른 값이 아니라 장애 시 성공률을 위한
+보수적인 운영값이다.
+
+| 상태·표본 | 동시성 | 성공 | 실패 | 전체 시간 | 평균 요청 시간 |
+|---|---:|---:|---:|---:|---:|
+| 응답 지연, 최신 8건 | 2 | 8 | 0 | 1.87초 | 0.46초 |
+| 응답 지연, 최신 8건 | 4 | 0 | 8 | 49.90초 | 24.40초 |
+| 빠른 응답, 최신 4건(역순) | 4 | 4 | 0 | 0.28초 | 0.20초 |
+| 빠른 응답, 최신 4건(역순) | 2 | 4 | 0 | 0.46초 | 0.19초 |
+
+상세 HTML은 기본 75초 timeout과 최대 3회 재시도를 사용한다. 재시도 대기는
+3초, 9초처럼 지수적으로 증가한다. 첨부 다운로드는 20MB 이상 파일을 고려해
+기본 180초와 최대 3회 재시도를 사용한다.
+
+각 목록 페이지는 이미 DB에 있는 URL과 이번 실행의 성공 건수를 합쳐 기본 50%,
+최소 3건 이상 확인되어야 신규 결과를 적재 단계로 전달한다. 기준 미달 페이지의
+부분 성공 결과는 보류하고 다음 실행에서 다시 수집한다. 이 판정은 24개월이 지난
+공지의 시간 기반 보관 정책과 독립적이므로, 크롤링 실패 여부와 관계없이 오래된
+공지는 과거 공지로 이동한다.
 
 ## 크롤러 추가
 
