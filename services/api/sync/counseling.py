@@ -29,6 +29,31 @@ def _has_system_button(page) -> bool:
     return False
 
 
+def _find_counseling_form_frame(context):
+    for page in context.pages:
+        for frame in page.frames:
+            try:
+                if frame.locator("#G1.KOR_NM0").count() > 0:
+                    return frame
+            except Exception:
+                continue
+    return None
+
+
+def _counseling_frame_state(context) -> str:
+    states = []
+    for page in context.pages:
+        for frame in page.frames:
+            try:
+                header = frame.locator("#G1.Header").count()
+                advisor = frame.locator("#G1.KOR_NM0").count()
+                if header or advisor:
+                    states.append(f"{frame.name or 'unnamed'}:header={header},advisor={advisor}")
+            except Exception:
+                continue
+    return "; ".join(states) or "no G1 frame"
+
+
 def _open_counseling_page(context):
     page = context.new_page()
     page.goto(DEFAULT_PORTAL_URL, wait_until="load", timeout=20_000)
@@ -74,22 +99,42 @@ def _open_counseling_page(context):
     if not open_menu(page, _MENU_ID, timeout_sec=10):
         raise RuntimeError("상담신청 메뉴를 열지 못했습니다.")
 
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if find_frame_by_iframe_id(context, _FRAME_ID) is not None:
+            break
+        page.wait_for_timeout(250)
+    else:
+        raise RuntimeError("상담신청 화면을 열지 못했습니다.")
+
+    page.wait_for_timeout(10_000)
     deadline = time.time() + 20
     while time.time() < deadline:
-        frame = find_frame_by_iframe_id(context, _FRAME_ID)
+        frame = _find_counseling_form_frame(context)
         if frame is not None:
             return page, frame
         page.wait_for_timeout(250)
-    raise RuntimeError("상담신청 화면을 열지 못했습니다.")
+    raise RuntimeError(
+        "상담신청 화면의 입력 폼을 찾지 못했습니다. "
+        f"프레임 상태: {_counseling_frame_state(context)}"
+    )
 
 
 def _text(frame, selector: str) -> str:
+    locator = frame.locator(selector)
     try:
-        return (frame.locator(selector).text_content() or "").strip()
+        if locator.count() == 0:
+            return ""
     except Exception:
         return ""
-
-
+    for read in (locator.text_content, locator.input_value, lambda: locator.get_attribute("value")):
+        try:
+            value = (read() or "").strip()
+            if value:
+                return value
+        except Exception:
+            continue
+    return ""
 def _topics(frame) -> list[str]:
     values = []
     for row in range(10):

@@ -166,6 +166,8 @@ async def _start_counseling_job(name: str, student_id: str, *args: Any) -> str:
             return job_id
     if await pool.enqueue_job(name, student_id, *args, _job_id=job_id) is not None:
         return job_id
+    if await pool.enqueue_job(name, student_id, *args, _job_id=job_id) is not None:
+        return job_id
     retry_job_id = f"counseling:{name}:{uuid4().hex[:12]}:{student_id}"
     await pool.enqueue_job(name, student_id, *args, _job_id=retry_job_id)
     return retry_job_id
