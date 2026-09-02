@@ -23,6 +23,20 @@ def _webcrea_id(value: str) -> str:
     return f'[id="{value}"]'
 
 
+def _webcrea_click(frame, value: str) -> None:
+    clicked = frame.evaluate(
+        """id => {
+            const element = document.getElementById(id);
+            if (!element || typeof Webcrea?.OnCLICK !== 'function') return false;
+            Webcrea.OnCLICK(element);
+            return true;
+        }""",
+        value,
+    )
+    if not clicked:
+        raise RuntimeError(f"상담 화면의 버튼을 찾지 못했습니다: {value}")
+
+
 def _has_system_button(page) -> bool:
     for frame in page.frames:
         for selector in ('img[id="frmsystem_s.imgsys1"]', 'img[alt="통합정보시스템"]'):
@@ -35,10 +49,14 @@ def _has_system_button(page) -> bool:
 
 
 def _find_counseling_form_frame(context):
+    return _find_frame_with_id(context, "G1.KOR_NM0")
+
+
+def _find_frame_with_id(context, value: str):
     for page in context.pages:
         for frame in page.frames:
             try:
-                if frame.locator(_webcrea_id("G1.KOR_NM0")).count() > 0:
+                if frame.locator(_webcrea_id(value)).count() > 0:
                     return frame
             except Exception:
                 continue
@@ -156,12 +174,12 @@ def _select_topics(frame, topics: list[str]) -> None:
         for column in _TOPIC_COLUMNS:
             label = _text(frame, _webcrea_id(f"G2.{column}_NM{row}"))
             if label:
-                available[label] = _webcrea_id(f"G2.{column}{row}")
+                available[label] = f"G2.{column}{row}"
     missing = [topic for topic in topics if topic not in available]
     if missing:
         raise RuntimeError(f"지원하지 않는 상담 주제입니다: {', '.join(missing)}")
     for topic in topics:
-        frame.locator(available[topic]).check()
+        _webcrea_click(frame, available[topic])
 
 
 def prepare_online_counseling(student_id: str, storage_state: dict) -> dict:
@@ -213,12 +231,17 @@ def submit_online_counseling(
             if not advisor:
                 raise RuntimeError("기본 상담교수를 확인하지 못했습니다.")
 
-            frame.locator(_webcrea_id("G1.ON_CNSL0")).click()
-            _select_topics(frame, topics)
+            _webcrea_click(frame, "G1.ON_CNSL0")
+            page.wait_for_timeout(500)
             frame.locator(_webcrea_id("F1.CNSL_TTL_my_inputBox")).fill(title)
             frame.locator(_webcrea_id("F1.ASK_CTNT")).click()
             page.keyboard.insert_text(content)
-            frame.locator(_webcrea_id("F_TOPMENU.BTN_SAVE")).click()
+            _select_topics(frame, topics)
+            page.wait_for_timeout(500)
+            save_frame = _find_frame_with_id(context, "F_TOPMENU.BTN_SAVE")
+            if save_frame is None:
+                raise RuntimeError("상담신청 저장 버튼을 찾지 못했습니다.")
+            save_frame.locator(_webcrea_id("F_TOPMENU.BTN_SAVE")).click()
             page.wait_for_timeout(1_000)
             return {
                 "success": True,
