@@ -260,6 +260,15 @@ def _hwp_para_payload_to_text(payload: bytes) -> str:
             out.append("\n")
         elif code in (24, 30, 31):
             out.append(" ")
+        elif 0xD800 <= code <= 0xDBFF:
+            if index + 1 < len(units) and 0xDC00 <= units[index + 1] <= 0xDFFF:
+                low = units[index + 1]
+                out.append(chr(0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)))
+                index += 1
+            else:
+                out.append("\uFFFD")
+        elif 0xDC00 <= code <= 0xDFFF:
+            out.append("\uFFFD")
         elif code >= 32:
             out.append(chr(code))
         index += 1

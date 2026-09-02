@@ -24,6 +24,12 @@ def test_hwp_record_stream_extracts_paragraph_text_and_skips_controls():
     assert _hwp_record_stream_text(stream) == "공주 대학\n요람"
 
 
+def test_hwp_record_stream_combines_utf16_surrogate_pairs():
+    payload = "학교 U0001F3EB".encode("utf-16le")
+
+    assert _hwp_record_stream_text(_record(67, payload)) == "학교 U0001F3EB"
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX process-group behavior")
 def test_soffice_timeout_kills_the_whole_process_group(monkeypatch, tmp_path):
     calls = []
