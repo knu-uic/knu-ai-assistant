@@ -77,3 +77,11 @@ docs/superpowers/
 services/api/.vscode/
 services/api/test_streamlit/
 .agents/
+
+# KNU Server Manager generated output / local secrets
+apps/server-manager/node_modules/
+apps/server-manager/dist/
+apps/server-manager/src-tauri/target/
+apps/server-manager/src-tauri/gen/schemas/
+services/api/data/server-manager.json
+services/api/data/codex-auth.json

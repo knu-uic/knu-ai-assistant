@@ -43,7 +43,7 @@ export function NoticesPage() {
   return (
     <div className="main-inner wide">
       <h1 className="page-title">공지사항</h1>
-      <p className="page-sub">최신 학사·일반 공지를 확인하세요.</p>
+      <p className="page-sub">최신 학생·학과 공지를 확인하세요.</p>
 
       {profile && !profile.portal_linked && (
         <div className="banner" style={{ marginBottom: 14 }}>

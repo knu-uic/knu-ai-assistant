@@ -1,5 +1,7 @@
 # KNU AI Assistant
 
+> 서버를 GUI로 실행·관리하려면 [KNU Server Manager](apps/server-manager/README.md)를 사용하세요.
+
 > 흩어진 대학 공지와 학사 정보를 한곳에 모아, 학생에게 필요한 정보만 찾아주는 공주대학교 맞춤형 AI 어시스턴트
 
 ![React](https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB)
@@ -47,6 +49,7 @@ KNU PICK 웹이 기본 사용자 화면이며, FastAPI 서버가 공지 수집, 
 
 ```text
 apps/web/                    KNU PICK React/Vite 웹
+apps/server-manager/         로컬 KNU API·worker를 관리하는 Tauri 데스크톱 앱
 services/api/                FastAPI, 데이터 수집·검색, 포털/LMS 동기화, MCP
 docs/                        KNUIS·로그인 조사 문서
 tools/knuis-debugger/        KNUIS 통신을 확인하는 개발 도구
@@ -66,6 +69,7 @@ tools/knuis-debugger/        KNUIS 통신을 확인하는 개발 도구
 | Redis + ARQ | 포털/LMS 동기화와 공지 수집 작업 처리 |
 | 수집·검색 파이프라인 | 공지 수집, 첨부 추출, 분류·요약, 임베딩과 리랭킹 |
 | MCP | 외부 AI가 공지 검색과 상세 근거 조회를 호출하는 도구 인터페이스 |
+| KNU Server Manager | 서버·worker 실행, 수집 설정, 저장 데이터·용량·도구·계정 점검을 제공하는 로컬 운영 UI |
 | [Codmes KNU plugin](https://github.com/knu-uic/codmes-plugin-knu) | KNU 데이터를 Codmes 네이티브 화면과 AI 도구로 연결하는 별도 선택형 어댑터 |
 
 구체적인 서버 내부 경계는
@@ -130,6 +134,11 @@ npm run dev
 - 브라우저 세션과 작업 상태처럼 수명이 짧은 정보는 Redis 또는 임시 저장소를
   사용합니다.
 - 운영 환경의 비밀값은 `services/api/.env`에서 관리하며 Git에 커밋하지 않습니다.
+- KNU Server Manager에서 등록한 Codex OAuth 계정은 Codmes와 공유하지 않고
+  `services/api/data/codex-auth.json`에 비밀 정보로 별도 보관합니다.
+- Server Manager의 데이터 화면은 공지별 추출 버전과 용량, 전체 DB·첨부
+  파일 용량을 구분해 보여줍니다. 수집 결과 파일은 Git 소스에 포함하지
+  않습니다.
 
 ## 선택형 연동
 
@@ -144,8 +153,10 @@ npm run dev
 Codmes 연동은 별도
 [knu-uic/codmes-plugin-knu](https://github.com/knu-uic/codmes-plugin-knu)
 저장소에서 개발하고 배포합니다. 플러그인은 KNU 웹을 WebView로 열지 않으며,
-KNU API의 JSON 데이터를 네이티브 화면으로 표현할 Surface 규약과 MCP 도구 선언을
-포함합니다.
+KNU API의 JSON 데이터를 네이티브 화면으로 표현할 Surface 규약과 MCP 연결·인증
+설정만 포함합니다. 도구 설명·입력 schema·계층 그룹은 이 서버의 MCP `tools/list`가
+직접 제공하므로 플러그인에 복사본을 두지 않습니다. 단, 검토받지 않은 원격 도구
+추가를 막기 위한 최소 이름 허용목록은 서명된 plugin manifest가 소유합니다.
 
 플러그인을 개발 중인 Codmes Workspace에 로컬 설치하려면 다음 명령을 사용합니다.
 
@@ -156,5 +167,9 @@ node bin/codmes.mjs plugin install \
   --root /path/to/CodmesWorkspace
 ```
 
-일반 사용자는 로컬 경로 대신 Codmes Marketplace에서 KNU 플러그인을 설치합니다.
+운영 배포에서는 KNU API와 MCP를 공식 HTTPS 도메인에서 호스팅하고, 일반 사용자는
+로컬 서버를 실행하지 않고 Marketplace의 KNU 플러그인만 설치합니다. 플러그인은
+서명된 manifest의 공식 서버 주소로 자동 연결합니다.
+
+개발자는 로컬 경로를 사용할 수 있지만 일반 사용자는 Codmes Marketplace에서 KNU 플러그인을 설치합니다.
 플러그인 개발, 서명과 Release 절차는 플러그인 저장소에서 관리합니다.

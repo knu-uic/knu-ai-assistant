@@ -1,3 +1,4 @@
+import re
 from typing import Any
 from model import get_embeddings
 
@@ -54,6 +55,21 @@ def _table_context_prefix(content: str, start: int, end: int, chunk: str) -> str
     return "\n".join(lines) + "\n"
 
 
+def _figure_context_prefix(content: str, start: int, chunk: str) -> str:
+    """그림 설명이 청킹 경계에서 번호와 갈라지면 해당 번호를 복원한다."""
+    marker_pattern = r"\[(?:본문\s+)?그림\s+\d+\]"
+    if "[그림 설명]" not in chunk or re.search(marker_pattern, chunk):
+        return ""
+    matches = list(re.finditer(marker_pattern, content[:start]))
+    if not matches:
+        return ""
+    marker = matches[-1]
+    # 다른 문단의 오래된 그림 번호가 잘못 전파되지 않게 경계 근처만 복원한다.
+    if start - marker.start() > 700:
+        return ""
+    return marker.group(0) + "\n"
+
+
 def _choose_chunk_end(content: str, start: int, target_end: int, n: int, chunk_size: int) -> int:
     """가능하면 줄 끝에서 청크를 끊어 표 행이 반으로 갈리는 일을 줄인다."""
     if target_end >= n:
@@ -93,8 +109,11 @@ def chunk_text(content: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_
     while start < n:
         end = _choose_chunk_end(content, start, start + chunk_size, n, chunk_size)
         chunk = content[start:end]
-        prefix = _table_context_prefix(content, start, min(end, n), chunk)
-        chunks.append(prefix + chunk if prefix else chunk)
+        prefixes = (
+            _table_context_prefix(content, start, min(end, n), chunk)
+            + _figure_context_prefix(content, start, chunk)
+        )
+        chunks.append(prefixes + chunk if prefixes else chunk)
         if end >= n:
             break
         start = _choose_chunk_start(content, max(0, end - overlap), n, overlap)
@@ -159,10 +178,19 @@ def embed_document_chunks(
         if not text:
             continue
 
+        figure_match = re.search(r"\[(?:본문\s+)?그림\s+\d+\]", text)
+        is_figure = att.get("type") in {
+            "attachment_hwp_figure", "attachment_figure", "body_figure",
+        }
         chunk_inputs.append({
-            "chunk_type": "attachment",
+            "chunk_type": "body_figure" if att.get("type") == "body_figure" else "attachment",
             "attachment_name": att.get("name"),
             "text": text,
+            "figure_marker": (
+                figure_match.group(0)
+                if is_figure and figure_match
+                else None
+            ),
         })
 
     if not chunk_inputs:
@@ -178,9 +206,15 @@ def embed_document_chunks(
         chunk_type = item["chunk_type"]
         attachment_name = item["attachment_name"]
         text = item["text"]
+        figure_marker = item.get("figure_marker")
 
         # 꼬리표를 합치지 않은 순수한 본문 텍스트 기준 분할
         chunks = chunk_text(text)
+        if figure_marker:
+            chunks = [
+                chunk if figure_marker in chunk else f"{figure_marker}\n{chunk}"
+                for chunk in chunks
+            ]
 
         if not chunks:
             continue

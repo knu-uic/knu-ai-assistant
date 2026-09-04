@@ -24,6 +24,27 @@ def test_search_maps_rows(monkeypatch):
     assert s["score"] == 0.87
     assert s["posted_at"] == "2026-06-02"
     assert s["summary"] == "요약문"
+    assert s["related_images"] == []
+
+
+def test_search_returns_only_the_image_referenced_by_the_chunk(monkeypatch):
+    figures = [
+        {"asset_id": 49, "number": 1, "label": "그림 1", "filename": "BIN0004.bmp", "description": "학문기초교양 필터", "context": "3학점 이수", "url": "/api/notice-assets/49/content"},
+        {"asset_id": 50, "number": 2, "label": "그림 2", "filename": "BIN0005.bmp", "description": "균형교양 필터", "context": "12학점 이수", "url": "/api/notice-assets/50/content"},
+    ]
+    fake_rows = [(
+        "https://x/figure", "수강신청 안내", "[그림 1]\n[그림 설명] 학문기초교양 필터", 0.91,
+        None, None, None, "수강", None, None,
+        "cse_notice", "컴퓨터공학과", "notice", "컴퓨터공학과", None, None, None, figures,
+    )]
+    import interfaces.http.web.search as m
+    monkeypatch.setattr(m, "embed_query", lambda q: [0.1])
+    monkeypatch.setattr(m, "search_chunks", lambda vec, **kw: fake_rows)
+
+    with TestClient(app) as client:
+        body = client.get("/api/search?q=학문기초교양").json()
+
+    assert [(image["number"], image["filename"]) for image in body["results"][0]["related_images"]] == [(1, "BIN0004.bmp")]
 
 
 def test_search_nan_score_coerced_to_zero(monkeypatch):

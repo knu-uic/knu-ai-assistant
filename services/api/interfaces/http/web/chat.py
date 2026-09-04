@@ -30,6 +30,7 @@ def _flat_payload(state: dict) -> dict:
         "verifier_note": state.get("verifier_note"),
         "categories": categories,
         "expanded_query": state.get("expanded_query"),
+        "related_images": state.get("related_images") or [],
     }
 
 

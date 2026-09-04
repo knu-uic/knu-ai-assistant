@@ -294,7 +294,8 @@ REDIS_URL = os.getenv("REDIS_URL")
 # worker (백그라운드 잡)
 # -----------------------------
 
-# 공지 증분 수집 주기(분). 60의 약수로 설정 (cron minute 집합으로 변환됨).
+# 실제 주기는 Server Manager JSON을 worker가 동적으로 읽는다.
+# 이 값은 기존 배포 호환을 위한 fallback이다.
 NOTICE_POLL_MINUTES = _env_int("NOTICE_POLL_MINUTES", 20)
 
 # 포털 비밀번호 잡 전달용 Fernet 키. 생성:

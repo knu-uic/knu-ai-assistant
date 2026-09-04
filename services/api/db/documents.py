@@ -10,6 +10,7 @@ from db.schema import _months_ago
 
 
 NOTICE_CATEGORIES = ("장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)")
+CURRENT_NOTICE_EXTRACTION_VERSION = "notice-v5"
 NOTICE_PERIOD_KINDS = (
     "application",
     "document_submission",
@@ -130,6 +131,138 @@ def document_exists(url: str) -> bool:
             (url,),
         ).fetchone()
         return bool(row and row[0])
+
+
+def document_is_current(url: str) -> bool:
+    """현재 파서 버전으로 재수집된 공지인지 확인한다.
+
+    URL만 존재한다고 건너뛰면 본문·첨부 파서를 개선해도 기존 오염
+    데이터가 영원히 남는다. 버전이 다른 문서는 다음 수집에서 한 번 재처리한다.
+    """
+    with sync_pool.connection() as conn:
+        row = conn.execute(
+            "SELECT extraction_version FROM notice WHERE url = %s",
+            (url,),
+        ).fetchone()
+        return bool(row and row[0] == CURRENT_NOTICE_EXTRACTION_VERSION)
+
+
+def select_crawl_records(
+    source_id: int,
+    records: list[dict],
+    *,
+    recent_days: int = 7,
+    refresh_outdated_extraction: bool = False,
+) -> list[dict]:
+    """URL 상태를 일괄 대조해 상세 처리가 필요한 기록만 반환한다."""
+    if not records:
+        return []
+
+    from datetime import date, datetime, timedelta
+
+    def parse_date(raw) -> date | None:
+        value = str(raw or "").strip().replace(".", "-").replace("/", "-").rstrip("-")
+        try:
+            return datetime.strptime(value[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    unique: dict[str, dict] = {record["url"]: record for record in records}
+    urls = list(unique)
+    posted_dates = [parse_date(unique[url].get("posted_at")) for url in urls]
+    pinned = [bool(unique[url].get("is_pinned")) for url in urls]
+
+    with sync_pool.connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO crawl_url_state (url, source_id, status, posted_at, is_pinned)
+            SELECT value.url, %s, 'discovered', value.posted_at, value.is_pinned
+            FROM unnest(%s::varchar[], %s::date[], %s::boolean[])
+                 AS value(url, posted_at, is_pinned)
+            ON CONFLICT (url) DO UPDATE SET
+                source_id = EXCLUDED.source_id,
+                posted_at = COALESCE(EXCLUDED.posted_at, crawl_url_state.posted_at),
+                is_pinned = EXCLUDED.is_pinned,
+                last_seen_at = now()
+            """,
+            (source_id, urls, posted_dates, pinned),
+        )
+        rows = conn.execute(
+            """
+            SELECT url, status, extraction_version, posted_at
+            FROM crawl_url_state
+            WHERE url = ANY(%s)
+            """,
+            (urls,),
+        ).fetchall()
+        states = {
+            row[0]: {
+                "status": row[1],
+                "extraction_version": row[2],
+                "posted_at": row[3],
+            }
+            for row in rows
+        }
+        cutoff = date.today() - timedelta(days=max(0, recent_days))
+        selected = [
+            unique[url]
+            for url in urls
+            if (
+                states[url]["status"] != "completed"
+                or (
+                    states[url]["extraction_version"] == CURRENT_NOTICE_EXTRACTION_VERSION
+                    and (
+                        states[url]["posted_at"] is None
+                        or states[url]["posted_at"] >= cutoff
+                    )
+                )
+                or (
+                    refresh_outdated_extraction
+                    and states[url]["extraction_version"] != CURRENT_NOTICE_EXTRACTION_VERSION
+                )
+            )
+        ]
+        if selected:
+            conn.execute(
+                """
+                UPDATE crawl_url_state
+                SET last_attempt_at = now(), attempt_count = attempt_count + 1
+                WHERE url = ANY(%s)
+                """,
+                ([record["url"] for record in selected],),
+            )
+        conn.commit()
+    return selected
+
+
+def mark_crawl_url_completed(url: str, *, posted_at: date | None = None) -> None:
+    with sync_pool.connection() as conn:
+        conn.execute(
+            """
+            UPDATE crawl_url_state
+            SET status = 'completed',
+                posted_at = COALESCE(%s, posted_at),
+                extraction_version = %s,
+                completed_at = now(),
+                last_error = NULL
+            WHERE url = %s
+            """,
+            (posted_at, CURRENT_NOTICE_EXTRACTION_VERSION, url),
+        )
+        conn.commit()
+
+
+def mark_crawl_url_failed(url: str, error: str) -> None:
+    with sync_pool.connection() as conn:
+        conn.execute(
+            """
+            UPDATE crawl_url_state
+            SET status = 'failed', last_error = %s, last_attempt_at = now()
+            WHERE url = %s
+            """,
+            (error[:4000], url),
+        )
+        conn.commit()
 
 
 def upsert_extraction_review(source_id: int, item: dict) -> None:
@@ -290,7 +423,7 @@ def insert_document(
     audiences: list[Any] | None = None,
     application: Any = None,
     extraction_confidence: float | None = None,
-    extraction_version: str = "notice-v2",
+    extraction_version: str = CURRENT_NOTICE_EXTRACTION_VERSION,
     extra: dict | None = None,
     posted_at=None,
     is_pinned: bool = False,
@@ -374,8 +507,8 @@ def insert_assets(notice_id: int, assets: list[dict]) -> None:
                 """
                 INSERT INTO notice_asset
                     (notice_id, kind, filename, source_url, storage_path,
-                     mime_type, extracted_text, order_idx)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                     mime_type, extracted_text, order_idx, extra)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     notice_id,
@@ -386,6 +519,7 @@ def insert_assets(notice_id: int, assets: list[dict]) -> None:
                     asset.get("mime_type"),
                     asset.get("extracted_text", ""),
                     asset.get("order_idx", 0),
+                    json.dumps(asset.get("extra") or {}, ensure_ascii=False),
                 ),
             )
         conn.commit()
@@ -441,7 +575,8 @@ _SEARCH_SELECT = """
     s.department,
     n.summary,
     n.body_content,
-    asset.names
+    asset.names,
+    asset.figures
 """
 
 _SEARCH_JOINS = """
@@ -461,7 +596,37 @@ _SEARCH_JOINS = """
     ) audience ON true
     LEFT JOIN LATERAL (
         SELECT array_agg(filename ORDER BY order_idx)
-               FILTER (WHERE filename IS NOT NULL) AS names
+               FILTER (
+                   WHERE filename IS NOT NULL
+                     AND kind NOT IN (
+                         'attachment_hwp_structure','attachment_hwp_markdown',
+                         'attachment_hwp_validation','attachment_hwp_image',
+                         'attachment_document_image',
+                         'attachment_hwp_binary','inline_image'
+                     )
+               ) AS names,
+               jsonb_agg(
+                   jsonb_build_object(
+                       'asset_id', id,
+                       'number', (extra->'figure'->>'number')::int,
+                       'label', extra->'figure'->>'label',
+                       'marker', extra->'figure'->>'marker',
+                       'scope', extra->'figure'->>'scope',
+                       'filename', filename,
+                       'description', extra->'analysis'->>'description',
+                       'context', extra->'figure'->>'context',
+                       'url', '/api/notice-assets/' || id || '/content'
+                   ) ORDER BY (extra->'figure'->>'number')::int
+               ) FILTER (
+                   WHERE kind IN ('attachment_hwp_image','attachment_document_image','inline_image')
+                     AND extra->'figure'->>'number' IS NOT NULL
+                     AND (
+                         nc.attachment_name IS NULL
+                         OR extra->>'parentAttachment' IS NULL
+                         OR nc.attachment_name LIKE (extra->>'parentAttachment') || '%%'
+                     )
+                     AND COALESCE(extra->'analysis'->>'contextMatch','uncertain') <> 'unrelated'
+               ) AS figures
         FROM notice_asset
         WHERE notice_id = n.id
     ) asset ON true
@@ -532,7 +697,7 @@ def search_chunks(
             )
             SELECT url, title, content, score, posted_at, starts_on, ends_on,
                    category, targets, topics, code, name, kind, department,
-                   summary, body_content, names
+                   summary, body_content, names, figures
             FROM candidates
             WHERE document_rank = 1
             ORDER BY score DESC
@@ -871,6 +1036,11 @@ __all__ = [
     "sync_pinned_urls",
     "upsert_source",
     "document_exists",
+    "document_is_current",
+    "select_crawl_records",
+    "mark_crawl_url_completed",
+    "mark_crawl_url_failed",
+    "CURRENT_NOTICE_EXTRACTION_VERSION",
     "delete_documents_by_source",
     "insert_document",
     "insert_assets",

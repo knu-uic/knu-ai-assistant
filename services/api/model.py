@@ -20,6 +20,8 @@ from config import (
     EMBEDDING_MODEL,
     RERANKER_MODEL,
 )
+from api.runtime_settings import load_settings
+from api.codex_oauth import codex_response
 
 load_dotenv()
 
@@ -115,55 +117,85 @@ def _get_reranker():
 
 
 
-@lru_cache(maxsize=4)
-def _vlm_client(model: str):
-    """모델별 LangChain Chat 클라이언트 캐시. provider 토글 따름."""
-    if VLM_PROVIDER == "openai":
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model, api_key=OPENAI_API_KEY, temperature=0)
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    return ChatGoogleGenerativeAI(model=model, google_api_key=GOOGLE_API_KEY, temperature=0)
+def _active_vlm() -> dict:
+    return load_settings()["vlm"]
 
 
-def _vlm_image_block(data_url: str) -> dict:
+@lru_cache(maxsize=12)
+def _vlm_client(provider: str, model: str, base_url: str, api_key: str):
+    """설정 조합별 LangChain 클라이언트. 설정 변경 시 새 키로 자동 교체된다."""
+    if provider == "google":
+        return ChatGoogleGenerativeAI(model=model, google_api_key=api_key, temperature=0)
+    if provider in {"lmstudio", "ollama"}:
+        default_url = "http://127.0.0.1:11434/v1" if provider == "ollama" else "http://127.0.0.1:1234/v1"
+        return ChatOpenAI(
+            model=model,
+            base_url=base_url or default_url,
+            api_key=api_key or "local",
+            temperature=0,
+            max_tokens=_env_int("LOCAL_LLM_MAX_TOKENS", 2048),
+            timeout=_env_int("LOCAL_LLM_TIMEOUT_SECONDS", 180),
+        )
+    return ChatOpenAI(model=model, api_key=api_key, temperature=0)
+
+
+def _vlm_image_block(data_url: str, provider: str) -> dict:
     """provider별 langchain image block 포맷."""
-    if VLM_PROVIDER == "openai":
+    if provider != "google":
         return {"type": "image_url", "image_url": {"url": data_url}}
     return {"type": "image_url", "image_url": data_url}
 
 
 def image_to_text(image_bytes: bytes, mime: str, prompt: str, model: str = LLM_MODEL) -> str:
     """이미지 bytes를 VLM에 던져 텍스트로 받는다."""
+    settings = _active_vlm()
+    active_model = settings["model"] or model
     data_url = f"data:{mime};base64,{base64.b64encode(image_bytes).decode()}"
+    if settings["provider"] == "openai-codex":
+        return codex_response(prompt, model=active_model, image_data_url=data_url)
     msg = HumanMessage(content=[
         {"type": "text", "text": prompt},
-        _vlm_image_block(data_url),
+        _vlm_image_block(data_url, settings["provider"]),
     ])
-    response = _vlm_client(model).invoke([msg])
+    response = _vlm_client(
+        settings["provider"], active_model, settings["base_url"], settings["api_key"]
+    ).invoke([msg])
     return response.content if isinstance(response.content, str) else str(response.content)
 
 
-@lru_cache(maxsize=1)
 def get_llm():
-    if VLM_PROVIDER == "google":
+    settings = _active_vlm()
+    provider = settings["provider"]
+    model = settings["model"] or LLM_MODEL
+    api_key = settings["api_key"]
+    if provider == "openai-codex":
+        # Codex 선택은 OCR/VLM 이미지 추출에만 적용하고, 공지 구조화와
+        # RAG 답변은 기존 서버 LLM 설정을 유지한다.
+        provider = {"local": "lmstudio", "openai-api": "openai", "gemini": "google"}.get(
+            (VLM_PROVIDER or "local").lower(), (VLM_PROVIDER or "local").lower()
+        )
+        model = LLM_MODEL
+        api_key = GOOGLE_API_KEY if provider == "google" else OPENAI_API_KEY
+    if provider == "google":
         return ChatGoogleGenerativeAI(
-            model=LLM_MODEL,
-            google_api_key=GOOGLE_API_KEY,
+            model=model,
+            google_api_key=api_key,
             temperature=0,
         )
 
-    if VLM_PROVIDER == "openai":
+    if provider == "openai":
         return ChatOpenAI(
-            model=LLM_MODEL,
-            api_key=OPENAI_API_KEY,
+            model=model,
+            api_key=api_key,
             temperature=0,
         )
 
-    if VLM_PROVIDER == "local":
+    if provider in {"lmstudio", "ollama"}:
+        default_url = "http://127.0.0.1:11434/v1" if provider == "ollama" else OPENAI_COMPAT_BASE_URL
         return ChatOpenAI(
-            model=LLM_MODEL,
-            base_url=OPENAI_COMPAT_BASE_URL,
-            api_key="lm-studio",
+            model=model,
+            base_url=settings["base_url"] or default_url,
+            api_key=api_key or "local",
             # 구조화 추출은 재현성과 사실 보존이 중요하므로 기본값을 최저로 둔다.
             temperature=_env_float("LOCAL_LLM_TEMPERATURE", 0.0),
             # Gemma 계열 chat template가 지원하는 내부 추론은 공지 구조화에는
@@ -182,7 +214,7 @@ def get_llm():
             timeout=_env_int("LOCAL_LLM_TIMEOUT_SECONDS", 180),
         )
 
-    raise ValueError(f"지원하지 않는 provider: {VLM_PROVIDER}")
+    raise ValueError(f"지원하지 않는 provider: {provider}")
 
 
 @lru_cache(maxsize=1)

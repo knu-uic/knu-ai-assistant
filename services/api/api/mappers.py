@@ -4,6 +4,7 @@ from datetime import date, datetime
 
 from interfaces.http.schemas.notices import NoticeItem
 from interfaces.http.schemas.search import SearchResult
+from api.figures import related_figures
 
 
 def _iso(x):
@@ -70,8 +71,10 @@ def result_from_search_row(row) -> SearchResult:
     (url, title, snippet, score, posted_at, start_date, end_date, category,
      _target, _keywords, _code, _name, _kind, _dept, *rest) = row
     summary = rest[0] if rest else None
+    figures = row[17] if len(row) > 17 else []
     return SearchResult(
         url=url, title=title, snippet=snippet, score=_score(score),
         posted_at=_iso(posted_at), start_date=_iso(start_date), end_date=_iso(end_date),
         category=category, summary=summary,
+        related_images=related_figures(figures, snippet or ""),
     )

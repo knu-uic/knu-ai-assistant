@@ -1,10 +1,4 @@
-# prod 배포용 compose.
-# 기존 docker-compose.yml(스트림릿 개발용)은 건드리지 않고 별도 파일로 둔다.
-#
-# 원칙: 외부로 열리는 문은 다음 PR의 web(caddy) 하나뿐.
-#   지금은 db·redis·api·worker 모두 컨테이너 네트워크 안에서만 통신(호스트 포트 미노출).
-#   그래서 api 검증은 호스트가 아니라 컨테이너 안에서:
-#     docker compose -f docker-compose.prod.yml exec api curl -s localhost:8000/api/health
+# 공식 외부 호스팅용 compose. 외부에는 Caddy의 HTTP/HTTPS만 노출한다.
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -32,6 +26,23 @@ services:
     networks:
       - bot_network
 
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: "no"
+    command: python -m db.migrate
+    env_file:
+      - .env
+    environment:
+      RUNTIME_ENV: docker
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - bot_network
+
   api:
     build:
       context: .
@@ -44,11 +55,18 @@ services:
       # (config.py: load_dotenv override=False라 이 OS env가 우선)
       RUNTIME_ENV: docker                # → DB_HOST=db
       REDIS_URL: redis://redis:6379      # 코드 기본값(localhost) 대신 redis 서비스로
+    volumes:
+      - document_assets:/app/data/assets
     depends_on:
-      db:
-        condition: service_healthy       # pg_isready 통과 후 기동
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     networks:
       - bot_network
 
@@ -63,12 +81,12 @@ services:
     environment:
       RUNTIME_ENV: docker
       REDIS_URL: redis://redis:6379
-    # 볼륨 없음: LMS 로그인 세션(storage_state+토큰)은 Redis에 저장된다
-    # (api/sessions.py save_session/load_session). 워커는 동기화 때 임시 디렉터리에
-    # 세션을 풀어 쓰고 갱신분을 다시 Redis에 저장하므로 .secrets 영속이 불필요하다.
+    volumes:
+      # worker가 추출한 첨부·그림을 API가 같은 경로에서 제공한다.
+      - document_assets:/app/data/assets
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_started
     networks:
@@ -79,18 +97,26 @@ services:
       context: ../../apps/web    # apps/web/Dockerfile (node 빌드 → caddy 2-stage)
     restart: always
     environment:
-      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN is required}
+      KNU_SITE_ADDRESS: ${KNU_SITE_ADDRESS:?KNU_SITE_ADDRESS is required}
     ports:
-      - "80:80"                  # 외부로 열리는 유일한 문. api·db·redis는 내부 전용.
-      - "127.0.0.1:8000:8000"    # MCP 게이트웨이: 호스트 loopback 전용.
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
     depends_on:
-      - api                      # /api/* 프록시 대상
+      api:
+        condition: service_healthy
     networks:
       - bot_network
 
 volumes:
   pgdata:
   redisdata:
+  document_assets:
+  caddy_data:
+  caddy_config:
 
 networks:
   bot_network:

@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import re
+import struct
 import tempfile
 import zlib
 from collections import Counter
@@ -22,7 +23,7 @@ from PIL import Image, ImageOps
 from extractors.hwp2hwpx import convert_hwp_to_hwpx
 
 
-ImageAnalyzer = Callable[[bytes, str, str], dict]
+ImageAnalyzer = Callable[[bytes, str, str, str], dict]
 
 
 def _unicode_scalar_text(value: str) -> str:
@@ -113,6 +114,202 @@ def _block_dict(block) -> dict:
     return {"type": "unknown", "text": _unicode_scalar_text(getattr(block, "text", ""))}
 
 
+def _picture_bindata_ids(path: str) -> list[int]:
+    """Return BinData ids in actual picture placement order.
+
+    HWP's picture record stores the BinItem reference at byte offset 71. Using
+    this reference is essential: BinData stream order is not placement order.
+    """
+    from syhwp._hwp5 import _read_hwp5
+
+    _, sections = _read_hwp5(path)
+    picture_tag = 16 + 69  # HWPTAG_SHAPE_COMPONENT_PICTURE
+    result: list[int] = []
+    for records in sections:
+        for tag, _level, payload in records:
+            if tag == picture_tag and len(payload) >= 73:
+                binary_id = struct.unpack_from("<H", payload, 71)[0]
+                if binary_id:
+                    result.append(binary_id)
+    return result
+
+
+def _block_context_text(block: dict) -> str:
+    if block.get("type") == "table":
+        return " | ".join(
+            str(cell.get("text") or "").strip()
+            for cell in block.get("cells") or []
+            if str(cell.get("text") or "").strip() and "[그림]" not in str(cell.get("text"))
+        )
+    return str(block.get("text") or block.get("alt") or "").strip()
+
+
+def _clip_context(value: str, limit: int = 900) -> str:
+    value = re.sub(r"\s+", " ", value or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[:limit].rstrip() + "…"
+
+
+def _nearest_context(blocks: list[dict], index: int, direction: int) -> str:
+    values: list[str] = []
+    cursor = index + direction
+    while 0 <= cursor < len(blocks) and len(values) < 2:
+        text = _clip_context(_block_context_text(blocks[cursor]), 500)
+        if text:
+            values.append(text)
+        cursor += direction
+    if direction < 0:
+        values.reverse()
+    return "\n".join(values)
+
+
+def _number_figure_placements(blocks: list[dict], picture_ids: list[int]) -> list[dict]:
+    """Number every [그림] and bind it to its real BinData record + context."""
+    snapshots = json.loads(json.dumps(blocks, ensure_ascii=False))
+    figures: list[dict] = []
+    reference_index = 0
+
+    def replace_markers(text: str, block_index: int, cell: dict | None = None) -> str:
+        nonlocal reference_index
+
+        def replacement(_match: re.Match) -> str:
+            nonlocal reference_index
+            number = len(figures) + 1
+            binary_id = picture_ids[reference_index] if reference_index < len(picture_ids) else None
+            reference_index += 1
+            location = ""
+            if cell is not None:
+                row_cells = [
+                    str(candidate.get("text") or "").strip()
+                    for candidate in snapshots[block_index].get("cells") or []
+                    if candidate.get("row") == cell.get("row")
+                    and str(candidate.get("text") or "").strip()
+                ]
+                location = " | ".join(row_cells)
+            if not location:
+                location = str(text or "").strip()
+            before = _nearest_context(snapshots, block_index, -1)
+            after = _nearest_context(snapshots, block_index, 1)
+            context = "\n".join(
+                part for part in (
+                    f"[앞 문맥] {before}" if before else "",
+                    f"[그림 위치] {_clip_context(location)}" if location else "",
+                    f"[뒤 문맥] {after}" if after else "",
+                ) if part
+            )
+            figures.append({
+                "number": number,
+                "label": f"그림 {number}",
+                "binaryId": binary_id,
+                "blockIndex": block_index,
+                "cell": (
+                    {"row": cell.get("row"), "column": cell.get("column")}
+                    if cell is not None else None
+                ),
+                "context": context,
+                "matchMethod": "hwp_picture_record_bin_item_id" if binary_id else "unmatched",
+                "matchConfidence": 1.0 if binary_id else 0.0,
+            })
+            return f"[그림 {number}]"
+
+        return re.sub(r"\[그림\]", replacement, text or "")
+
+    for block_index, block in enumerate(blocks):
+        if block.get("type") == "table":
+            for cell in block.get("cells") or []:
+                cell["text"] = replace_markers(str(cell.get("text") or ""), block_index, cell)
+        elif block.get("type") == "image_reference":
+            label = replace_markers("[그림]", block_index)
+            block["alt"] = label.strip("[]")
+        elif "[그림]" in str(block.get("text") or ""):
+            block["text"] = replace_markers(str(block.get("text") or ""), block_index)
+    return figures
+
+
+def _number_markdown_figures(text: str, count: int) -> str:
+    number = 0
+
+    def replacement(_match: re.Match) -> str:
+        nonlocal number
+        number += 1
+        return f"[그림 {number}]" if number <= count else "[그림]"
+
+    return re.sub(r"\[그림\]", replacement, text or "")
+
+
+def _figure_appendix(figures: list[dict]) -> str:
+    entries: list[str] = []
+    for figure in figures:
+        analysis = figure.get("analysis") if isinstance(figure.get("analysis"), dict) else {}
+        search_text = str(analysis.get("searchText") or "").strip()
+        if not search_text or analysis.get("requiresReview"):
+            continue
+        entries.append(
+            f"### [그림 {figure['number']}]\n\n"
+            f"{figure.get('context', '').strip()}\n\n"
+            f"[그림 설명] {search_text}"
+        )
+    if not entries:
+        return ""
+    return "## 문서 그림 설명\n\n" + "\n\n".join(entries)
+
+
+def _figure_inline_text(figure: dict, *, html_breaks: bool = False) -> str:
+    """검수를 통과한 그림 설명을 원래 배치 표시 직후에 넣는다."""
+    analysis = figure.get("analysis") if isinstance(figure.get("analysis"), dict) else {}
+    if analysis.get("requiresReview"):
+        return ""
+    description = str(analysis.get("description") or "").strip()
+    ocr_text = str(analysis.get("ocrText") or "").strip()
+    if not description and not ocr_text:
+        description = str(analysis.get("searchText") or "").strip()
+    lines = []
+    if description:
+        lines.append(f"[그림 설명] {description}")
+    if ocr_text and ocr_text != description:
+        lines.append(f"[그림 내 텍스트] {ocr_text}")
+    separator = "<br>" if html_breaks else "\n"
+    return separator.join(lines)
+
+
+def _insert_figure_descriptions(text: str, figures: list[dict], *, markdown: bool) -> str:
+    """번호가 붙은 그림 표시 바로 뒤에 문맥 기반 설명을 삽입한다.
+
+    HWP 그림은 표 셀 안에 들어 있는 경우가 많다. Markdown 표를 깨지
+    않도록 Markdown 출력은 ``<br>``로, 일반 텍스트는 줄바꿈으로 연결한다.
+    """
+    output = text or ""
+    for figure in figures:
+        number = int(figure["number"])
+        marker = f"[그림 {number}]"
+        inline = _figure_inline_text(figure, html_breaks=markdown)
+        if not inline:
+            continue
+        replacement = f"{marker}{'<br>' if markdown else chr(10)}{inline}"
+        output = output.replace(marker, replacement, 1)
+    return output
+
+
+def _figure_search_contents(figures: list[dict]) -> list[dict]:
+    contents: list[dict] = []
+    for figure in figures:
+        analysis = figure.get("analysis") if isinstance(figure.get("analysis"), dict) else {}
+        search_text = str(analysis.get("searchText") or "").strip()
+        if not search_text or analysis.get("requiresReview"):
+            continue
+        contents.append({
+            "number": figure["number"],
+            "filename": figure.get("filename"),
+            "text": (
+                f"[그림 {figure['number']}]\n"
+                f"{figure.get('context', '').strip()}\n"
+                f"[그림 설명] {search_text}"
+            ).strip(),
+        })
+    return contents
+
+
 def _decompress_bindata(raw: bytes) -> bytes:
     try:
         return zlib.decompress(raw, -15)
@@ -154,6 +351,7 @@ def _extract_binaries(
     bundle_dir: Path,
     image_analyzer: ImageAnalyzer | None,
     validation_text: str,
+    figures_by_binary_id: dict[int, dict] | None = None,
 ) -> tuple[list[dict], dict]:
     binary_dir = bundle_dir / "images"
     binary_dir.mkdir(parents=True, exist_ok=True)
@@ -179,6 +377,9 @@ def _extract_binaries(
                 output_path.write_bytes(binary)
 
             analysis: dict = {}
+            binary_match = re.search(r"BIN(\d+)", Path(stream_name).stem, re.I)
+            binary_id = int(binary_match.group(1)) if binary_match else None
+            figure = (figures_by_binary_id or {}).get(binary_id) if binary_id is not None else None
             width = height = None
             if is_raster:
                 raster_count += 1
@@ -192,6 +393,7 @@ def _extract_binaries(
                                 preview,
                                 preview_mime,
                                 Path(stream_name).name,
+                                str((figure or {}).get("context") or ""),
                             )
                         analysis = analysis_cache[digest]
                         if analysis.get("kind") == "music_score":
@@ -242,13 +444,16 @@ def _extract_binaries(
                                 )
                                 if value.strip()
                             )
+                        if figure:
+                            analysis["figureNumber"] = figure["number"]
+                            analysis["documentContext"] = figure.get("context", "")
                         analyzed_count += 1
                         if analysis.get("kind") == "music_score":
                             music_count += 1
                 except Exception as error:
                     analysis = {"status": "failed", "error": f"{type(error).__name__}: {error}"}
 
-            assets.append({
+            asset = {
                 "kind": "attachment_hwp_image" if is_raster else "attachment_hwp_binary",
                 "filename": Path(stream_name).name,
                 "storage_path": str(output_path),
@@ -257,8 +462,32 @@ def _extract_binaries(
                 "width": width,
                 "height": height,
                 "analysis": analysis,
+                "binaryId": binary_id,
+                "figure": (
+                    {
+                        "number": figure["number"],
+                        "label": figure["label"],
+                        "blockIndex": figure["blockIndex"],
+                        "cell": figure.get("cell"),
+                        "context": figure.get("context", ""),
+                        "matchMethod": figure["matchMethod"],
+                        "matchConfidence": figure["matchConfidence"],
+                    }
+                    if figure else None
+                ),
                 "order_idx": order,
-            })
+            }
+            assets.append(asset)
+            if figure:
+                figure.update({
+                    "filename": asset["filename"],
+                    "storagePath": asset["storage_path"],
+                    "mimeType": asset["mime_type"],
+                    "sha256": asset["sha256"],
+                    "width": width,
+                    "height": height,
+                    "analysis": analysis,
+                })
 
     stats = {
         "binaryCount": len(assets),
@@ -291,16 +520,34 @@ def extract_hwp_structured(
         source.write(data)
         source.flush()
         document = syhwp.open(source.name)
+        picture_ids = _picture_bindata_ids(source.name)
 
     blocks = [_block_dict(block) for block in document.blocks]
-    markdown = _unicode_scalar_text(document.markdown.strip())
-    primary_text = _unicode_scalar_text(document.text.strip())
+    figures = _number_figure_placements(blocks, picture_ids)
+    figures_by_binary_id = {
+        int(figure["binaryId"]): figure
+        for figure in figures
+        if figure.get("binaryId") is not None
+    }
+    markdown = _number_markdown_figures(
+        _unicode_scalar_text(document.markdown.strip()), len(figures)
+    )
+    source_primary_text = _unicode_scalar_text(document.text.strip())
+    primary_text = _number_markdown_figures(
+        source_primary_text, len(figures)
+    )
     binary_assets, binary_stats = _extract_binaries(
         data,
         bundle_dir,
         image_analyzer,
-        primary_text,
+        source_primary_text,
+        figures_by_binary_id,
     )
+    # 이미지 분석이 끝난 뒤에만 원래 그림 위치에 검수된 설명을 삽입한다.
+    # 그림별 독립 검색 청크는 _figure_search_contents에서 별도로 유지한다.
+    markdown = _insert_figure_descriptions(markdown, figures, markdown=True)
+    primary_text = _insert_figure_descriptions(primary_text, figures, markdown=False)
+    figure_contents = _figure_search_contents(figures)
     conversion = convert_hwp_to_hwpx(data)
     converted_path: Path | None = None
     hwpx_validation = {
@@ -318,7 +565,7 @@ def extract_hwp_structured(
         converted_text = _unicode_scalar_text(converted_document.text.strip())
         hwpx_validation.update({
             "bytes": len(converted_data),
-            "textTokenF1": round(_counter_f1(primary_text, converted_text), 6),
+            "textTokenF1": round(_counter_f1(source_primary_text, converted_text), 6),
             "textCharacters": len(converted_text),
             "paragraphCount": len(converted_document.paragraphs),
             "tableCount": len(converted_document.tables),
@@ -342,10 +589,10 @@ def extract_hwp_structured(
     )
     # 셀이 없는 표도 정상이므로, 파싱된 셀의 좌표 범위만 검증한다.
     table_integrity = valid_cells / len(cells) if cells else 1.0
-    text_agreement = _counter_f1(primary_text, secondary_text)
+    text_agreement = _counter_f1(source_primary_text, secondary_text)
     length_ratio = (
-        min(len(primary_text), len(secondary_text))
-        / max(1, max(len(primary_text), len(secondary_text)))
+        min(len(source_primary_text), len(secondary_text))
+        / max(1, max(len(source_primary_text), len(secondary_text)))
     )
     quality_score = (
         text_agreement * 0.65
@@ -371,7 +618,7 @@ def extract_hwp_structured(
         "textTokenF1": round(text_agreement, 6),
         "textLengthRatio": round(length_ratio, 6),
         "tableIntegrity": round(table_integrity, 6),
-        "primaryTextCharacters": len(primary_text),
+        "primaryTextCharacters": len(source_primary_text),
         "secondaryTextCharacters": len(secondary_text),
         "paragraphCount": sum(block["type"] == "paragraph" for block in blocks),
         "tableCount": len(table_blocks),
@@ -394,6 +641,7 @@ def extract_hwp_structured(
         "quality": quality,
         "blocks": blocks,
         "binaries": binary_assets,
+        "figures": figures,
     })
     markdown_path = bundle_dir / "document.md"
     structure_path = bundle_dir / "document.json"
@@ -414,4 +662,5 @@ def extract_hwp_structured(
         "structure_path": str(structure_path),
         "converted_hwpx_path": str(converted_path) if converted_path else None,
         "binary_assets": binary_assets,
+        "figure_contents": figure_contents,
     }

@@ -14,8 +14,10 @@ import asyncio
 import redis as redis_sync
 from arq import cron
 from arq.connections import RedisSettings
+from arq.worker import func
 
-from config import NOTICE_POLL_MINUTES, PORTAL_SYNC_TIMEOUT_SECONDS, REDIS_URL
+from config import PORTAL_SYNC_TIMEOUT_SECONDS, REDIS_URL
+from api.runtime_settings import load_settings
 
 STEP_KEY_PREFIX = "portal-sync:step:"
 STEP_TTL_SECONDS = 600
@@ -124,23 +126,43 @@ async def lms_sync(ctx: dict, username: str, student_id: str, enc_password: str 
         r.close()
 
 
-async def poll_notices(ctx: dict) -> dict:
+async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
+    redis = ctx.get("redis")
+    lock_key = "notice-crawl:active"
+    if redis is not None:
+        acquired = await redis.set(lock_key, ctx.get("job_id", "crawler"), ex=25200, nx=True)
+        if not acquired:
+            return {"skipped": True, "reason": "already_running"}
     # 크롤+임베딩은 sync·장시간 작업 → 워커 이벤트루프 비블로킹 위해 스레드에서.
     # import도 여기서: 크롤러·임베딩(torch 등) 무거운 의존성을 잡 실행 시점에만 로드.
     from pipelines.ingest import run_ingest
 
-    result = await asyncio.to_thread(run_ingest)
-    print(f"📥 공지 폴링 결과: {result}")
-    return result
+    try:
+        result = await asyncio.to_thread(run_ingest, crawl_request)
+        print(f"📥 공지 폴링 결과: {result}")
+        return result
+    finally:
+        if redis is not None:
+            await redis.delete(lock_key)
 
 
-def _cron_minutes(interval: int) -> set[int]:
-    """간격(분)을 cron minute 집합으로. 예: 20 → {0, 20, 40}"""
-    return set(range(0, 60, interval))
+async def scheduled_poll_notices(ctx: dict) -> dict:
+    """매시 확인하되 설정된 1/6/12/24시간 경계에서만 수집한다."""
+    from datetime import datetime, timezone
+
+    settings = load_settings()
+    if not settings["crawl_enabled"]:
+        return {"skipped": True, "reason": "automatic_crawl_disabled"}
+    interval = settings["crawl_interval_hours"]
+    hour = datetime.now(timezone.utc).hour
+    if hour % interval:
+        return {"skipped": True, "interval_hours": interval}
+    return await poll_notices(ctx, settings["crawl_request"])
 
 
 class WorkerSettings:
-    functions = [portal_sync, lms_sync]
+    # 크롤링은 대용량 첨부·재시도를 포함하므로 포털 동기화(3분)와 다른 timeout을 쓴다.
+    functions = [portal_sync, lms_sync, func(poll_notices, timeout=21600)]
     # 포털 동기화는 Playwright 동시 실행 RAM 피크 제한 — 워커당 잡 2개까지
     max_jobs = 2
     job_timeout = PORTAL_SYNC_TIMEOUT_SECONDS
@@ -148,11 +170,11 @@ class WorkerSettings:
     keep_result = 120
     cron_jobs = [
         cron(
-            poll_notices,
-            minute=_cron_minutes(NOTICE_POLL_MINUTES),
+            scheduled_poll_notices,
+            minute={0},
             # 이전 실행이 안 끝났으면 다음 발화를 건너뜀 — 크롤 중복 실행 방지
             unique=True,
-            timeout=1800,
+            timeout=21600,
         )
     ]
     redis_settings = RedisSettings.from_dsn(REDIS_URL or "redis://localhost:6379")

@@ -13,6 +13,16 @@ def test_chat_maps_graph_result_to_flat_keys(monkeypatch):
                 "fidelity": 0.92,
                 "categories": ["scholarship"],
                 "expanded_query": "국가장학금 신청 기간",
+                "related_images": [{
+                    "asset_id": 49,
+                    "reference": "[그림:49]",
+                    "number": 1,
+                    "label": "그림 1",
+                    "filename": "BIN0004.bmp",
+                    "description": "학문기초교양 필터",
+                    "context": "3학점 이수",
+                    "url": "/api/notice-assets/49/content",
+                }],
             }
 
     import interfaces.http.web.chat as chat_mod
@@ -32,6 +42,7 @@ def test_chat_maps_graph_result_to_flat_keys(monkeypatch):
     assert body["categories"] == ["scholarship"]
     assert body["expanded_query"] == "국가장학금 신청 기간"
     assert body["verifier_note"] is None
+    assert body["related_images"][0]["number"] == 1
 
 
 def test_chat_defaults_when_keys_missing(monkeypatch):
@@ -50,3 +61,4 @@ def test_chat_defaults_when_keys_missing(monkeypatch):
     assert body["answer"] == "관련 공지를 찾지 못했습니다."
     assert body["grounded"] is None
     assert body["categories"] == []
+    assert body["related_images"] == []

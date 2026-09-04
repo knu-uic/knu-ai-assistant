@@ -4,7 +4,7 @@ from crawlers.methods.static_page import StaticPageConfig, StaticPageCrawler
 KONGJU_CRAWLERS = {
     "main_notice": BoardNoticeCrawler(BoardNoticeConfig(
         source_code="main_notice",
-        source_name="공주대학교 일반 공지",
+        source_name="공주대학교 학생 공지",
         department="공통",
         base_url="https://www.kongju.ac.kr",
         list_url="https://www.kongju.ac.kr/KNU/16909/subview.do",

@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from datetime import date
 
 
 class _Result:
@@ -49,3 +50,43 @@ def test_notice_scope_keeps_general_notices_for_explicit_department_and_grade(
     assert "ag.kind = 'grade'" in count_query
     assert count_params == ["경영학과", "경영학과", "2학년", "2"]
 
+
+def test_outdated_completed_url_is_refreshed_only_when_requested(monkeypatch):
+    from db import documents
+
+    url = "https://example.test/bbs/X/1/artclView.do"
+    posted_at = date.today()
+
+    class Result:
+        def __init__(self, rows=None):
+            self.rows = rows or []
+
+        def fetchall(self):
+            return self.rows
+
+    class Connection:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, query, params):
+            self.calls.append((str(query), params))
+            if "SELECT url, status, extraction_version" in str(query):
+                return Result([(url, "completed", "notice-v4", posted_at)])
+            return Result()
+
+        def commit(self):
+            return None
+
+    record = {"url": url, "posted_at": posted_at.isoformat(), "is_pinned": False}
+
+    connection = Connection()
+    monkeypatch.setattr(documents, "sync_pool", _Pool(connection))
+    assert documents.select_crawl_records(
+        1, [record], refresh_outdated_extraction=False
+    ) == []
+
+    connection = Connection()
+    monkeypatch.setattr(documents, "sync_pool", _Pool(connection))
+    assert documents.select_crawl_records(
+        1, [record], refresh_outdated_extraction=True
+    ) == [record]
