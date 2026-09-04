@@ -47,7 +47,7 @@ def test_time_based_archive_still_runs_when_crawl_returns_no_items(monkeypatch):
     }
 
 
-def test_review_required_item_is_quarantined_before_refine(monkeypatch):
+def test_review_required_item_keeps_notice_and_original_assets_but_marks_review(monkeypatch):
     import pipelines.ingest as ingest
 
     item = {
@@ -56,7 +56,8 @@ def test_review_required_item_is_quarantined_before_refine(monkeypatch):
         "review_required": True,
         "review_reason": "hwp_cross_validation_below_threshold",
         "extraction_quality": [{"score": 0.7}],
-        "assets": [],
+        "body_content": "공지 본문",
+        "assets": [{"kind": "attachment_hwp", "source_url": "https://example.test/a.hwp"}],
     }
 
     class ReviewCrawler:
@@ -78,20 +79,40 @@ def test_review_required_item_is_quarantined_before_refine(monkeypatch):
     monkeypatch.setattr(ingest, "sync_pinned_urls", lambda urls: None)
     monkeypatch.setattr(ingest, "archive_documents", lambda **kwargs: 0)
     monkeypatch.setattr(ingest, "upsert_source", lambda **kwargs: 9)
-    monkeypatch.setattr(ingest, "document_exists", lambda url: False)
+    monkeypatch.setattr(ingest, "document_is_current", lambda url: False)
     monkeypatch.setattr(
         ingest,
         "upsert_extraction_review",
         lambda source_id, value: reviewed.append((source_id, value)),
     )
-    monkeypatch.setattr(
-        ingest,
-        "refine",
-        lambda values: (_ for _ in ()).throw(AssertionError("must not refine")),
-    )
+    class Doc:
+        title = "검토 필요 HWP"
+        content = "공지 본문"
+        url = item["url"]
+        category = "일반(기타)"
+        target = None
+        start_date = None
+        end_date = None
+        keywords = []
+        summary = "요약"
+        topics = []
+        series_key = None
+        periods = []
+        audiences = []
+        application = None
+        extraction_confidence = 0.5
+
+    inserted_assets = []
+    monkeypatch.setattr(ingest, "refine", lambda values: [(Doc(), item["assets"], None)])
+    monkeypatch.setattr(ingest, "insert_document", lambda **kwargs: 77)
+    monkeypatch.setattr(ingest, "insert_assets", lambda notice_id, assets: inserted_assets.extend(assets))
+    monkeypatch.setattr(ingest, "insert_chunks", lambda *args: None)
+    monkeypatch.setattr(ingest, "embed_document_chunks", lambda **kwargs: [])
+    monkeypatch.setattr(ingest, "clear_extraction_review", lambda url: (_ for _ in ()).throw(AssertionError("review must remain")))
 
     result = ingest.run_ingest()
 
     assert reviewed == [(9, item)]
     assert result["review"] == 1
-    assert result["inserted"] == 0
+    assert result["inserted"] == 1
+    assert inserted_assets == item["assets"]

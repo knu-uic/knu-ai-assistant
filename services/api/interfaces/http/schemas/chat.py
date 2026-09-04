@@ -2,7 +2,8 @@
 
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from interfaces.http.schemas.search import RelatedImage
 
 
 class ChatRequest(BaseModel):
@@ -16,5 +17,6 @@ class ChatResponse(BaseModel):
     grounded: Optional[bool] = None
     fidelity: Optional[float] = None
     verifier_note: Optional[str] = None
-    categories: List[str] = []
+    categories: List[str] = Field(default_factory=list)
     expanded_query: Optional[str] = None
+    related_images: List[RelatedImage] = Field(default_factory=list)

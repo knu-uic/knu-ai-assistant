@@ -17,7 +17,7 @@ KNU AI Assistant 서버 프로젝트 분석 보고서
 - 실행 명령: python3 -m pipelines.ingest
 - 단계별 흐름:
   1) crawlers/registry.py가 크롤러 목록을 로드한다.
-     - 공주대학교 일반 공지
+     - 공주대학교 학생 공지
      - 컴퓨터공학과 학과공지/교과과정표
      - 경영학과 학과공지/교과과정표
      - 장학안내 등

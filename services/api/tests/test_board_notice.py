@@ -1,13 +1,16 @@
 from dataclasses import replace
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import time
 
 import requests
+from bs4 import BeautifulSoup
 
 from crawlers.methods.board_notice import (
     BoardNoticeConfig,
     BoardNoticeCrawler,
+    CrawlPageScope,
     _RequestsDownloadContext,
 )
 from extractors.attachments import _download
@@ -95,6 +98,108 @@ def test_detail_uses_fetched_html_without_opening_chromium(monkeypatch):
     assert browser.closed is True
 
 
+def test_body_preserves_blocks_joins_inline_spans_and_keeps_links(monkeypatch):
+    crawler = BoardNoticeCrawler(_config())
+    browser = _BrowserContext()
+    crawler._browser_context_factory = lambda: browser
+    monkeypatch.setattr(
+        crawler,
+        "_fetch_html_text",
+        lambda url: """
+            <h1 class="view-title">줄바꿈 테스트</h1>
+            <div class="write"><dd>2026.09.02</dd></div>
+            <div class="view-con">
+              <p><span>2026</span><span>학년도</span> <b>2학기</b> 안내</p>
+              <p>신청은 <a href="/apply">신청 페이지</a>에서 진행</p>
+              <p><a href="https://wrong.test">staff@example.test</a></p>
+              <p><a href="https://wrong.test">----------------</a></p>
+              <div>첫째 줄<br/>둘째 줄</div>
+            </div>
+        """,
+    )
+
+    item = crawler.crawl_detail("https://example.test/notice/links")
+
+    assert "2026학년도 2학기 안내" in item["body_content"]
+    assert "2026\n학년도" not in item["body_content"]
+    assert "[신청 페이지](https://example.test/apply)" in item["body_content"]
+    assert "[staff@example.test]" not in item["body_content"]
+    assert "[----------------]" not in item["body_content"]
+    assert "첫째 줄\n둘째 줄" in item["body_content"]
+
+
+def test_inline_body_image_keeps_dom_position_context_and_figure_contract(monkeypatch):
+    import crawlers.methods.board_notice as board_notice
+
+    crawler = BoardNoticeCrawler(_config())
+    browser = _BrowserContext()
+    crawler._browser_context_factory = lambda: browser
+    crawler._save_image_asset = lambda raw, mime: "/tmp/body-image.png"
+    monkeypatch.setattr(
+        crawler,
+        "_fetch_html_text",
+        lambda url: """
+            <h1 class="view-title">본문 그림 안내</h1>
+            <div class="write"><dd>2026.09.03</dd></div>
+            <div class="view-con">
+              <p>포털에서 수강 메뉴를 선택합니다.</p>
+              <img src="/images/guide.png" alt="수강 메뉴 화면"/>
+              <p>선택 후 저장 버튼을 누릅니다.</p>
+              <img src="/images/guide.png" alt="중복 이미지"/>
+            </div>
+        """,
+    )
+    monkeypatch.setattr(
+        board_notice,
+        "inline_image_to_text",
+        lambda url, context, document_context="", filename="": (
+            "수강 메뉴와 저장 버튼이 표시된 포털 화면",
+            b"fake-png",
+            "image/png",
+            {
+                "kind": "scanned_text",
+                "ocrText": "수강 메뉴 저장",
+                "description": "포털 수강 메뉴 선택 화면",
+                "contextMatch": "supports",
+                "confidence": 0.98,
+                "width": 800,
+                "height": 600,
+            },
+        ),
+    )
+
+    item = crawler.crawl_detail("https://example.test/notice/body-image")
+
+    before = item["body_content"].index("포털에서 수강 메뉴")
+    marker = item["body_content"].index("[본문 그림 1]")
+    after = item["body_content"].index("선택 후 저장 버튼")
+    assert before < marker < after
+    assert "[그림 설명] 포털 수강 메뉴 선택 화면" in item["body_content"]
+    assert item["body_content"].count("[본문 그림 1]") == 1
+    assert "[본문 그림 2]" not in item["body_content"]
+    assert len(item["assets"]) == 1
+    assert item["assets"][0]["kind"] == "inline_image"
+    assert item["assets"][0]["extra"]["figure"]["marker"] == "[본문 그림 1]"
+    assert "[앞 문맥] 포털에서 수강 메뉴를 선택합니다." in item["assets"][0]["extra"]["figure"]["context"]
+    assert item["attachment_contents"][0]["type"] == "body_figure"
+    assert item["attachment_contents"][0]["name"].startswith("__body__")
+
+
+def test_attachment_fallback_finds_download_links_without_list_selector():
+    crawler = BoardNoticeCrawler(_config(attachment_selector=".missing li"))
+    soup = BeautifulSoup("""
+      <div class="view-file">
+        <div><a href="/bbs/X/1/download.do">안내.xlsx</a></div>
+        <div><a href="/bbs/X/2/download.do">안내.hwp</a></div>
+      </div>
+    """, "html.parser")
+
+    attachments = crawler._collect_attachments(soup)
+
+    assert [item["filename"] for item in attachments] == ["안내.xlsx", "안내.hwp"]
+    assert attachments[0]["download_url"] == "https://example.test/bbs/X/1/download.do"
+
+
 def test_failed_hwp_originals_are_quarantined_without_opening_preview(monkeypatch):
     import crawlers.methods.board_notice as board_notice
 
@@ -171,6 +276,27 @@ def test_successful_hwp_original_does_not_open_browser(monkeypatch):
                 "mime_type": "application/x-hwp",
                 "raw_bytes": None,
                 "extracted_text": "원본에서 추출한 전체 본문",
+                "derived_assets": [
+                    {
+                        "kind": "attachment_hwp_structure",
+                        "filename": "document.json",
+                        "storage_path": "/tmp/document.json",
+                        "mime_type": "application/json",
+                        "extracted_text": "내부 품질 데이터",
+                    },
+                    {
+                        "kind": "attachment_hwp_image",
+                        "filename": "BIN0001.bmp",
+                        "storage_path": "/tmp/BIN0001.bmp",
+                        "mime_type": "image/bmp",
+                        "extracted_text": "내부 이미지 설명",
+                        "figure": {"number": 1, "label": "그림 1", "context": "검증된 문맥"},
+                        "analysis": {"description": "내부 이미지 설명", "searchText": "내부 이미지 설명"},
+                    },
+                ],
+                "figure_contents": [
+                    {"number": 1, "filename": "BIN0001.bmp", "text": "[그림 1]\n검증된 문맥과 설명"},
+                ],
             },
         ),
     )
@@ -178,6 +304,15 @@ def test_successful_hwp_original_does_not_open_browser(monkeypatch):
     item = crawler.crawl_detail("https://example.test/notice/hwp")
 
     assert item["attachment_contents"][0]["type"] == "attachment_hwp"
+    assert [entry["name"] for entry in item["attachment_contents"]] == [
+        "요람.hwp", "요람.hwp · 그림 1",
+    ]
+    assert item["attachment_contents"][1]["type"] == "attachment_figure"
+    assert [asset["filename"] for asset in item["assets"]] == [
+        "요람.hwp", "document.json", "BIN0001.bmp",
+    ]
+    assert item["assets"][2]["extra"]["parentAttachment"] == "요람.hwp"
+    assert item["assets"][2]["extra"]["figure"]["number"] == 1
     assert browser.run_count == 0
     assert browser.closed is True
 
@@ -329,3 +464,96 @@ def test_kongju_common_board_limits_parallelism_to_two():
     from crawlers.sites.kongju import KONGJU_CRAWLERS
 
     assert KONGJU_CRAWLERS["main_notice"].config.max_workers == 2
+
+
+def test_kongju_common_board_uses_student_notice_display_name():
+    from crawlers.sites.kongju import KONGJU_CRAWLERS
+
+    assert KONGJU_CRAWLERS["main_notice"].SOURCE_NAME == "공주대학교 학생 공지"
+
+
+def test_full_scope_continues_after_page_whose_urls_are_all_known(monkeypatch):
+    crawler = BoardNoticeCrawler(_config(pages=30, dedupe_urls=True))
+    crawler._browser_context_factory = _BrowserContext
+    visited = []
+    partial_urls = {
+        f"https://example.test/notice/{page}"
+        for page in range(3, 21)
+    }
+
+    def records(_page, page_number):
+        visited.append(page_number)
+        return [{
+            "url": f"https://example.test/notice/{page_number}",
+            "is_pinned": False,
+            "posted_at": "2020-01-01",
+        }]
+
+    monkeypatch.setattr(crawler, "detect_total_pages", lambda: 30)
+    monkeypatch.setattr(crawler, "_collect_post_records", records)
+    monkeypatch.setattr(
+        crawler,
+        "_crawl_post_parallel",
+        lambda _browser, url, *_args, **_kwargs: {"url": url},
+    )
+
+    items = list(crawler.crawling(
+        scope=CrawlPageScope(mode="all"),
+        select_records=lambda rows: [
+            row for row in rows if row["url"] not in partial_urls
+        ],
+    ))
+
+    assert visited == list(range(1, 31))
+    assert len(items) == 12
+    assert crawler.last_run_stats["known"] == 18
+
+
+def test_range_scope_visits_only_requested_pages(monkeypatch):
+    crawler = BoardNoticeCrawler(_config(pages=100))
+    crawler._browser_context_factory = _BrowserContext
+    visited = []
+    monkeypatch.setattr(crawler, "detect_total_pages", lambda: 100)
+    monkeypatch.setattr(
+        crawler,
+        "_collect_post_records",
+        lambda _page, page_number: visited.append(page_number) or [],
+    )
+
+    assert list(crawler.crawling(
+        scope=CrawlPageScope(mode="range", start_page=3, end_page=20),
+    )) == []
+    assert visited == list(range(3, 21))
+
+
+def test_recent_scope_stops_at_first_page_older_than_cutoff(monkeypatch):
+    crawler = BoardNoticeCrawler(_config(pages=100))
+    crawler._browser_context_factory = _BrowserContext
+    visited = []
+    today = date.today().isoformat()
+
+    def records(_page, page_number):
+        visited.append(page_number)
+        return [{
+            "url": f"https://example.test/notice/{page_number}",
+            "is_pinned": False,
+            "posted_at": today if page_number < 3 else "2020-01-01",
+        }]
+
+    monkeypatch.setattr(crawler, "detect_total_pages", lambda: 100)
+    monkeypatch.setattr(crawler, "_collect_post_records", records)
+    monkeypatch.setattr(
+        crawler,
+        "_crawl_post_parallel",
+        lambda _browser, url, *_args, **_kwargs: {"url": url},
+    )
+
+    items = list(crawler.crawling(
+        scope=CrawlPageScope(mode="recent", recent_days=7),
+    ))
+
+    assert visited == [1, 2, 3]
+    assert [item["url"] for item in items] == [
+        "https://example.test/notice/1",
+        "https://example.test/notice/2",
+    ]

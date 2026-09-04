@@ -1,8 +1,10 @@
 import sitecustomize  # noqa: F401  # project-level pycache routing
 
+from dataclasses import dataclass
 from datetime import date, datetime
 
 from crawlers import CRAWLERS
+from crawlers.methods.board_notice import CrawlPageScope
 from pipelines.refine import refine
 from db import (
     init_db,
@@ -12,7 +14,10 @@ from db import (
     insert_document,
     insert_assets,
     insert_chunks,
-    document_exists,
+    document_is_current,
+    select_crawl_records,
+    mark_crawl_url_completed,
+    mark_crawl_url_failed,
     upsert_extraction_review,
     clear_extraction_review,
     delete_documents_by_source,
@@ -44,15 +49,47 @@ def _parse_posted_date(raw: str | None) -> date | None:
         return None
 
 
-def run_ingest() -> dict:
+@dataclass(frozen=True)
+class CrawlOptions:
+    mode: str = "all"
+    start_page: int = 1
+    end_page: int | None = None
+    recent_days: int = 7
+    refresh_outdated_extraction: bool = False
+    source_codes: tuple[str, ...] = ()
+
+    @classmethod
+    def from_value(cls, value: dict | None) -> "CrawlOptions":
+        if not value:
+            return cls()
+        return cls(
+            mode=str(value.get("mode") or "all"),
+            start_page=max(1, int(value.get("start_page") or 1)),
+            end_page=(
+                max(1, int(value["end_page"]))
+                if value.get("end_page") is not None
+                else None
+            ),
+            recent_days=max(0, int(value.get("recent_days") or 7)),
+            refresh_outdated_extraction=bool(value.get("refresh_outdated_extraction", False)),
+            source_codes=tuple(str(code) for code in value.get("source_codes") or ()),
+        )
+
+
+def run_ingest(options: dict | CrawlOptions | None = None) -> dict:
     """전체 크롤러 증분 수집 1회. 합산 카운트를 반환한다(워커 로그·모니터링용).
 
     DB에 이미 있는 글은 should_skip으로 건너뛰므로 반복 실행해도 안전하다.
     """
+    options = options if isinstance(options, CrawlOptions) else CrawlOptions.from_value(options)
     init_db()
+    selected_crawlers = [
+        crawler for crawler in CRAWLERS
+        if not options.source_codes or crawler.SOURCE_CODE in options.source_codes
+    ]
     total = {"crawled": 0, "inserted": 0, "skipped": 0, "dropped": 0, "review": 0}
     pinned_urls: set[str] = set()
-    for crawler in CRAWLERS:
+    for crawler in selected_crawlers:
         collect_pinned_urls = getattr(crawler, "collect_pinned_urls", None)
         if collect_pinned_urls:
             try:
@@ -62,7 +99,7 @@ def run_ingest() -> dict:
     sync_pinned_urls(pinned_urls)
     archive_documents(retention_months=24, protected_urls=pinned_urls)
 
-    for mod in CRAWLERS:
+    for mod in selected_crawlers:
         source_id = upsert_source(
             code=mod.SOURCE_CODE,
             name=mod.SOURCE_NAME,
@@ -80,7 +117,32 @@ def run_ingest() -> dict:
         dropped_count = 0
         review_count = 0
 
-        for item in mod.crawling(should_skip=document_exists):
+        uses_url_registry = hasattr(mod, "detect_total_pages")
+        crawl_kwargs = {}
+        if uses_url_registry:
+            page_scope = CrawlPageScope(
+                mode=options.mode,
+                start_page=options.start_page,
+                end_page=options.end_page,
+                recent_days=options.recent_days,
+            )
+            crawl_kwargs = {
+                "scope": page_scope,
+                "select_records": lambda records, sid=source_id: select_crawl_records(
+                    sid,
+                    records,
+                    recent_days=options.recent_days,
+                    refresh_outdated_extraction=options.refresh_outdated_extraction,
+                ),
+                "on_detail_failure": mark_crawl_url_failed,
+            }
+
+        iterator = (
+            mod.crawling(**crawl_kwargs)
+            if uses_url_registry
+            else mod.crawling(should_skip=document_is_current)
+        )
+        for item in iterator:
             crawled_count += 1
 
             replace_by_source = bool(item.get("replace_by_source"))
@@ -92,7 +154,11 @@ def run_ingest() -> dict:
                 )
 
             # 이중 안전망 — 크롤러가 should_skip을 무시해도 여기서 한 번 더 거름.
-            if (not replace_by_source) and document_exists(item["url"]):
+            if (
+                not uses_url_registry
+                and not replace_by_source
+                and document_is_current(item["url"])
+            ):
                 skipped_count += 1
                 print(f"   ↳ 이미 적재됨: {item['url']}")
                 continue
@@ -101,15 +167,16 @@ def run_ingest() -> dict:
                 upsert_extraction_review(source_id, item)
                 review_count += 1
                 print(
-                    f"   ↳ 추출 품질 검토함으로 격리: {item['url']} "
+                    f"   ↳ 추출 품질 검토 표시(본문·원본은 저장): {item['url']} "
                     f"({item.get('review_reason') or 'reason unavailable'})"
                 )
-                continue
 
             posted_at = _parse_posted_date(item.get("date"))
             refined_data = refine([item])
             if not refined_data:
                 dropped_count += 1
+                if uses_url_registry:
+                    mark_crawl_url_failed(item["url"], "refine returned no result")
                 print(f"   ↳ refine 실패로 스킵: {item['url']}")
                 continue
 
@@ -147,7 +214,8 @@ def run_ingest() -> dict:
                 is_pinned=bool(item.get("is_pinned")),
             )
             insert_assets(document_id, assets)
-            clear_extraction_review(doc.url)
+            if not item.get("review_required"):
+                clear_extraction_review(doc.url)
 
             base_body_content = (
                 item.get("body_content")
@@ -155,27 +223,20 @@ def run_ingest() -> dict:
                 or ""
             )
 
-            inline_image_texts: list[str] = []
-            for asset in assets:
-                if asset.get("kind") != "inline_image":
-                    continue
-
-                ocr_text = (
-                    asset.get("ocr_text")
-                    or asset.get("text")
-                    or ""
-                ).strip()
-
-                if not ocr_text:
-                    continue
-
-                inline_image_texts.append(
-                    f"[본문 이미지 OCR]\n{ocr_text}"
-                )
-
             merged_body_content = base_body_content
-            if inline_image_texts:
-                merged_body_content += "\n\n" + "\n\n".join(inline_image_texts)
+            # 새 crawler는 OCR/설명을 원래 [본문 그림 N] 위치에 이미 삽입한다.
+            # 이전 crawler가 만든 위치 정보 없는 asset만 끝에 보강해 호환한다.
+            if "[본문 그림 " not in merged_body_content:
+                legacy_inline_texts = [
+                    str(asset.get("extracted_text") or asset.get("ocr_text") or asset.get("text") or "").strip()
+                    for asset in assets
+                    if asset.get("kind") == "inline_image"
+                ]
+                legacy_inline_texts = [value for value in legacy_inline_texts if value]
+                if legacy_inline_texts:
+                    merged_body_content += "\n\n" + "\n\n".join(
+                        f"[본문 이미지 OCR]\n{value}" for value in legacy_inline_texts
+                    )
 
             chunks = embed_document_chunks(
                 title=doc.title,
@@ -187,6 +248,8 @@ def run_ingest() -> dict:
             )
 
             insert_chunks(document_id, chunks)
+            if uses_url_registry:
+                mark_crawl_url_completed(item["url"], posted_at=posted_at)
             inserted_count += 1
 
         print(

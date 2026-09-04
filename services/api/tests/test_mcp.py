@@ -125,7 +125,7 @@ def test_mcp_rate_limit_is_scoped_to_authenticated_principal(monkeypatch):
     assert all(limit == mcp_mod.RATE_LIMIT_MCP for _, limit in seen)
 
 
-def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
+def test_mcp_lists_grouped_notice_and_student_data_tools(monkeypatch):
     import interfaces.mcp.server as mcp_mod
 
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
@@ -142,6 +142,10 @@ def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
         "knu_list_notices",
         "knu_search_notice_details",
         "knu_get_notice_detail",
+        "knu_get_portal_academic_data",
+        "knu_list_lms_tasks",
+        "knu_list_lms_courses",
+        "knu_get_student_profile",
     }
     scan_tool = next(tool for tool in tools if tool["name"] == "knu_list_notices")
     deep_tool = next(tool for tool in tools if tool["name"] == "knu_search_notice_details")
@@ -161,7 +165,65 @@ def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
     grade_options = scan_properties["grade"].get("anyOf", [])
     grade_enum = next(option["enum"] for option in grade_options if "enum" in option)
     assert grade_enum == [1, 2, 3, 4]
+    assert scan_properties["year"]["anyOf"][0] == {
+        "type": "integer", "minimum": 2000, "maximum": 2200
+    }
+    metadata = scan_tool["_meta"]["com.codmes/tool"]
+    assert metadata["publicName"] == "knu_list_notices"
+    assert metadata["group"] == "knu.notices"
+    assert metadata["groupDescriptions"]["knu.portal"].startswith("로그인한 학생")
+    assert scan_tool["annotations"]["readOnlyHint"] is True
+    assert scan_tool["annotations"]["destructiveHint"] is False
     assert "limit" not in deep_tool["inputSchema"]["properties"]
+    portal_tool = next(tool for tool in tools if tool["name"] == "knu_get_portal_academic_data")
+    section_options = portal_tool["inputSchema"]["properties"]["section"]
+    assert set(section_options["enum"]) == {
+        "profile", "timetable", "grade_distribution", "cumulative_grades", "graduation_credits"
+    }
+
+
+def test_mcp_student_tools_use_authenticated_students_own_data(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+
+    seen = []
+    monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", None)
+    monkeypatch.setattr(
+        mcp_mod,
+        "get_user",
+        lambda student_id: {
+            "student_id": student_id,
+            "name": "테스트 학생",
+            "major": "컴퓨터공학과",
+            "year": 3,
+            "cumulative_grades": {"gpa": 4.0},
+        },
+    )
+    monkeypatch.setattr(
+        mcp_mod,
+        "get_lms_tasks",
+        lambda student_id, include_done: seen.append((student_id, include_done)) or [
+            {"course_name": "자료구조", "title": "과제 1", "is_done": False, "due_date": None},
+            {"course_name": "영어", "title": "과제 2", "is_done": True, "due_date": None},
+        ],
+    )
+    monkeypatch.setattr(
+        mcp_mod,
+        "get_lms_courses",
+        lambda student_id: [{"student_id": student_id, "course_name": "자료구조"}],
+    )
+    token = create_portal_access_token("20260009")
+
+    with TestClient(app) as client:
+        grades = _tool_call(client, token, "knu_get_portal_academic_data", {"section": "cumulative_grades"})
+        tasks = _tool_call(client, token, "knu_list_lms_tasks", {"status": "pending", "course_name": "자료"})
+        courses = _tool_call(client, token, "knu_list_lms_courses", {})
+        profile = _tool_call(client, token, "knu_get_student_profile", {})
+
+    assert grades == {"status": "ok", "section": "cumulative_grades", "data": {"gpa": 4.0}}
+    assert [item["title"] for item in tasks["tasks"]] == ["과제 1"]
+    assert courses["courses"][0]["student_id"] == "20260009"
+    assert profile["profile"]["student_id"] == "20260009"
+    assert seen == [("20260009", True)]
 
 
 def test_knu_list_notices_returns_server_total(monkeypatch):
@@ -403,10 +465,11 @@ def test_knu_search_notice_details_returns_safe_fields(monkeypatch):
             "source_name": "컴퓨터공학과",
             "source_department": "컴퓨터공학과",
             "content": "수강 철회 근거",
-            "vector_score": 0.87,
-            "rerank_score": 0.96,
-        }
-    ]
+                "vector_score": 0.87,
+                "rerank_score": 0.96,
+                "related_images": [],
+            }
+        ]
     assert len(package["documents"][0]["body_content"]) <= mcp_mod._EVIDENCE_TEXT_LIMIT
     assert package["documents"][0]["source_department"] == "컴퓨터공학과"
     assert package["documents"][0]["truncated"] is True

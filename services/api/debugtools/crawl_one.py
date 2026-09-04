@@ -60,11 +60,12 @@ from crawlers import CRAWLERS
 import crawlers.methods.board_notice as board_notice
 from db import (
     delete_documents_by_source,
-    document_exists,
+    document_is_current,
     init_db,
     insert_assets,
     insert_chunks,
     insert_document,
+    mark_crawl_url_completed,
     upsert_source,
 )
 from embedding.embed import embed_chunks
@@ -357,8 +358,8 @@ def main() -> None:
                     print(f"[db] replace_by_source enabled: source_id={source_id}")
                     delete_documents_by_source(source_id)
 
-                if not replace_by_source and document_exists(doc.url):
-                    print(f"[db] already exists: {doc.url}")
+                if not replace_by_source and document_is_current(doc.url):
+                    print(f"[db] already current: {doc.url}")
                 else:
                     posted_at = _parse_posted_date(item.get("date"))
 
@@ -386,6 +387,7 @@ def main() -> None:
 
                     insert_assets(document_id, assets)
                     insert_chunks(document_id, chunks)
+                    mark_crawl_url_completed(doc.url, posted_at=posted_at)
 
                     print(f"[db] saved: document_id={document_id}")
 

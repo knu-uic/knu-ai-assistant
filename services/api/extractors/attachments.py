@@ -3,13 +3,19 @@
 각 어댑터는 실패 시 빈 문자열 또는 [실패 사유]를 돌려준다.
 호출자는 결과를 본문에 그대로 이어 붙이면 된다.
 """
-from model import get_llm
+from model import get_llm, image_to_text
 from parsers.pdf_parser import parse_pdf      # ODL 기반 PDF→마크다운 공유 헬퍼
 from extractors.hwp_structured import extract_hwp_structured
+from extractors.structured_figures import (
+    extract_docx_figures,
+    extract_hwpx_figures,
+    extract_pdf_figures,
+    extract_pptx_figures,
+    extract_xlsx_figures,
+)
 
 # --- 표준 라이브러리 ---
 import io           # 바이트 데이터를 "파일처럼" 다루기 위한 BytesIO 용도 (zipfile/이미지 버퍼가 파일객체를 요구함)
-import base64       # 이미지 바이트를 Gemini에 보낼 때 base64 문자열로 인코딩
 import json
 import zipfile      # HWPX 파일은 사실상 ZIP 컨테이너라서 직접 열어서 내부 XML을 꺼냄
 import os
@@ -23,14 +29,14 @@ from xml.etree import ElementTree as ET        # HWPX 내부 XML 파싱
 import openpyxl                                # XLSX 읽기 (현재 라우터에서는 미사용)
 import olefile                                 # HWP 5.x OLE 컨테이너/압축 문단 직접 추출
 import xlrd                                    # XLS 읽기
+from PIL import Image
 from pptx import Presentation
-from langchain_core.messages import HumanMessage          # LangChain 멀티모달 메시지 포맷
 
 
 # HWPX 본문(paragraph)의 XML 네임스페이스.
 # 이 prefix를 붙여야 ElementTree가 <hp:t> 같은 텍스트 노드를 찾을 수 있다.
 _HWPX_PARA_NS = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
-_SUPPORTED_ZIP_EXTS = {".zip", ".pdf", ".hwpx", ".hwp", ".xlsx", ".xls", ".ppt", ".pptx", ".jpg", ".jpeg", ".png", ".gif"}
+_SUPPORTED_ZIP_EXTS = {".zip", ".pdf", ".docx", ".hwpx", ".hwp", ".xlsx", ".xls", ".ppt", ".pptx", ".jpg", ".jpeg", ".png", ".gif"}
 _MAX_ZIP_MEMBERS = 30
 _MAX_ZIP_DEPTH = 2
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
@@ -63,6 +69,24 @@ def hwpx_bytes_to_text(data: bytes) -> str:
     return "\n".join(parts).strip()
 
 
+def docx_bytes_to_text(data: bytes) -> str:
+    """DOCX OpenXML의 문단·표 텍스트를 문서 순서대로 추출한다."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        root = ET.fromstring(archive.read("word/document.xml"))
+    paragraphs = []
+    for node in root.iter():
+        if node.tag.rsplit("}", 1)[-1] != "p":
+            continue
+        text = "".join(
+            str(child.text or "")
+            for child in node.iter()
+            if child.tag.rsplit("}", 1)[-1] == "t"
+        ).strip()
+        if text:
+            paragraphs.append(text)
+    return "\n".join(paragraphs).strip()
+
+
 # VLM(Gemini)에게 OCR을 시킬 때 쓰는 고정 프롬프트.
 # "설명 문장 붙이지 마라"가 핵심 — 안 그러면 "이 이미지는 ~에 대한 안내입니다" 같은 군더더기가 본문에 섞임.
 _VLM_PROMPT = """이 이미지는 대학 공지글의 일부다. 이미지에 적힌 모든 텍스트와 표를 한국어 plain text로 빠짐없이 추출하라.
@@ -76,18 +100,7 @@ _VLM_PROMPT = """이 이미지는 대학 공지글의 일부다. 이미지에 �
 
 def _image_to_text(image_bytes: bytes, mime: str, prompt: str = _VLM_PROMPT) -> str:
     """이미지 바이트를 Gemini에 던져 텍스트만 받아오는 저수준 헬퍼."""
-    # Gemini 멀티모달 API는 data URL 형태(base64 인코딩)로 이미지를 받는다
-    b64 = base64.b64encode(image_bytes).decode()
-
-    # LangChain의 멀티모달 메시지: 텍스트 블록 + 이미지 블록을 한 메시지에 같이 넣는다
-    msg = HumanMessage(content=[
-        {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-    ])
-
-    resp = get_llm().invoke([msg])
-    # resp.content가 가끔 list-of-blocks 형태로 올 때가 있어서 방어적으로 문자열화
-    return resp.content if isinstance(resp.content, str) else str(resp.content)
+    return image_to_text(image_bytes, mime, prompt)
 
 
 def _download(url: str, context) -> bytes:
@@ -266,6 +279,9 @@ def _zip_member_text(
     if ext == ".pdf":
         return f"{label}\n{_pdf_bytes_full(data)}"
 
+    if ext == ".docx":
+        return f"{label}\n{docx_bytes_to_text(data)}"
+
     if ext == ".pptx":
         return f"{label}\n{pptx_to_text(data)}"
 
@@ -407,41 +423,95 @@ def pptx_to_text(data: bytes) -> str:
     return "\n\n".join(chunks).strip()
 
 
-_HWP_IMAGE_PROMPT = """이 이미지는 대학 HWP 문서에서 추출한 원본 이미지다.
+_HWP_IMAGE_PROMPT = """이 이미지는 대학 공지 HTML 본문 또는 문서(HWP·HWPX·PDF·Word·Excel·PowerPoint)에서 추출한 원본 이미지다.
 반드시 아래 JSON 객체 하나만 출력하라.
-{"kind":"music_score|scanned_text|table_image|map|chart|photo|logo|other","ocrText":"보이는 글자를 원문 그대로","description":"검색에 필요한 짧은 설명","confidence":0.0,"music":{"title":"","lyricist":"","composer":"","lyrics":"","notationStatus":"preserved_as_image"}}
+{"kind":"music_score|scanned_text|table_image|map|chart|photo|logo|other","ocrText":"보이는 글자를 원문 그대로","description":"문서 문맥을 반영한 짧은 설명","contextMatch":"supports|unrelated|uncertain","confidence":0.0,"music":{"title":"","lyricist":"","composer":"","lyrics":"","notationStatus":"preserved_as_image"}}
 악보이면 제목·작사·작곡·가사처럼 눈으로 확실히 읽히는 정보만 기록한다. 음표나 음정을 추측하거나 악보를 텍스트 음계로 만들어내지 말고 notationStatus는 preserved_as_image로 둔다.
-일반 이미지도 보이지 않는 내용을 추측하지 않는다."""
+일반 이미지도 보이지 않는 내용을 추측하지 않는다. 주어진 앞뒤 문맥과 이미지가 실제로 서로를 보완하는지 contextMatch로 판정하고, 문맥과 충돌하면 unrelated 또는 uncertain으로 둔다."""
 
 
-def _hwp_image_analysis(image_bytes: bytes, mime: str, filename: str) -> dict:
-    """HWP BinData 이미지를 OCR/VLM으로 분류하되 악보 음표는 추측하지 않는다."""
+def _decode_image_analysis_json(raw: str) -> dict | None:
+    """작은 VLM이 붙이는 fence·잘못된 역슬래시·trailing comma를 제한적으로 복구."""
+    candidates = [raw.strip()]
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.I | re.S)
+    if fenced:
+        candidates.insert(0, fenced.group(1).strip())
+    first = raw.find("{")
+    last = raw.rfind("}")
+    if first >= 0 and last > first:
+        candidates.append(raw[first:last + 1].strip())
+
+    for candidate in candidates:
+        variants = [candidate]
+        repaired = re.sub(r'\\(?!["\\/bfnrtu])', "", candidate)
+        repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+        if repaired != candidate:
+            variants.append(repaired)
+        for variant in variants:
+            try:
+                value = json.loads(variant, strict=False)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                return value
+    return None
+
+
+def _hwp_image_analysis(image_bytes: bytes, mime: str, filename: str, document_context: str = "") -> dict:
+    """문서 내부 이미지를 OCR/VLM으로 분류하되 악보 음표는 추측하지 않는다."""
     raw = _image_to_text(
         image_bytes,
         mime,
-        f"파일명: {filename}\n{_HWP_IMAGE_PROMPT}",
+        f"파일명: {filename}\n문서 안의 그림 위치와 앞뒤 문맥:\n{document_context or '(문맥 없음)'}\n\n{_HWP_IMAGE_PROMPT}",
     ).strip()
-    fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I | re.S).strip()
-    try:
-        value = json.loads(fenced)
-    except json.JSONDecodeError:
+    value = _decode_image_analysis_json(raw)
+    if value is None:
         return {
             "kind": "other",
             "ocrText": "",
-            "description": raw,
+            "description": re.sub(r"```(?:json)?|```", "", raw, flags=re.I).strip()[:1200],
             "confidence": 0.0,
             "status": "unstructured_response",
         }
-    if not isinstance(value, dict):
-        return {"kind": "other", "description": raw, "confidence": 0.0}
     allowed = {"music_score", "scanned_text", "table_image", "map", "chart", "photo", "logo", "other"}
     if value.get("kind") not in allowed:
         value["kind"] = "other"
+    if value.get("contextMatch") not in {"supports", "unrelated", "uncertain"}:
+        value["contextMatch"] = "uncertain"
     if value["kind"] == "music_score":
         music = value.get("music") if isinstance(value.get("music"), dict) else {}
         music["notationStatus"] = "preserved_as_image"
         value["music"] = music
     return value
+
+
+def _figure_analyzer():
+    enabled = os.getenv("DOCUMENT_IMAGE_ANALYSIS_ENABLED")
+    if enabled is None:
+        enabled = os.getenv("HWP_IMAGE_ANALYSIS_ENABLED", "false")
+    return (
+        _hwp_image_analysis
+        if enabled.lower() in {"1", "true", "yes", "on"}
+        else None
+    )
+
+
+def _document_assets_root() -> Path:
+    return Path(
+        os.getenv("DOCUMENT_ASSETS_ROOT")
+        or os.getenv("HWP_ASSETS_ROOT", "data/assets")
+    )
+
+
+def _attach_structured_figures(meta: dict, structured: dict) -> str:
+    meta["derived_assets"] = list(meta.get("derived_assets") or []) + list(
+        structured.get("derived_assets") or []
+    )
+    meta["figure_contents"] = list(meta.get("figure_contents") or []) + list(
+        structured.get("figure_contents") or []
+    )
+    meta["figure_bundle_dir"] = structured.get("bundle_dir")
+    return str(structured.get("text") or "")
 
 
 def xlsx_relevant(*texts: str) -> bool:
@@ -688,29 +758,55 @@ def _preview_via_browser(preview_url: str, context) -> str:
 def inline_image_to_text(
     image_url: str,
     context,
-) -> tuple[str, bytes | None, str | None]:
-    """본문 inline 이미지를 VLM으로 텍스트화.
+    document_context: str = "",
+    filename: str = "notice-body-image",
+) -> tuple[str, bytes | None, str | None, dict]:
+    """본문 inline 이미지를 문맥과 함께 VLM으로 구조화한다.
 
-    반환: (text, raw_bytes, mime)
-      - 다운로드 실패: ("", None, None)
-      - 다운로드 성공/VLM 실패: ("", raw_bytes, mime)  — bytes는 보존
+    반환: (search_text, raw_bytes, mime, analysis). 작은 UI 이미지와 로고는
+    검색·렌더링 자산으로 채택하지 않는다.
     """
-    # 1단계: 이미지 다운로드. 실패하면 더 진행할 의미가 없으니 즉시 빈 결과 반환.
     try:
         data = _download(image_url, context)
     except Exception:
-        return "", None, None
+        return "", None, None, {"status": "download_failed"}
+    if not data:
+        return "", None, None, {"status": "download_failed"}
 
-    # 확장자 기반의 단순 mime 추정. (정확도가 필요하면 magic number 검사로 바꿔야 함)
-    mime = "image/png" if image_url.lower().endswith(".png") else "image/jpeg"
-
-    # 2단계: VLM 호출. 실패해도 raw_bytes는 살려둬서 호출자가 재처리할 수 있게 한다.
+    mime_by_format = {
+        "PNG": "image/png", "JPEG": "image/jpeg", "GIF": "image/gif",
+        "WEBP": "image/webp", "BMP": "image/bmp",
+    }
+    width = height = None
     try:
-        text = _image_to_text(data, mime).strip()
+        with Image.open(io.BytesIO(data)) as image:
+            width, height = image.size
+            mime = mime_by_format.get(str(image.format or "").upper(), "image/jpeg")
     except Exception:
-        text = ""
+        mime = "image/png" if image_url.lower().split("?", 1)[0].endswith(".png") else "image/jpeg"
 
-    return text, data, mime
+    if width is not None and height is not None and (
+        width < 48 or height < 32 or width * height < 4096 or max(width, height) > 20 * max(1, min(width, height))
+    ):
+        return "", None, None, {
+            "status": "ignored_small_ui_image", "width": width, "height": height,
+        }
+
+    try:
+        analysis = _hwp_image_analysis(data, mime, filename, document_context)
+    except Exception as error:
+        analysis = {"status": "failed", "error": f"{type(error).__name__}: {error}"}
+    analysis["width"] = width
+    analysis["height"] = height
+    search_text = "\n".join(value for value in (
+        str(analysis.get("ocrText") or "").strip(),
+        str(analysis.get("description") or "").strip(),
+    ) if value)
+    analysis["searchText"] = search_text
+    analysis["documentContext"] = document_context
+    if analysis.get("kind") == "logo":
+        return "", None, None, {**analysis, "status": "ignored_logo"}
+    return search_text, data, mime, analysis
 
 
 def attachment_to_text(att: dict, context, include_xlsx: bool = False):
@@ -765,7 +861,28 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             meta["kind"] = "attachment_pdf"
             meta["mime_type"] = "application/pdf"
             data = _download(source_url, context)
+            meta["raw_bytes"] = data
             body = _pdf_bytes_full(data)   # 텍스트 1차 → 실패 시 이미지 OCR 폴백 (위 함수 참고)
+            try:
+                body = _attach_structured_figures(
+                    meta,
+                    extract_pdf_figures(
+                        data, body, _document_assets_root(), _figure_analyzer()
+                    ),
+                )
+            except Exception as error:
+                meta["figure_extraction_error"] = f"{type(error).__name__}: {error}"
+
+        # ───────── 분기 1.25: Word OpenXML ─────────
+        elif ext == ".docx":
+            meta["kind"] = "attachment_docx"
+            meta["mime_type"] = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            data = _download(source_url, context)
+            meta["raw_bytes"] = data
+            structured = extract_docx_figures(
+                data, "", _document_assets_root(), _figure_analyzer()
+            )
+            body = _attach_structured_figures(meta, structured)
 
         # ───────── 분기 1.5: PPT / PPTX ─────────
         elif ext in (".ppt", ".pptx"):
@@ -775,8 +892,18 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                 if ext == ".pptx" else "application/vnd.ms-powerpoint"
             )
             data = _download(source_url, context)
+            meta["raw_bytes"] = data
             if ext == ".pptx":
                 body = pptx_to_text(data)
+                try:
+                    body = _attach_structured_figures(
+                        meta,
+                        extract_pptx_figures(
+                            data, body, _document_assets_root(), _figure_analyzer()
+                        ),
+                    )
+                except Exception as error:
+                    meta["figure_extraction_error"] = f"{type(error).__name__}: {error}"
             else:
                 body = "(구형 PPT는 정확한 구조 추출기가 없어 검토 대상으로 보존)"
                 meta["review_required"] = True
@@ -793,7 +920,14 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                 # 키워드 매칭(수강신청·교양·편성 등)이 걸린 공지 → 표 전체를 텍스트화해서 임베딩 대상에 포함.
                 try:
                     data = _download(source_url, context)
+                    meta["raw_bytes"] = data
                     body = xlsx_to_text(data)
+                    body = _attach_structured_figures(
+                        meta,
+                        extract_xlsx_figures(
+                            data, body, _document_assets_root(), _figure_analyzer()
+                        ),
+                    )
                 except Exception:
                     body = _office_preview_fallback(att, context)
                     if not body:
@@ -801,6 +935,7 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             elif include_xlsx and ext == ".xls":
                 try:
                     data = _download(source_url, context)
+                    meta["raw_bytes"] = data
                     body = xls_to_text(data)
                 except Exception:
                     body = _office_preview_fallback(att, context)
@@ -818,6 +953,7 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             )
             if ext == ".hwp":
                 file_data = _download(source_url, context)
+                meta["raw_bytes"] = file_data
                 if not file_data:
                     body = "(원본 HWP 다운로드 실패)"
                     meta["review_required"] = True
@@ -828,13 +964,8 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                         file_data,
                         name,
                         secondary_text=secondary_text,
-                        assets_root=Path(os.getenv("HWP_ASSETS_ROOT", "data/assets")),
-                        image_analyzer=(
-                            _hwp_image_analysis
-                            if os.getenv("HWP_IMAGE_ANALYSIS_ENABLED", "false").lower()
-                            in {"1", "true", "yes", "on"}
-                            else None
-                        ),
+                        assets_root=_document_assets_root(),
+                        image_analyzer=_figure_analyzer(),
                     )
                     derived_assets = [
                         {
@@ -876,15 +1007,23 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                             if structured["review_required"] else None
                         ),
                         "derived_assets": derived_assets,
+                        "figure_contents": structured.get("figure_contents") or [],
                     })
             else:
                 file_data = _download(source_url, context)
+                meta["raw_bytes"] = file_data
                 if not file_data:
                     body = "(원본 HWPX 다운로드 실패)"
                 else:
                     body = hwpx_bytes_to_text(file_data)
                     if not body or not body.strip():
                         raise RuntimeError("HWPX 구조 XML에서 텍스트를 추출하지 못함")
+                    body = _attach_structured_figures(
+                        meta,
+                        extract_hwpx_figures(
+                            file_data, body, _document_assets_root(), _figure_analyzer()
+                        ),
+                    )
 
         # ───────── 분기 4: 이미지 첨부 ─────────
         elif ext in _IMAGE_EXTS:
@@ -899,6 +1038,7 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             meta["kind"] = "attachment_zip"
             meta["mime_type"] = "application/zip"
             data = _download(source_url, context)
+            meta["raw_bytes"] = data
             body = _zip_bytes_to_text(data, source_url, context, include_xlsx)
             if not body:
                 body = "(ZIP 내부에서 처리 가능한 파일을 찾지 못했습니다.)"
@@ -937,6 +1077,9 @@ def extract_attachment_text(path: str | Path) -> str:
 
     if ext == ".pdf":
         return _pdf_bytes_full(data)
+
+    if ext == ".docx":
+        return docx_bytes_to_text(data)
 
     if ext == ".pptx":
         return pptx_to_text(data)

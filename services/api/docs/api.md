@@ -6,7 +6,7 @@
 
 ## 현재 기능
 
-- 공주대학교 일반 공지 크롤링
+- 공주대학교 학생 공지 크롤링
 - 컴퓨터공학과 학과공지 크롤링
 - 경영학과 학과공지 크롤링
 - 컴퓨터공학과 교과과정표 PDF 결정론적 파싱
@@ -500,24 +500,42 @@ DOM 대신 JavaScript `Webcrea.GetObjectById(gid).arrData`에서 컬럼지향 �
 1. `init_db()`로 스키마를 비파괴 준비
 2. 현재 게시판의 고정 공지 URL 수집
 3. `is_pinned` 동기화
-4. 최근 6개월보다 오래됐거나 마감된 문서 삭제
-5. 이미 DB에 있는 URL은 상세 크롤링/OCR 생략
-6. 신규 문서만 저장 및 임베딩
+4. 24개월보다 오래됐거나 마감된 문서를 과거 공지로 보관
+5. `crawl_url_state`에 정규화 URL별 `discovered/completed/failed` 상태 저장
+6. 완료된 과거 URL은 상세 크롤링/OCR 생략
+7. 신규·실패 URL과 최근 7일의 현재 추출 버전 URL을 상세 처리
+8. 이전 추출 버전의 완료 URL은 `refresh_outdated_extraction=true`인 수동
+   크롤링에서만 현재 버전으로 재처리
 
-고정 공지는 6개월이 지나도 삭제되지 않습니다.
+전체 크롤링은 현재 페이지가 모두 기존 URL이어도 종료하지 않고 실제
+마지막 목록 페이지까지 계속한다. 부분 크롤링으로 3~20페이지를
+먼저 처리했더라도, 뒤의 전체 크롤링은 21페이지 이후까지 URL을 계속
+확인한다. 페이지 번호는 중복 판단에 사용하지 않는다.
+
+고정 공지는 24개월이 지나도 보관된다.
+
+Server Manager의 데이터 화면은 `GET /api/admin/notices`의 공지 소스,
+카테고리, 시작일~종료일 날짜 범위, 현재/과거 상태, 추출 버전 조건을
+조합해 저장 결과를 조회한다. `crawl_enabled=false`이면 예약 수집만
+건너뛰며 수동 수집과 API 서버는 계속 동작한다.
+
+`GET /api/admin/tools`는 FastMCP에 현재 등록된 도구의 이름, 그룹, 설명,
+입력 JSON Schema, 활성 상태와 MCP 안전 annotation을 그대로 반환한다. Manager가
+표시용 목록을 별도로 관리하지 않으므로 MCP 도구 추가·삭제가 이 응답에 자동 반영된다.
 
 ## 첨부파일 처리
 
 | 형식 | 처리 |
 | --- | --- |
-| 본문 이미지 | 이미지 다운로드 후 VLM OCR, `inline_image` asset 저장 |
+| 본문 이미지 | HTML DOM 순서로 `[본문 그림 N]` 위치·앞뒤 문맥을 보존하고 VLM OCR·설명·독립 청크·`inline_image` asset 저장 |
 | 이미지 첨부 | VLM OCR, 원본 이미지 sha1 파일 저장 |
-| PDF | `pdfplumber` 텍스트 추출, 텍스트가 없으면 `pdf2image` + VLM OCR |
-| HWPX | ZIP/XML 구조 파싱으로 문단·표 추출 |
+| PDF | `pdfplumber` 텍스트 추출, 텍스트가 없으면 `pdf2image` + VLM OCR. 내장 그림은 페이지 단위 문맥과 함께 별도 저장 |
+| DOCX | OOXML 문단 관계를 따라 텍스트와 내장 그림의 실제 문단 위치를 함께 추출 |
+| HWPX | ZIP/XML 구조 파싱으로 문단·표를 추출하고 `binaryItemIDRef`로 그림 위치 연결 |
 | HWP | `syhwp` 문단·표 구조 + 독립 BodyText 파서 + 패치된 HWP→HWPX 검사본을 교차 비교하고 BinData 원본 보존 |
-| PPTX | `python-pptx`로 텍스트 프레임·표 추출 |
+| PPTX | `python-pptx`로 텍스트 프레임·표를 추출하고 슬라이드·도형 순서로 그림 연결 |
 | PPT | 정확한 구조 파서가 없어 원본을 검토 대상으로 보존 |
-| XLSX | `openpyxl`로 전체 추출, 표 헤더 보존 |
+| XLSX | `openpyxl`로 전체 추출, 표 헤더 보존. drawing anchor로 그림을 시트·셀에 연결 |
 | XLS | `xlrd`로 전체 추출, 표 헤더 보존 |
 | ZIP | 내부의 PDF/HWPX/HWP/XLSX/이미지를 풀어 각각 기존 파이프라인으로 처리 |
 | 기타 | 안내문 저장 |
@@ -583,6 +601,10 @@ GEMINI_API_KEY=
 OPENAI_API_KEY=
 JINA_API_KEY=
 
+# HWP/HWPX/PDF/DOCX/XLSX/PPTX 내부 그림
+DOCUMENT_IMAGE_ANALYSIS_ENABLED=true
+DOCUMENT_ASSETS_ROOT=data/assets
+
 # Reranker
 # 비워두면 JINA_API_KEY 유무에 따라 local(BGE CrossEncoder)/jina 자동 결정
 RERANKER_PROVIDER=
@@ -609,6 +631,11 @@ provider 설정:
 - `VLM_PROVIDER`: `local`, `google`, `openai` 중 선택
 - `EMBEDDING_PROVIDER`: `local`, `google`, `openai` 중 선택
 - `RERANKER_PROVIDER`: `local`(BGE CrossEncoder), `jina`(Jina API) 중 선택
+- `DOCUMENT_IMAGE_ANALYSIS_ENABLED`: 지원 문서 형식의 내장 그림을 VLM으로 설명·OCR
+- `DOCUMENT_ASSETS_ROOT`: 원본 문서, 구조 파일, 내장 그림을 보존할 루트
+
+기존 배포의 `HWP_IMAGE_ANALYSIS_ENABLED`, `HWP_ASSETS_ROOT`는 호환용 fallback으로
+계속 읽지만 새 설정 이름은 모든 문서 형식에 공통으로 적용된다.
 
 Docker 환경에서 워커가 호스트의 LM Studio에 접근해야 하면 `http://host.docker.internal:1234/v1`을 사용합니다.
 
@@ -723,10 +750,42 @@ BodyText 레코드 파서의 텍스트를 비교하고, Docker에서는 별도�
 HWP bundle은 하나의 Markdown만 저장하지 않는다. 원본 `.hwp`, 검색용
 `document.md`, 표 셀·이미지 메타데이터·품질 수치가 포함된 canonical
 `document.json`, 선택적 `validation.hwpx`, 원본 `images/*`를 함께 저장한다.
-이미지는 기본적으로 VLM에 자동 전송하지 않는다. 후속 개선에서는 글자/표 이미지는
-OCR, 사진·지도·도식은 `[이미지: 검증된 설명]`, 악보는 원본 이미지 + 확인된
-제목·작사·작곡 정보로 구분한다. 음표의 기계 판독은 별도 OMR 및 사람 검토 없이는
-검색 사실로 채택하지 않는다.
+
+HWP 그림은 BinData 파일 정렬 순서를 사용하지 않고 문서의
+`HWPTAG_SHAPE_COMPONENT_PICTURE` BinItem 참조를 읽어 실제 배치 순서로
+`[그림 1]`, `[그림 2]` 처럼 번호를 붙인다. VLM에는 그림 바로 앞·뒤
+문장과 표 행을 함께 제공한다. 검수를 통과한 설명과 OCR 텍스트는
+`document.md`의 **원래 그림 위치 바로 뒤**에 삽입하고, 검색에서 다른
+그림과 섞이지 않도록 그림별 독립 청크도 추가한다. 청킹 경계에서
+설명과 번호가 나뉘어도 모든 설명 청크에 해당 `[그림 N]`을 복원한다.
+
+같은 그림 계약을 공지 HTML 본문과 HWPX, DOCX, PPTX, XLSX, PDF에도 적용한다.
+HTML 본문은 실제 `<img>` DOM 위치에 `[본문 그림 N]`을 넣고 앞뒤 문장과 `alt`
+텍스트를 문맥으로 제공한다. 작은 아이콘·추적 이미지·로고는 제외하며, 본문
+그림과 첨부 그림이 모두 `그림 1`이어도 서로 충돌하지 않는 별도 marker를 쓴다.
+HWPX는 문단의
+`binaryItemIDRef`, DOCX는 문단 relationship, PPTX는 슬라이드와 shape 순서,
+XLSX는 drawing anchor 셀을 사용하므로 원문 위치와 문맥을 구조적으로 연결한다.
+PDF는 객체가 속한 페이지까지는 확정할 수 있지만 일반 PDF의 그리기 명령만으로
+문장 사이의 정확한 위치를 항상 복원할 수 없어 페이지 문맥 단위로 연결하며
+신뢰도도 더 낮게 기록한다. 구형 DOC/XLS/PPT는 안정적인 내장 그림 위치 파서가
+없으므로 현재 텍스트 추출과 원본 보존까지만 지원한다.
+
+검색·채팅·MCP 근거에는 청크가 참조한 번호의 이미지만
+`related_images`(asset ID, 안전한 참조 토큰, 번호, 설명, 문맥, 렌더링 URL)로 반환한다. 원본 이미지는
+`GET /api/notice-assets/{asset_id}/content`에서 inline으로 제공되며, 문서 구조
+JSON·Markdown·HWPX 검사본 자체는 임베딩하지 않는다. 악보는 원본 이미지와
+확인된 제목·작사·작곡만 저장하며, OMR·사람 검토 없이 음표를 검색 사실로
+채택하지 않는다.
+
+`related_images`를 받은 Codmes 모델은 모든 그림을 답변 끝에 자동 첨부하지
+않는다. 모델이 각 그림의 문맥과 설명을 보고 질문에 실제로 필요한 그림을
+0개·1개·여러 개 선택하고, URL 대신 서버가 발급한 정확한 `[그림:assetId]`
+토큰만 원하는 답변 위치에 쓴다. Codmes runtime은 **이번 도구 결과에 실제로
+포함된 asset ID인지 다시 검증한 뒤에만** 해당 토큰을 안전한 Markdown 이미지로
+치환한다. 따라서 모델은 이미지 바이트를 소유하거나 URL을 만들 필요가 없고,
+허용되지 않은 ID를 추측해도 이미지로 렌더링되지 않는다. 토큰은 설명 앞·뒤나
+연속된 위치 어디든 둘 수 있고, 선택하지 않은 그림은 자동 첨부되지 않는다.
 
 공주대학교 공통 게시판 `main_notice`는 서버 실측 결과에 따라 `max_workers=2`를
 사용한다. 전역 기본값은 `MAX_CRAWL_WORKERS=4`이며 다른 출처는 필요하면
@@ -753,6 +812,13 @@ OCR, 사진·지도·도식은 `[이미지: 검증된 설명]`, 악보는 원본
 부분 성공 결과는 보류하고 다음 실행에서 다시 수집한다. 이 판정은 24개월이 지난
 공지의 시간 기반 보관 정책과 독립적이므로, 크롤링 실패 여부와 관계없이 오래된
 공지는 과거 공지로 이동한다.
+
+Manager와 worker는 다음 목록 범위를 지원한다.
+
+- `all`: `._totPage`에서 실제 마지막 페이지를 읽어 전체 URL 대조
+- `range`: 첫 N페이지 또는 시작~끝 페이지 범위
+- `recent`: 고정 공지를 제외한 일반 공지가 최근 7일 기준을 벗어나는
+  페이지까지 확인. 자동 수집은 이 모드를 사용
 
 ## 크롤러 추가
 

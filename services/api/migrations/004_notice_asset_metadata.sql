@@ -1,0 +1,2 @@
+ALTER TABLE notice_asset
+ADD COLUMN IF NOT EXISTS extra JSONB NOT NULL DEFAULT '{}'::jsonb;

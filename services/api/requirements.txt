@@ -62,6 +62,7 @@ opendataloader-pdf
 openpyxl
 xlrd
 python-pptx
+pypdf>=5,<7
 pdf2image
 olefile==0.47
 syhwp==0.0.7

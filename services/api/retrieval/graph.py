@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langsmith import traceable
 from pydantic import BaseModel, Field
+from api.figures import collect_related_figures, related_figures
 
 from config import (
     BROAD_DOC_TOP_N,
@@ -74,6 +75,7 @@ class ChatState(TypedDict, total=False):
     grounded: bool
     fidelity: float
     verifier_note: str
+    related_images: List[Dict[str, Any]]
 
 
 def router_node(state: ChatState) -> dict:
@@ -107,6 +109,7 @@ def _retrieve(
             "start_date": r[5],
             "end_date": r[6],
             "summary": r[14] if len(r) > 14 else None,
+            "related_images": related_figures(r[17] if len(r) > 17 else [], r[2]),
         }
         for r in (rows or [])
     ]
@@ -197,6 +200,7 @@ def _retrieve_with_rerank(
             "source_name": r[11],
             "source_department": r[13],
             "summary": r[14] if len(r) > 14 else None,
+            "related_images": related_figures(r[17] if len(r) > 17 else [], r[2]),
         }
         for r, s in evidence_ranked
     ]
@@ -226,6 +230,7 @@ def _retrieve_with_rerank(
                 "title": r[1],
                 "body_content": r[15] if len(r) > 15 else deduped_full,
                 "attachment_names": r[16] if len(r) > 16 else [],
+                "related_images": related_figures(r[17] if len(r) > 17 else [], r[2]),
                 "snippet": deduped_full,
                 "score": s,
                 "vector_score": r[3],
@@ -252,7 +257,14 @@ def retriever_node(state: ChatState) -> dict:
         state.get("major"),
         categories,
     )
-    return {"contexts": contexts, "evidence_chunks": evidence_chunks}
+    return {
+        "contexts": contexts,
+        "evidence_chunks": evidence_chunks,
+        "related_images": collect_related_figures(
+            *(context.get("related_images") or [] for context in contexts),
+            *(evidence.get("related_images") or [] for evidence in evidence_chunks),
+        ),
+    }
 
 
 @traceable(run_type="retriever", name="search_chunks_broad")
@@ -289,6 +301,7 @@ def _retrieve_broad(
             "score": s,
             "vector_score": r[3],
             "rerank_score": s,
+            "related_images": related_figures(r[17] if len(r) > 17 else [], r[2]),
         }
         for r, s in top
     ]
@@ -298,7 +311,13 @@ def broad_retriever_node(state: ChatState) -> dict:
     query = state.get("expanded_query") or state["question"]
     categories = list(state.get("categories") or []) or None
     contexts = _retrieve_broad(query, state.get("major"), categories)
-    return {"contexts": contexts, "evidence_chunks": []}
+    return {
+        "contexts": contexts,
+        "evidence_chunks": [],
+        "related_images": collect_related_figures(
+            *(context.get("related_images") or [] for context in contexts)
+        ),
+    }
 
 
 def retrieve_mcp_evidence(
