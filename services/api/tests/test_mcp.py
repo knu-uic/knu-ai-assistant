@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 
@@ -125,7 +126,7 @@ def test_mcp_rate_limit_is_scoped_to_authenticated_principal(monkeypatch):
     assert all(limit == mcp_mod.RATE_LIMIT_MCP for _, limit in seen)
 
 
-def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
+def test_mcp_lists_notice_and_counseling_tools(monkeypatch):
     import interfaces.mcp.server as mcp_mod
 
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
@@ -142,6 +143,9 @@ def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
         "knu_list_notices",
         "knu_search_notice_details",
         "knu_get_notice_detail",
+        "knu_prepare_online_counseling",
+        "knu_counseling_job_status",
+        "knu_submit_online_counseling",
     }
     scan_tool = next(tool for tool in tools if tool["name"] == "knu_list_notices")
     deep_tool = next(tool for tool in tools if tool["name"] == "knu_search_notice_details")
@@ -162,6 +166,88 @@ def test_mcp_lists_only_notice_evidence_tools(monkeypatch):
     grade_enum = next(option["enum"] for option in grade_options if "enum" in option)
     assert grade_enum == [1, 2, 3, 4]
     assert "limit" not in deep_tool["inputSchema"]["properties"]
+
+
+def test_counseling_prepare_enqueues_only_for_portal_session(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+
+    class FakePool:
+        def __init__(self):
+            self.calls = []
+
+        async def enqueue_job(self, name, *args, **kwargs):
+            self.calls.append((name, args, kwargs))
+            return object()
+
+    class MissingJob:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def status(self):
+            from arq.jobs import JobStatus
+            return JobStatus.not_found
+
+    pool = FakePool()
+
+    async def fake_pool():
+        return pool
+
+    monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", None)
+    monkeypatch.setattr(mcp_mod, "get_arq_pool", fake_pool)
+    monkeypatch.setattr(mcp_mod, "Job", MissingJob)
+    token = create_portal_access_token("20260009")
+
+    with TestClient(app) as client:
+        result = _tool_call(client, token, "knu_prepare_online_counseling", {})
+
+    assert result == {
+        "job_id": "counseling:counseling_prepare:20260009",
+        "status": "queued",
+    }
+    assert pool.calls == [(
+        "counseling_prepare",
+        ("20260009",),
+        {"_job_id": "counseling:counseling_prepare:20260009"},
+    )]
+
+
+def test_counseling_retry_requeues_after_failed_completion(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+    from arq.jobs import JobStatus
+
+    class FailedJob:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def status(self):
+            return JobStatus.complete
+
+        async def result_info(self):
+            return type("Result", (), {"success": False})()
+
+    class Pool:
+        def __init__(self):
+            self.calls = 0
+
+        async def enqueue_job(self, *_args, **_kwargs):
+            self.calls += 1
+            return None if self.calls == 1 else object()
+
+    pool = Pool()
+
+    async def get_pool():
+        return pool
+
+    monkeypatch.setattr(mcp_mod, "Job", FailedJob)
+    monkeypatch.setattr(mcp_mod, "get_arq_pool", get_pool)
+
+    job_id = asyncio.run(
+        mcp_mod._start_counseling_job("counseling_submit", "20260009", "t", "c", ["학업"])
+    )
+
+    assert job_id.startswith("counseling:counseling_submit:")
+    assert job_id.endswith(":20260009")
+    assert pool.calls == 2
 
 
 def test_knu_list_notices_returns_server_total(monkeypatch):

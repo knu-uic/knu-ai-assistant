@@ -12,6 +12,7 @@ from api.crypto import decrypt_secret, encrypt_secret
 from config import LMS_SESSION_TTL_DAYS, REDIS_URL
 
 _KEY_PREFIX = "lms-session:"
+_PORTAL_KEY_PREFIX = "portal-session:"
 
 
 def _client() -> redis_sync.Redis:
@@ -44,5 +45,43 @@ def save_session(username: str, storage_state: str, canvas_token: str | None) ->
             encrypt_secret(payload),
             ex=LMS_SESSION_TTL_DAYS * 24 * 3600,
         )
+    finally:
+        r.close()
+
+
+def _portal_key(student_id: str) -> str:
+    return f"{_PORTAL_KEY_PREFIX}{student_id}"
+
+
+def load_portal_session(student_id: str) -> dict | None:
+    """Return the verified portal Playwright storage state, if it is still valid."""
+    r = _client()
+    try:
+        raw = r.get(_portal_key(student_id))
+    finally:
+        r.close()
+    if not raw:
+        return None
+    token = raw.decode() if isinstance(raw, bytes) else raw
+    return json.loads(decrypt_secret(token))
+
+
+def save_portal_session(student_id: str, storage_state: dict) -> None:
+    """Keep the portal session, never the portal password, for later MCP jobs."""
+    r = _client()
+    try:
+        r.set(
+            _portal_key(student_id),
+            encrypt_secret(json.dumps(storage_state)),
+            ex=LMS_SESSION_TTL_DAYS * 24 * 3600,
+        )
+    finally:
+        r.close()
+
+
+def delete_portal_session(student_id: str) -> None:
+    r = _client()
+    try:
+        r.delete(_portal_key(student_id))
     finally:
         r.close()

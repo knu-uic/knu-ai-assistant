@@ -1,4 +1,10 @@
-from workers.arq_worker import WorkerSettings, _cron_minutes, poll_notices
+from workers.arq_worker import (
+    WorkerSettings,
+    _cron_minutes,
+    counseling_prepare,
+    counseling_submit,
+    poll_notices,
+)
 
 
 def test_cron_minutes_interval():
@@ -16,3 +22,8 @@ def test_worker_has_notice_polling_cron():
     assert job.unique is True
     # 기본 20분 간격 (conftest는 NOTICE_POLL_MINUTES 미설정)
     assert job.minute == {0, 20, 40}
+
+
+def test_worker_registers_counseling_jobs():
+    assert counseling_prepare in WorkerSettings.functions
+    assert counseling_submit in WorkerSettings.functions
