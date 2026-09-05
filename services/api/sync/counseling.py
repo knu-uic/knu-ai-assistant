@@ -189,6 +189,46 @@ def _topics(frame) -> list[str]:
     return values
 
 
+def _advisors(frame) -> list[dict]:
+    advisors = []
+    for row in range(10):
+        name = _text(frame, _webcrea_id(f"G1.KOR_NM{row}"))
+        if not name:
+            continue
+        if frame.locator(_webcrea_id(f"G1.ON_CNSL{row}")).count() == 0:
+            continue
+        advisors.append({
+            "name": name,
+            "department": _text(frame, _webcrea_id(f"G1.DEPT_NM{row}")) or None,
+            "row": row,
+        })
+    return advisors
+
+
+def _slots(frame) -> list[dict]:
+    slots = []
+    for row in range(30):
+        date = _text(frame, _webcrea_id(f"G3.RESER_DT{row}"))
+        time_text = _text(frame, _webcrea_id(f"G3.TM{row}"))
+        if date and time_text:
+            slots.append({"date": date, "time": time_text, "row": row})
+    return slots
+
+
+def _select_advisor(frame, advisor: str) -> None:
+    matches = [item for item in _advisors(frame) if item["name"] == advisor]
+    if len(matches) != 1:
+        raise RuntimeError(f"선택한 상담교수를 찾지 못했습니다: {advisor}")
+    _webcrea_click(frame, f"G1.ON_CNSL{matches[0]['row']}")
+
+
+def _select_slot(frame, date: str, time_text: str) -> None:
+    matches = [item for item in _slots(frame) if item["date"] == date and item["time"] == time_text]
+    if len(matches) != 1:
+        raise RuntimeError(f"선택한 상담 일시를 찾지 못했습니다: {date} {time_text}")
+    _webcrea_click(frame, f"G3.OFF_CNSL{matches[0]['row']}")
+
+
 def _select_topics(frame, topics: list[str]) -> None:
     available = {}
     for row in range(10):
@@ -204,7 +244,7 @@ def _select_topics(frame, topics: list[str]) -> None:
 
 
 def prepare_online_counseling(student_id: str, storage_state: dict) -> dict:
-    """Read only the default advisor and selectable topic labels."""
+    """Read only the selectable advisors, their online slots, and topic labels."""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
@@ -212,19 +252,21 @@ def prepare_online_counseling(student_id: str, storage_state: dict) -> dict:
                 storage_state=storage_state, **_browser_context_options()
             )
             _, frame = _open_counseling_page(context)
-            advisor = _text(frame, _webcrea_id("G1.KOR_NM0")) or _text(
-                frame, _webcrea_id("G1.CNSLR_NM0")
-            )
-            department = _text(frame, _webcrea_id("G1.DEPT_NM0")) or _text(
-                frame, _webcrea_id("G1.SUST_NM0")
-            )
-            if not advisor:
-                raise RuntimeError("기본 상담교수를 확인하지 못했습니다.")
+            advisors = _advisors(frame)
+            if not advisors:
+                raise RuntimeError("상담교수를 확인하지 못했습니다.")
+            for advisor in advisors:
+                _webcrea_click(frame, f"G1.ON_CNSL{advisor['row']}")
+                page.wait_for_timeout(500)
+                advisor["slots"] = [
+                    {"date": slot["date"], "time": slot["time"]}
+                    for slot in _slots(frame)
+                ]
+                del advisor["row"]
             return {
                 "success": True,
                 "mode": "online",
-                "advisor": advisor,
-                "department": department or None,
+                "advisors": advisors,
                 "topics": _topics(frame),
             }
         finally:
@@ -234,11 +276,14 @@ def prepare_online_counseling(student_id: str, storage_state: dict) -> dict:
 def submit_online_counseling(
     student_id: str,
     storage_state: dict,
+    advisor: str,
+    date: str,
+    time_text: str,
     title: str,
     content: str,
     topics: list[str],
 ) -> dict:
-    """Save one online counseling request for the first (default) advisor."""
+    """Save one selected online counseling request."""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
@@ -246,13 +291,9 @@ def submit_online_counseling(
                 storage_state=storage_state, **_browser_context_options()
             )
             page, frame = _open_counseling_page(context)
-            advisor = _text(frame, _webcrea_id("G1.KOR_NM0")) or _text(
-                frame, _webcrea_id("G1.CNSLR_NM0")
-            )
-            if not advisor:
-                raise RuntimeError("기본 상담교수를 확인하지 못했습니다.")
-
-            _webcrea_click(frame, "G1.ON_CNSL0")
+            _select_advisor(frame, advisor)
+            page.wait_for_timeout(500)
+            _select_slot(frame, date, time_text)
             page.wait_for_timeout(500)
             frame.locator(_webcrea_id("F1.CNSL_TTL_my_inputBox")).fill(title)
             frame.locator(_webcrea_id("F1.ASK_CTNT")).click()
@@ -280,6 +321,8 @@ def submit_online_counseling(
                 "submitted": True,
                 "mode": "online",
                 "advisor": advisor,
+                "date": date,
+                "time": time_text,
                 "topics": topics,
             }
         finally:

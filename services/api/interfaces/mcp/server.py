@@ -334,7 +334,8 @@ mcp = FastMCP(
         "Use portal tools for the signed-in student's grades, timetable, graduation data, and profile. "
         "Use LMS tools for the signed-in student's courses and tasks. "
         "Use knu_prepare_online_counseling before a counseling request. "
-        "Only call knu_submit_online_counseling when the user explicitly confirms the exact title, content, and topics. "
+        "Present its advisor and slot choices, then ask the user to choose an exact advisor, date, and time. "
+        "Only call knu_submit_online_counseling when the user explicitly confirms the exact advisor, date, time, title, content, and topics. "
         "If the evidence is insufficient, say so instead of making up an answer."
     ),
 )
@@ -596,7 +597,7 @@ async def get_public_tool_catalog() -> dict[str, Any]:
 
 @mcp.tool
 async def knu_prepare_online_counseling() -> dict:
-    """Start a read-only portal job that returns selectable advisors, slots, and counseling topics."""
+    """Start a read-only portal job and poll its job_id for selectable advisors, slots, and topics."""
     student_id = _counseling_student_id()
     return {
         "job_id": await _start_counseling_job("counseling_prepare", student_id),
@@ -612,16 +613,19 @@ async def knu_counseling_job_status(job_id: str) -> dict:
 
 @mcp.tool
 async def knu_submit_online_counseling(
+    advisor: Annotated[str, Field(min_length=1, max_length=100)],
+    date: Annotated[str, Field(min_length=1, max_length=32)],
+    time: Annotated[str, Field(min_length=1, max_length=32)],
     title: Annotated[str, Field(min_length=1, max_length=100)],
     content: Annotated[str, Field(min_length=1, max_length=2000)],
     topics: Annotated[list[str], Field(min_length=1, max_length=4)],
     confirmed: Literal["submit"],
 ) -> dict:
-    """Submit an online counseling request only after explicit confirmation of exact fields."""
+    """Submit one selected request after explicit confirmation of all exact fields."""
     student_id = _counseling_student_id()
     return {
         "job_id": await _start_counseling_job(
-            "counseling_submit", student_id, title, content, topics
+            "counseling_submit", student_id, advisor, date, time, title, content, topics
         ),
         "status": "queued",
         "confirmed": confirmed,
