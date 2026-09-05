@@ -250,6 +250,37 @@ def test_counseling_retry_requeues_after_failed_completion(monkeypatch):
     assert pool.calls == 2
 
 
+def test_counseling_submit_queues_the_user_selected_advisor_and_slot(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+
+    seen = []
+
+    async def start(name, student_id, *args):
+        seen.append((name, student_id, args))
+        return "counseling:counseling_submit:20260009"
+
+    monkeypatch.setattr(mcp_mod, "_counseling_student_id", lambda: "20260009")
+    monkeypatch.setattr(mcp_mod, "_start_counseling_job", start)
+
+    result = asyncio.run(
+        mcp_mod.knu_submit_online_counseling.fn(
+            advisor="교수 A",
+            date="2026-09-10",
+            time="10:00 ~ 10:30",
+            title="상담 제목",
+            content="상담 내용",
+            topics=["학업"],
+            confirmed="submit",
+        )
+    )
+
+    assert result["job_id"] == "counseling:counseling_submit:20260009"
+    assert seen == [(
+        "counseling_submit", "20260009",
+        ("교수 A", "2026-09-10", "10:00 ~ 10:30", "상담 제목", "상담 내용", ["학업"]),
+    )]
+
+
 def test_knu_list_notices_returns_server_total(monkeypatch):
     import interfaces.mcp.server as mcp_mod
 

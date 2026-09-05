@@ -308,7 +308,8 @@ mcp = FastMCP(
         "Use knu_search_notice_details for a specific notice's dates, requirements, procedures, "
         "or attachment evidence. Combine them for comparison questions. "
         "Use knu_prepare_online_counseling before a counseling request. "
-        "Only call knu_submit_online_counseling when the user explicitly confirms the exact title, content, and topics. "
+        "Present its advisor and slot choices, then ask the user to choose an exact advisor, date, and time. "
+        "Only call knu_submit_online_counseling when the user explicitly confirms the exact advisor, date, time, title, content, and topics. "
         "If the evidence is insufficient, say so instead of making up an answer."
     ),
 )
@@ -420,7 +421,7 @@ async def knu_get_notice_detail(url: str) -> dict:
 
 @mcp.tool
 async def knu_prepare_online_counseling() -> dict:
-    """Start a read-only portal job that returns the default advisor and selectable online-counseling topics. Call knu_counseling_job_status with its job_id until done."""
+    """Start a read-only portal job that returns selectable advisors, their online date/time slots, and counseling topics. Call knu_counseling_job_status with its job_id until done."""
     student_id = _counseling_student_id()
     return {
         "job_id": await _start_counseling_job("counseling_prepare", student_id),
@@ -436,16 +437,19 @@ async def knu_counseling_job_status(job_id: str) -> dict:
 
 @mcp.tool
 async def knu_submit_online_counseling(
+    advisor: Annotated[str, Field(min_length=1, max_length=100)],
+    date: Annotated[str, Field(min_length=1, max_length=32)],
+    time: Annotated[str, Field(min_length=1, max_length=32)],
     title: Annotated[str, Field(min_length=1, max_length=100)],
     content: Annotated[str, Field(min_length=1, max_length=2000)],
     topics: Annotated[list[str], Field(min_length=1, max_length=4)],
     confirmed: Literal["submit"],
 ) -> dict:
-    """Submit one online counseling request to the default advisor. Use only after the user explicitly confirms the exact title, content, and topics; confirmed must be 'submit'."""
+    """Submit one selected online counseling request. The advisor, date, time, title, content, and topics must exactly match the user's confirmation; confirmed must be 'submit'."""
     student_id = _counseling_student_id()
     return {
         "job_id": await _start_counseling_job(
-            "counseling_submit", student_id, title, content, topics
+            "counseling_submit", student_id, advisor, date, time, title, content, topics
         ),
         "status": "queued",
         "confirmed": confirmed,

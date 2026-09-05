@@ -138,6 +138,9 @@ async def counseling_prepare(ctx: dict, student_id: str) -> dict:
 async def counseling_submit(
     ctx: dict,
     student_id: str,
+    advisor: str,
+    date: str,
+    time_text: str,
     title: str,
     content: str,
     topics: list[str],
@@ -150,7 +153,8 @@ async def counseling_submit(
         return {"success": False, "needs_reconnect": True,
                 "message": "포털 세션이 만료되었습니다. Codmes에서 포털을 다시 연결해주세요."}
     return await asyncio.to_thread(
-        submit_online_counseling, student_id, storage_state, title, content, topics
+        submit_online_counseling, student_id, storage_state, advisor, date, time_text,
+        title, content, topics
     )
 
 
