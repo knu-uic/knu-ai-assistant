@@ -251,7 +251,7 @@ def prepare_online_counseling(student_id: str, storage_state: dict) -> dict:
             context = browser.new_context(
                 storage_state=storage_state, **_browser_context_options()
             )
-            _, frame = _open_counseling_page(context)
+            page, frame = _open_counseling_page(context)
             advisors = _advisors(frame)
             if not advisors:
                 raise RuntimeError("상담교수를 확인하지 못했습니다.")
