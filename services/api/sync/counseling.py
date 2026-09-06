@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 from sync.common import DEFAULT_PORTAL_URL
 from sync.knuis_sync import (
@@ -232,7 +232,12 @@ def _select_advisor(frame, advisor: str) -> None:
     matches = [item for item in _advisors(frame) if item["name"] == advisor]
     if len(matches) != 1:
         raise RuntimeError(f"선택한 상담교수를 찾지 못했습니다: {advisor}")
-    frame.locator(_webcrea_id(f"G1.KOR_NM{matches[0]['row']}")).dblclick()
+    try:
+        frame.locator(_webcrea_id(f"G1.KOR_NM{matches[0]['row']}")).dblclick()
+    except PlaywrightError as exc:
+        # KNUIS closes the search popup synchronously after a successful double click.
+        if "Target page, context or browser has been closed" not in str(exc):
+            raise
 
 
 def _select_mode(frame, mode: str) -> None:
