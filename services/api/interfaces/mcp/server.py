@@ -200,6 +200,16 @@ async def _counseling_job_status(student_id: str, job_id: str) -> dict:
     return {"status": "done", "job_id": job_id, "result": info.result}
 
 
+async def _wait_for_counseling_job(student_id: str, job_id: str) -> dict:
+    """Return the portal result in the same MCP turn when it finishes promptly."""
+    deadline = anyio.current_time() + 45
+    while True:
+        result = await _counseling_job_status(student_id, job_id)
+        if result["status"] not in {"queued", "running"} or anyio.current_time() >= deadline:
+            return result
+        await anyio.sleep(0.5)
+
+
 def _build_evidence_package(retrieval: dict) -> dict:
     query_mode = retrieval.get("query_mode") or "precise"
     if query_mode == "smalltalk":
@@ -606,10 +616,8 @@ async def knu_prepare_online_counseling(
 ) -> dict:
     """List counseling professors, or pass a selected advisor and visit mode to read available visit slots without submitting."""
     student_id = _counseling_student_id()
-    return {
-        "job_id": await _start_counseling_job("counseling_prepare", student_id, advisor, mode),
-        "status": "queued",
-    }
+    job_id = await _start_counseling_job("counseling_prepare", student_id, advisor, mode)
+    return await _wait_for_counseling_job(student_id, job_id)
 
 
 @mcp.tool
@@ -631,13 +639,10 @@ async def knu_submit_online_counseling(
 ) -> dict:
     """Submit a confirmed counseling request. Visit mode requires the selected date and time; online mode may omit them."""
     student_id = _counseling_student_id()
-    return {
-        "job_id": await _start_counseling_job(
-            "counseling_submit", student_id, advisor, mode, date, time, title, content, topics
-        ),
-        "status": "queued",
-        "confirmed": confirmed,
-    }
+    job_id = await _start_counseling_job(
+        "counseling_submit", student_id, advisor, mode, date, time, title, content, topics
+    )
+    return {**(await _wait_for_counseling_job(student_id, job_id)), "confirmed": confirmed}
 
 
 def create_mcp_app():

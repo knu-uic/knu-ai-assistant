@@ -308,6 +308,12 @@ def test_counseling_submit_queues_the_user_selected_advisor_and_slot(monkeypatch
     monkeypatch.setattr(mcp_mod, "_counseling_student_id", lambda: "20260009")
     monkeypatch.setattr(mcp_mod, "_start_counseling_job", start)
 
+    async def wait(student_id, job_id):
+        assert (student_id, job_id) == ("20260009", "counseling:counseling_submit:20260009")
+        return {"status": "done", "job_id": job_id, "result": {"success": True}}
+
+    monkeypatch.setattr(mcp_mod, "_wait_for_counseling_job", wait)
+
     result = asyncio.run(
         mcp_mod.knu_submit_online_counseling.fn(
             advisor="교수 A",
@@ -322,6 +328,8 @@ def test_counseling_submit_queues_the_user_selected_advisor_and_slot(monkeypatch
     )
 
     assert result["job_id"] == "counseling:counseling_submit:20260009"
+    assert result["status"] == "done"
+    assert result["confirmed"] == "submit"
     assert seen == [(
         "counseling_submit", "20260009",
         ("교수 A", "visit", "2026-09-10", "10:00 ~ 10:30", "상담 제목", "상담 내용", ["학업"]),
