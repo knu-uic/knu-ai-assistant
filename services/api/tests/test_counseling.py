@@ -1,6 +1,6 @@
 import pytest
 
-from sync.counseling import _advisors, _counseling_frame_state, _find_counseling_form_frame, _has_portal_message, _has_system_button, _select_advisor, _select_slot, _select_topics, _slots, _text, _topics
+from sync.counseling import _advisors, _counseling_frame_state, _find_counseling_form_frame, _has_portal_message, _has_system_button, _select_advisor, _select_mode, _select_slot, _select_topics, _slots, _text, _topics
 
 
 class _Locator:
@@ -22,6 +22,9 @@ class _Locator:
     def get_attribute(self, _name):
         return self.value
 
+    def dblclick(self):
+        self.checked.append(self.selector.removeprefix('[id="').removesuffix('"]'))
+
 class _TopicFrame:
     def __init__(self):
         self.checked = []
@@ -32,7 +35,7 @@ class _TopicFrame:
 
     def locator(self, selector):
         if selector in self.labels:
-            return _Locator(value=self.labels[selector])
+            return _Locator(value=self.labels[selector], checked=self.checked, selector=selector)
         return _Locator(exists=False, checked=self.checked, selector=selector)
 
     def evaluate(self, _script, value):
@@ -63,14 +66,15 @@ def test_counseling_topics_are_read_and_selected_by_visible_label():
         _select_topics(frame, ["없는 주제"])
 
 
-def test_counseling_advisor_and_slot_are_selected_by_visible_values():
+def test_counseling_advisor_mode_and_slot_are_selected_by_visible_values():
     frame = _SelectionFrame()
 
     assert _advisors(frame) == [{"name": "교수 A", "department": "컴퓨터공학과", "row": 0}]
     assert _slots(frame) == [{"date": "2026-09-10", "time": "10:00 ~ 10:30", "row": 0}]
     _select_advisor(frame, "교수 A")
+    _select_mode(frame, "visit")
     _select_slot(frame, "2026-09-10", "10:00 ~ 10:30")
-    assert frame.checked == ["G1.ON_CNSL0", "G3.OFF_CNSL0"]
+    assert frame.checked == ["G1.KOR_NM0", "G1.OFF_CNSL0", "G3.OFF_CNSL0"]
 
 
 def test_counseling_text_reads_webcrea_input_value_when_text_is_empty():
@@ -124,7 +128,7 @@ def test_counseling_frame_state_contains_only_selector_counts():
     class Context:
         pages = [Page()]
 
-    assert _counseling_frame_state(Context()) == "WorkFrame:header=1,advisor=0"
+    assert _counseling_frame_state(Context()) == "WorkFrame:header=1,search=0"
 
 
 def test_system_button_detection_ignores_stale_frames():

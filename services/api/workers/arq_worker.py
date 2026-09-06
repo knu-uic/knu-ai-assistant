@@ -126,7 +126,9 @@ async def lms_sync(ctx: dict, username: str, student_id: str, enc_password: str 
         r.close()
 
 
-async def counseling_prepare(ctx: dict, student_id: str) -> dict:
+async def counseling_prepare(
+    ctx: dict, student_id: str, advisor: str | None = None, mode: str = "online"
+) -> dict:
     from api.sessions import load_portal_session
     from sync.counseling import prepare_online_counseling
 
@@ -134,15 +136,18 @@ async def counseling_prepare(ctx: dict, student_id: str) -> dict:
     if storage_state is None:
         return {"success": False, "needs_reconnect": True,
                 "message": "포털 세션이 만료되었습니다. Codmes에서 포털을 다시 연결해주세요."}
-    return await asyncio.to_thread(prepare_online_counseling, student_id, storage_state)
+    return await asyncio.to_thread(
+        prepare_online_counseling, student_id, storage_state, advisor, mode
+    )
 
 
 async def counseling_submit(
     ctx: dict,
     student_id: str,
     advisor: str,
-    date: str,
-    time_text: str,
+    mode: str,
+    date: str | None,
+    time_text: str | None,
     title: str,
     content: str,
     topics: list[str],
@@ -155,7 +160,7 @@ async def counseling_submit(
         return {"success": False, "needs_reconnect": True,
                 "message": "포털 세션이 만료되었습니다. Codmes에서 포털을 다시 연결해주세요."}
     return await asyncio.to_thread(
-        submit_online_counseling, student_id, storage_state, advisor, date, time_text,
+        submit_online_counseling, student_id, storage_state, advisor, mode, date, time_text,
         title, content, topics
     )
 

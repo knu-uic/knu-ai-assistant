@@ -269,6 +269,33 @@ def test_counseling_retry_requeues_after_failed_completion(monkeypatch):
     assert pool.calls == 2
 
 
+def test_counseling_jobs_do_not_reuse_a_completed_request_with_different_selection(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+    from arq.jobs import JobStatus
+
+    class MissingJob:
+        def __init__(self, job_id, **_kwargs):
+            self.job_id = job_id
+
+        async def status(self):
+            return JobStatus.not_found
+
+    class Pool:
+        async def enqueue_job(self, *_args, **kwargs):
+            return type("Queued", (), {"job_id": kwargs["_job_id"]})()
+
+    async def get_pool():
+        return Pool()
+
+    monkeypatch.setattr(mcp_mod, "Job", MissingJob)
+    monkeypatch.setattr(mcp_mod, "get_arq_pool", get_pool)
+
+    first = asyncio.run(mcp_mod._start_counseling_job("counseling_prepare", "20260009", None, "online"))
+    second = asyncio.run(mcp_mod._start_counseling_job("counseling_prepare", "20260009", "교수 A", "visit"))
+
+    assert first != second
+
+
 def test_counseling_submit_queues_the_user_selected_advisor_and_slot(monkeypatch):
     import interfaces.mcp.server as mcp_mod
 
@@ -284,19 +311,20 @@ def test_counseling_submit_queues_the_user_selected_advisor_and_slot(monkeypatch
     result = asyncio.run(
         mcp_mod.knu_submit_online_counseling.fn(
             advisor="교수 A",
-            date="2026-09-10",
-            time="10:00 ~ 10:30",
+            mode="visit",
             title="상담 제목",
             content="상담 내용",
             topics=["학업"],
             confirmed="submit",
+            date="2026-09-10",
+            time="10:00 ~ 10:30",
         )
     )
 
     assert result["job_id"] == "counseling:counseling_submit:20260009"
     assert seen == [(
         "counseling_submit", "20260009",
-        ("교수 A", "2026-09-10", "10:00 ~ 10:30", "상담 제목", "상담 내용", ["학업"]),
+        ("교수 A", "visit", "2026-09-10", "10:00 ~ 10:30", "상담 제목", "상담 내용", ["학업"]),
     )]
 
 

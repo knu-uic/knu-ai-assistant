@@ -1,5 +1,6 @@
 """KNU notice evidence tools exposed through the MCP interface."""
 
+import json
 import secrets
 from contextvars import ContextVar
 from hashlib import sha256
@@ -150,9 +151,12 @@ def _counseling_student_id() -> str:
 
 
 async def _start_counseling_job(name: str, student_id: str, *args: Any) -> str:
-    """Keep one active counseling job per student and action."""
+    """Keep one active counseling job per student and exact request."""
     pool = await get_arq_pool()
-    job_id = f"counseling:{name}:{student_id}"
+    request_key = sha256(
+        json.dumps(args, ensure_ascii=False, default=str, separators=(",", ":")).encode()
+    ).hexdigest()[:12]
+    job_id = f"counseling:{name}:{request_key}:{student_id}"
     job = Job(job_id, redis=pool)
     status = await job.status()
     if status in (JobStatus.queued, JobStatus.deferred, JobStatus.in_progress):
@@ -596,11 +600,14 @@ async def get_public_tool_catalog() -> dict[str, Any]:
 
 
 @mcp.tool
-async def knu_prepare_online_counseling() -> dict:
-    """Start a read-only portal job and poll its job_id for selectable advisors, slots, and topics."""
+async def knu_prepare_online_counseling(
+    advisor: Annotated[str | None, Field(max_length=100)] = None,
+    mode: Literal["online", "visit"] = "online",
+) -> dict:
+    """List counseling professors, or pass a selected advisor and visit mode to read available visit slots without submitting."""
     student_id = _counseling_student_id()
     return {
-        "job_id": await _start_counseling_job("counseling_prepare", student_id),
+        "job_id": await _start_counseling_job("counseling_prepare", student_id, advisor, mode),
         "status": "queued",
     }
 
@@ -614,18 +621,19 @@ async def knu_counseling_job_status(job_id: str) -> dict:
 @mcp.tool
 async def knu_submit_online_counseling(
     advisor: Annotated[str, Field(min_length=1, max_length=100)],
-    date: Annotated[str, Field(min_length=1, max_length=32)],
-    time: Annotated[str, Field(min_length=1, max_length=32)],
+    mode: Literal["online", "visit"],
     title: Annotated[str, Field(min_length=1, max_length=100)],
     content: Annotated[str, Field(min_length=1, max_length=2000)],
     topics: Annotated[list[str], Field(min_length=1, max_length=4)],
     confirmed: Literal["submit"],
+    date: Annotated[str | None, Field(min_length=1, max_length=32)] = None,
+    time: Annotated[str | None, Field(min_length=1, max_length=32)] = None,
 ) -> dict:
-    """Submit one selected request after explicit confirmation of all exact fields."""
+    """Submit a confirmed counseling request. Visit mode requires the selected date and time; online mode may omit them."""
     student_id = _counseling_student_id()
     return {
         "job_id": await _start_counseling_job(
-            "counseling_submit", student_id, advisor, date, time, title, content, topics
+            "counseling_submit", student_id, advisor, mode, date, time, title, content, topics
         ),
         "status": "queued",
         "confirmed": confirmed,

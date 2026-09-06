@@ -16,6 +16,7 @@ from sync.portal_auth import _browser_context_options
 
 _MENU_ID = "1000000248"
 _FRAME_ID = "WEESDV0060"
+_SEARCH_FRAME_ID = "WEESDV0080"
 _TOPIC_COLUMNS = ("ONE", "TWO", "THREE", "FOUR")
 
 
@@ -49,7 +50,21 @@ def _has_system_button(page) -> bool:
 
 
 def _find_counseling_form_frame(context):
-    return _find_frame_with_id(context, "G1.KOR_NM0")
+    return _find_frame_with_id(context, "F_SRCH.BTN_SRCH")
+
+
+def _find_advisor_search_frame(context):
+    for page in context.pages:
+        for frame in page.frames:
+            try:
+                if (
+                    _SEARCH_FRAME_ID in frame.url
+                    or frame.locator("#T1ItemRoot > label:nth-child(2) > div > div").count()
+                ):
+                    return frame
+            except Exception:
+                continue
+    return None
 
 
 def _find_frame_with_id(context, value: str):
@@ -90,9 +105,9 @@ def _counseling_frame_state(context) -> str:
         for frame in page.frames:
             try:
                 header = frame.locator(_webcrea_id("G1.Header")).count()
-                advisor = frame.locator(_webcrea_id("G1.KOR_NM0")).count()
-                if header or advisor:
-                    states.append(f"{frame.name or 'unnamed'}:header={header},advisor={advisor}")
+                search = frame.locator(_webcrea_id("F_SRCH.BTN_SRCH")).count()
+                if header or search:
+                    states.append(f"{frame.name or 'unnamed'}:header={header},search={search}")
             except Exception:
                 continue
     return "; ".join(states) or "no G1 frame"
@@ -195,8 +210,6 @@ def _advisors(frame) -> list[dict]:
         name = _text(frame, _webcrea_id(f"G1.KOR_NM{row}"))
         if not name:
             continue
-        if frame.locator(_webcrea_id(f"G1.ON_CNSL{row}")).count() == 0:
-            continue
         advisors.append({
             "name": name,
             "department": _text(frame, _webcrea_id(f"G1.DEPT_NM{row}")) or None,
@@ -219,7 +232,13 @@ def _select_advisor(frame, advisor: str) -> None:
     matches = [item for item in _advisors(frame) if item["name"] == advisor]
     if len(matches) != 1:
         raise RuntimeError(f"선택한 상담교수를 찾지 못했습니다: {advisor}")
-    _webcrea_click(frame, f"G1.ON_CNSL{matches[0]['row']}")
+    frame.locator(_webcrea_id(f"G1.KOR_NM{matches[0]['row']}")).dblclick()
+
+
+def _select_mode(frame, mode: str) -> None:
+    if mode not in {"online", "visit"}:
+        raise RuntimeError("상담 방식은 online 또는 visit이어야 합니다.")
+    _webcrea_click(frame, f"G1.{'ON' if mode == 'online' else 'OFF'}_CNSL0")
 
 
 def _select_slot(frame, date: str, time_text: str) -> None:
@@ -243,8 +262,51 @@ def _select_topics(frame, topics: list[str]) -> None:
         _webcrea_click(frame, available[topic])
 
 
-def prepare_online_counseling(student_id: str, storage_state: dict) -> dict:
-    """Read only the selectable advisors, their online slots, and topic labels."""
+def _open_advisor_search(context, frame):
+    _webcrea_click(frame, "F_SRCH.BTN_SRCH")
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        search_frame = _find_advisor_search_frame(context)
+        if search_frame is not None:
+            tab = search_frame.locator("#T1ItemRoot > label:nth-child(2) > div > div")
+            if tab.count():
+                tab.click()
+            if _advisors(search_frame):
+                return search_frame
+        time.sleep(0.2)
+    raise RuntimeError("상담교수 검색 창을 열지 못했습니다.")
+
+
+def _choose_advisor(context, frame, advisor: str):
+    search_frame = _open_advisor_search(context, frame)
+    _select_advisor(search_frame, advisor)
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if _find_advisor_search_frame(context) is None:
+            return
+        time.sleep(0.1)
+    # Webcrea popup may remain visible after its value is returned to the parent.
+    if _text(frame, _webcrea_id("F1.CNSLR_NM")) != advisor:
+        raise RuntimeError(f"상담교수 선택을 확인하지 못했습니다: {advisor}")
+
+
+def _fill_title_and_content(frame, page, title: str, content: str) -> None:
+    title_field = frame.locator(_webcrea_id("F1.CNSL_TTL"))
+    if title_field.count() == 0:
+        title_field = frame.locator(_webcrea_id("F1.CNSL_TTL_my_inputBox"))
+    title_field.fill(title)
+    content_field = frame.locator("#F1 > table > tbody > tr:nth-child(7) > td.mi75 > div > div")
+    content_field.click()
+    page.keyboard.insert_text(content)
+
+
+def prepare_online_counseling(
+    student_id: str,
+    storage_state: dict,
+    advisor: str | None = None,
+    mode: str = "online",
+) -> dict:
+    """Read selectable advisors or a selected advisor's visit slots without saving."""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
@@ -252,21 +314,25 @@ def prepare_online_counseling(student_id: str, storage_state: dict) -> dict:
                 storage_state=storage_state, **_browser_context_options()
             )
             page, frame = _open_counseling_page(context)
-            advisors = _advisors(frame)
+            search_frame = _open_advisor_search(context, frame)
+            advisors = _advisors(search_frame)
             if not advisors:
                 raise RuntimeError("상담교수를 확인하지 못했습니다.")
-            for advisor in advisors:
-                _webcrea_click(frame, f"G1.ON_CNSL{advisor['row']}")
+            if advisor is not None:
+                _select_advisor(search_frame, advisor)
+                _select_mode(frame, mode)
                 page.wait_for_timeout(500)
-                advisor["slots"] = [
+                slots = [
                     {"date": slot["date"], "time": slot["time"]}
                     for slot in _slots(frame)
-                ]
-                del advisor["row"]
+                ] if mode == "visit" else []
+            else:
+                slots = []
             return {
                 "success": True,
-                "mode": "online",
-                "advisors": advisors,
+                "mode": mode,
+                "advisors": [{key: value for key, value in item.items() if key != "row"} for item in advisors],
+                "slots": slots,
                 "topics": _topics(frame),
             }
         finally:
@@ -277,13 +343,14 @@ def submit_online_counseling(
     student_id: str,
     storage_state: dict,
     advisor: str,
-    date: str,
-    time_text: str,
+    mode: str,
+    date: str | None,
+    time_text: str | None,
     title: str,
     content: str,
     topics: list[str],
 ) -> dict:
-    """Save one selected online counseling request."""
+    """Save one selected online or visit counseling request."""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
@@ -291,13 +358,17 @@ def submit_online_counseling(
                 storage_state=storage_state, **_browser_context_options()
             )
             page, frame = _open_counseling_page(context)
-            _select_advisor(frame, advisor)
+            _choose_advisor(context, frame, advisor)
+            _select_mode(frame, mode)
             page.wait_for_timeout(500)
-            _select_slot(frame, date, time_text)
-            page.wait_for_timeout(500)
-            frame.locator(_webcrea_id("F1.CNSL_TTL_my_inputBox")).fill(title)
-            frame.locator(_webcrea_id("F1.ASK_CTNT")).click()
-            page.keyboard.insert_text(content)
+            if mode == "visit":
+                if not date or not time_text:
+                    raise RuntimeError("방문 상담은 날짜와 시간을 선택해야 합니다.")
+                _select_slot(frame, date, time_text)
+                page.wait_for_timeout(500)
+            elif mode != "online":
+                raise RuntimeError("상담 방식은 online 또는 visit이어야 합니다.")
+            _fill_title_and_content(frame, page, title, content)
             _select_topics(frame, topics)
             page.wait_for_timeout(500)
             save_frame = _find_frame_with_id(context, "F_TOPMENU.BTN_SAVE")
@@ -319,7 +390,7 @@ def submit_online_counseling(
             return {
                 "success": True,
                 "submitted": True,
-                "mode": "online",
+                "mode": mode,
                 "advisor": advisor,
                 "date": date,
                 "time": time_text,
