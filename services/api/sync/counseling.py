@@ -18,6 +18,10 @@ _MENU_ID = "1000000248"
 _FRAME_ID = "WEESDV0060"
 _SEARCH_FRAME_ID = "WEESDV0080"
 _TOPIC_COLUMNS = ("ONE", "TWO", "THREE", "FOUR")
+_ADVISOR_TABS = (
+    ("#T1ItemRoot > label:nth-child(2) > div > div", "G1"),
+    ("#T1ItemRoot > label:nth-child(8) > div > div", "G4"),
+)
 
 
 def _webcrea_id(value: str) -> str:
@@ -59,7 +63,7 @@ def _find_advisor_search_frame(context):
             try:
                 if (
                     _SEARCH_FRAME_ID in frame.url
-                    or frame.locator("#T1ItemRoot > label:nth-child(2) > div > div").count()
+                    or any(frame.locator(selector).count() for selector, _ in _ADVISOR_TABS)
                 ):
                     return frame
             except Exception:
@@ -204,18 +208,29 @@ def _topics(frame) -> list[str]:
     return values
 
 
-def _advisors(frame) -> list[dict]:
+def _advisors(frame, group: str = "G1") -> list[dict]:
     advisors = []
     for row in range(10):
-        name = _text(frame, _webcrea_id(f"G1.KOR_NM{row}"))
+        name = _text(frame, _webcrea_id(f"{group}.KOR_NM{row}"))
         if not name:
             continue
         advisors.append({
             "name": name,
-            "department": _text(frame, _webcrea_id(f"G1.DEPT_NM{row}")) or None,
+            "department": _text(frame, _webcrea_id(f"{group}.DEPT_NM{row}")) or None,
             "row": row,
         })
     return advisors
+
+
+def _advisor_entries(frame) -> list[dict]:
+    entries = []
+    for selector, group in _ADVISOR_TABS:
+        tab = frame.locator(selector)
+        if tab.count() == 0:
+            continue
+        tab.click()
+        entries.extend({**advisor, "group": group} for advisor in _advisors(frame, group))
+    return entries
 
 
 def _slots(frame) -> list[dict]:
@@ -229,11 +244,15 @@ def _slots(frame) -> list[dict]:
 
 
 def _select_advisor(frame, advisor: str) -> None:
-    matches = [item for item in _advisors(frame) if item["name"] == advisor]
+    matches = [item for item in _advisor_entries(frame) if item["name"] == advisor]
     if len(matches) != 1:
         raise RuntimeError(f"선택한 상담교수를 찾지 못했습니다: {advisor}")
+    for selector, group in _ADVISOR_TABS:
+        if group == matches[0]["group"]:
+            frame.locator(selector).click()
+            break
     try:
-        frame.locator(_webcrea_id(f"G1.KOR_NM{matches[0]['row']}")).dblclick()
+        frame.locator(_webcrea_id(f"{matches[0]['group']}.KOR_NM{matches[0]['row']}")).dblclick()
     except PlaywrightError as exc:
         # KNUIS closes the search popup synchronously after a successful double click.
         if "Target page, context or browser has been closed" not in str(exc):
@@ -273,10 +292,7 @@ def _open_advisor_search(context, frame):
     while time.time() < deadline:
         search_frame = _find_advisor_search_frame(context)
         if search_frame is not None:
-            tab = search_frame.locator("#T1ItemRoot > label:nth-child(2) > div > div")
-            if tab.count():
-                tab.click()
-            if _advisors(search_frame):
+            if _advisor_entries(search_frame):
                 return search_frame
         time.sleep(0.2)
     raise RuntimeError("상담교수 검색 창을 열지 못했습니다.")
@@ -311,7 +327,7 @@ def prepare_online_counseling(
     advisor: str | None = None,
     mode: str = "online",
 ) -> dict:
-    """Read selectable advisors or a selected advisor's visit slots without saving."""
+    """Read advisors and topics; visit mode additionally reads selectable visit slots."""
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
@@ -320,7 +336,7 @@ def prepare_online_counseling(
             )
             page, frame = _open_counseling_page(context)
             search_frame = _open_advisor_search(context, frame)
-            advisors = _advisors(search_frame)
+            advisors = _advisor_entries(search_frame)
             if not advisors:
                 raise RuntimeError("상담교수를 확인하지 못했습니다.")
             if advisor is not None:
@@ -333,13 +349,18 @@ def prepare_online_counseling(
                 ] if mode == "visit" else []
             else:
                 slots = []
-            return {
+            result = {
                 "success": True,
                 "mode": mode,
-                "advisors": [{key: value for key, value in item.items() if key != "row"} for item in advisors],
-                "slots": slots,
+                "advisors": [
+                    {key: value for key, value in item.items() if key not in {"row", "group"}}
+                    for item in advisors
+                ],
                 "topics": _topics(frame),
             }
+            if mode == "visit":
+                result["slots"] = slots
+            return result
         finally:
             browser.close()
 

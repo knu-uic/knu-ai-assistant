@@ -1,6 +1,6 @@
 import pytest
 
-from sync.counseling import _advisors, _counseling_frame_state, _find_counseling_form_frame, _has_portal_message, _has_system_button, _select_advisor, _select_mode, _select_slot, _select_topics, _slots, _text, _topics
+from sync.counseling import _advisor_entries, _advisors, _counseling_frame_state, _find_counseling_form_frame, _has_portal_message, _has_system_button, _select_advisor, _select_mode, _select_slot, _select_topics, _slots, _text, _topics
 
 
 class _Locator:
@@ -25,6 +25,9 @@ class _Locator:
     def dblclick(self):
         self.checked.append(self.selector.removeprefix('[id="').removesuffix('"]'))
 
+    def click(self):
+        return None
+
 class _TopicFrame:
     def __init__(self):
         self.checked = []
@@ -47,6 +50,7 @@ class _SelectionFrame(_TopicFrame):
     def __init__(self):
         super().__init__()
         self.labels.update({
+            "#T1ItemRoot > label:nth-child(2) > div > div": "",
             '[id="G1.KOR_NM0"]': "교수 A",
             '[id="G1.DEPT_NM0"]': "컴퓨터공학과",
             '[id="G1.ON_CNSL0"]': "",
@@ -75,6 +79,22 @@ def test_counseling_advisor_mode_and_slot_are_selected_by_visible_values():
     _select_mode(frame, "visit")
     _select_slot(frame, "2026-09-10", "10:00 ~ 10:30")
     assert frame.checked == ["G1.KOR_NM0", "G1.OFF_CNSL0", "G3.OFF_CNSL0"]
+
+
+def test_counseling_advisors_include_and_select_mentor_tab():
+    frame = _SelectionFrame()
+    frame.labels.update({
+        "#T1ItemRoot > label:nth-child(8) > div > div": "",
+        '[id="G4.KOR_NM0"]': "김동근",
+        '[id="G4.DEPT_NM0"]': "컴퓨터공학과",
+    })
+
+    assert _advisor_entries(frame) == [
+        {"name": "교수 A", "department": "컴퓨터공학과", "row": 0, "group": "G1"},
+        {"name": "김동근", "department": "컴퓨터공학과", "row": 0, "group": "G4"},
+    ]
+    _select_advisor(frame, "김동근")
+    assert frame.checked == ["G4.KOR_NM0"]
 
 
 def test_counseling_text_reads_webcrea_input_value_when_text_is_empty():

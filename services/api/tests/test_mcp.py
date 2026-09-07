@@ -178,6 +178,8 @@ def test_mcp_lists_grouped_notice_student_and_counseling_tools(monkeypatch):
     assert metadata["groupDescriptions"]["knu.portal"].startswith("로그인한 학생")
     assert scan_tool["annotations"]["readOnlyHint"] is True
     assert scan_tool["annotations"]["destructiveHint"] is False
+    prepare_tool = next(tool for tool in tools if tool["name"] == "knu_prepare_online_counseling")
+    assert "Online counseling has no appointment time" in prepare_tool["description"]
     assert "limit" not in deep_tool["inputSchema"]["properties"]
     portal_tool = next(tool for tool in tools if tool["name"] == "knu_get_portal_academic_data")
     section_options = portal_tool["inputSchema"]["properties"]["section"]

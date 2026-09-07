@@ -348,8 +348,9 @@ mcp = FastMCP(
         "Use portal tools for the signed-in student's grades, timetable, graduation data, and profile. "
         "Use LMS tools for the signed-in student's courses and tasks. "
         "Use knu_prepare_online_counseling before a counseling request. "
-        "Present its advisor and slot choices, then ask the user to choose an exact advisor, date, and time. "
-        "Only call knu_submit_online_counseling when the user explicitly confirms the exact advisor, date, time, title, content, and topics. "
+        "For online counseling, collect the selected advisor, title, content, and topics; it has no appointment date or time. "
+        "For visit counseling, also present the returned slots and collect the exact date and time. "
+        "Only call knu_submit_online_counseling when the user explicitly confirms those exact values. "
         "If the evidence is insufficient, say so instead of making up an answer."
     ),
 )
@@ -614,7 +615,7 @@ async def knu_prepare_online_counseling(
     advisor: Annotated[str | None, Field(max_length=100)] = None,
     mode: Literal["online", "visit"] = "online",
 ) -> dict:
-    """List counseling professors, or pass a selected advisor and visit mode to read available visit slots without submitting."""
+    """List advisors and topics; a selected visit advisor also returns available slots. Online counseling has no appointment time."""
     student_id = _counseling_student_id()
     job_id = await _start_counseling_job("counseling_prepare", student_id, advisor, mode)
     return await _wait_for_counseling_job(student_id, job_id)
