@@ -79,6 +79,19 @@ def save_portal_session(student_id: str, storage_state: dict) -> None:
         r.close()
 
 
+def portal_session_student_ids() -> list[str]:
+    """List students with an existing portal session without reading its contents."""
+    r = _client()
+    try:
+        keys = r.scan_iter(match=f"{_PORTAL_KEY_PREFIX}*")
+        return [
+            (key.decode() if isinstance(key, bytes) else key).removeprefix(_PORTAL_KEY_PREFIX)
+            for key in keys
+        ]
+    finally:
+        r.close()
+
+
 def delete_portal_session(student_id: str) -> None:
     r = _client()
     try:

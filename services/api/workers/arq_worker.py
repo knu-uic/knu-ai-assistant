@@ -165,6 +165,23 @@ async def counseling_submit(
     )
 
 
+async def keep_portal_session(ctx: dict, student_id: str) -> dict:
+    """Refresh an existing portal session without storing or using a password."""
+    from api.sessions import load_portal_session, save_portal_session
+    from sync.portal_auth import refresh_portal_session
+
+    storage_state = await asyncio.to_thread(load_portal_session, student_id)
+    if storage_state is None:
+        return {"success": False, "needs_reconnect": True}
+    refreshed_state = await asyncio.to_thread(
+        refresh_portal_session, student_id, storage_state
+    )
+    if refreshed_state is None:
+        return {"success": False, "needs_reconnect": True}
+    await asyncio.to_thread(save_portal_session, student_id, refreshed_state)
+    return {"success": True}
+
+
 async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
     redis = ctx.get("redis")
     lock_key = "notice-crawl:active"
@@ -199,9 +216,22 @@ async def scheduled_poll_notices(ctx: dict) -> dict:
     return await poll_notices(ctx, settings["crawl_request"])
 
 
+async def scheduled_portal_keepalive(ctx: dict) -> dict:
+    """Refresh every stored portal session sequentially to cap browser usage."""
+    from api.sessions import portal_session_student_ids
+
+    results = []
+    for student_id in await asyncio.to_thread(portal_session_student_ids):
+        results.append(await keep_portal_session(ctx, student_id))
+    return {
+        "refreshed": sum(result.get("success", False) for result in results),
+        "needs_reconnect": sum(result.get("needs_reconnect", False) for result in results),
+    }
+
+
 class WorkerSettings:
     # 크롤링은 대용량 첨부·재시도를 포함하므로 포털 동기화(3분)와 다른 timeout을 쓴다.
-    functions = [portal_sync, lms_sync, counseling_prepare, counseling_submit, func(poll_notices, timeout=21600)]
+    functions = [portal_sync, lms_sync, counseling_prepare, counseling_submit, keep_portal_session, func(poll_notices, timeout=21600)]
     # 포털 동기화는 Playwright 동시 실행 RAM 피크 제한 — 워커당 잡 2개까지
     max_jobs = 2
     job_timeout = PORTAL_SYNC_TIMEOUT_SECONDS
@@ -214,6 +244,7 @@ class WorkerSettings:
             # 이전 실행이 안 끝났으면 다음 발화를 건너뜀 — 크롤 중복 실행 방지
             unique=True,
             timeout=21600,
-        )
+        ),
+        cron(scheduled_portal_keepalive, minute=set(range(0, 60, 10)), unique=True),
     ]
     redis_settings = RedisSettings.from_dsn(REDIS_URL or "redis://localhost:6379")
