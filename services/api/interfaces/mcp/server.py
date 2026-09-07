@@ -347,10 +347,10 @@ mcp = FastMCP(
         "or attachment evidence. Combine them for comparison questions. "
         "Use portal tools for the signed-in student's grades, timetable, graduation data, and profile. "
         "Use LMS tools for the signed-in student's courses and tasks. "
-        "Use knu_prepare_online_counseling before a counseling request. "
-        "For online counseling, collect the selected advisor, title, content, and topics; it has no appointment date or time. "
-        "For visit counseling, also present the returned slots and collect the exact date and time. "
-        "Only call knu_submit_online_counseling when the user explicitly confirms those exact values. "
+        "Use this exact staged flow for counseling requests. First ask for the advisor name and whether the user wants online or visit counseling; do not call a counseling tool until both are known. "
+        "Then call knu_prepare_online_counseling. For online counseling, do not ask for or display an appointment time: collect the title, then the content, show the returned topic list, and ask the user to choose one or more topics. "
+        "For visit counseling, first check the returned slot_count and slots. If no slots are returned, say that this advisor is unavailable for visit counseling and ask the user to choose another advisor or online counseling. Otherwise show the returned slots and ask the user to choose one exact date and time. Only after that, collect the title, then the content, show the returned topic list, and ask the user to choose one or more topics. "
+        "When all values are known, show a concise summary of advisor, mode, visit date/time when applicable, title, content, and topics, then ask for an explicit submit confirmation. Only call knu_submit_online_counseling after that exact confirmation. "
         "If the evidence is insufficient, say so instead of making up an answer."
     ),
 )
@@ -615,7 +615,7 @@ async def knu_prepare_online_counseling(
     advisor: Annotated[str | None, Field(max_length=100)] = None,
     mode: Literal["online", "visit"] = "online",
 ) -> dict:
-    """List advisors and topics; a selected visit advisor also returns available slots. Online counseling has no appointment time."""
+    """Read counseling options after the conversation has the advisor and mode. Returns topics and, for visit counseling, slot_count and available slots. This never submits a request. Online counseling has no appointment time."""
     student_id = _counseling_student_id()
     job_id = await _start_counseling_job("counseling_prepare", student_id, advisor, mode)
     return await _wait_for_counseling_job(student_id, job_id)
@@ -638,7 +638,7 @@ async def knu_submit_online_counseling(
     date: Annotated[str | None, Field(min_length=1, max_length=32)] = None,
     time: Annotated[str | None, Field(min_length=1, max_length=32)] = None,
 ) -> dict:
-    """Submit a confirmed counseling request. Visit mode requires the selected date and time; online mode may omit them."""
+    """Submit only the exact counseling request that the user has explicitly confirmed. Visit mode requires a previously returned date and time; online mode omits them."""
     student_id = _counseling_student_id()
     job_id = await _start_counseling_job(
         "counseling_submit", student_id, advisor, mode, date, time, title, content, topics

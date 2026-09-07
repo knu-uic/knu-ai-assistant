@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
@@ -16,12 +17,16 @@ from sync.portal_auth import _browser_context_options
 
 _MENU_ID = "1000000248"
 _FRAME_ID = "WEESDV0060"
+_INQUIRY_MENU_ID = "1000000249"
+_INQUIRY_FRAME_ID = "WEESDV0050"
 _SEARCH_FRAME_ID = "WEESDV0080"
 _TOPIC_COLUMNS = ("ONE", "TWO", "THREE", "FOUR")
 _ADVISOR_TABS = (
     ("#T1ItemRoot > label:nth-child(2) > div > div", "G1"),
     ("#T1ItemRoot > label:nth-child(8) > div > div", "G4"),
 )
+_ADVISOR_ROWS = 10
+_SLOT_ROWS = 200
 
 
 def _webcrea_id(value: str) -> str:
@@ -71,6 +76,14 @@ def _find_advisor_search_frame(context):
     return None
 
 
+def _find_inquiry_frame(context):
+    frame = find_frame_by_iframe_id(context, _INQUIRY_FRAME_ID)
+    try:
+        return frame if frame and frame.locator(_webcrea_id("F_TOPMENU.BTN_SRCH")).count() else None
+    except Exception:
+        return None
+
+
 def _find_frame_with_id(context, value: str):
     for page in context.pages:
         for frame in page.frames:
@@ -90,6 +103,55 @@ def _has_portal_message(context, message: str) -> bool:
                     return True
             except Exception:
                 continue
+    return False
+
+
+def _has_submitted_counseling(
+    context, advisor: str, mode: str, date: str | None, title: str, content: str
+) -> bool:
+    """Confirm persistence from the portal's counseling inquiry grid."""
+    if not date:
+        return False
+    page = next((page for page in context.pages if page.locator("#LeftFrame").count()), None)
+    if page is None or not open_menu(page, _INQUIRY_MENU_ID, timeout_sec=10):
+        return False
+    deadline = time.time() + 10
+    frame = None
+    while time.time() < deadline:
+        frame = _find_inquiry_frame(context)
+        if frame is not None:
+            try:
+                if frame.evaluate(
+                    "() => Boolean(globalThis._my_Page00_G1?.arrData?.CNSL_TTL)"
+                ):
+                    break
+            except Exception:
+                pass
+        time.sleep(0.1)
+    if frame is None:
+        return False
+    _webcrea_click(frame, "F_TOPMENU.BTN_SRCH")
+    expected_date = _slot_date(date).replace("-", "")
+    expected_mode = "G4B001" if mode == "visit" else "G4B002"
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        rows = frame.evaluate(
+            """() => {
+                const data = globalThis._my_Page00_G1?.arrData || {};
+                return Object.fromEntries(Object.keys(data).map(key => [key, data[key]]));
+            }"""
+        )
+        count = len(rows.get("CNSL_TTL", []))
+        if any(
+            rows.get("CNSL_TTL", [])[index] == title
+            and rows.get("ASK_CTNT", [])[index] == content
+            and rows.get("KOR_NM", [])[index] == _advisor_name(advisor)
+            and rows.get("CNSL_DTTM", [])[index] == expected_date
+            and rows.get("CNSL_TYPE_CD", [])[index] == expected_mode
+            for index in range(count)
+        ):
+            return True
+        time.sleep(0.2)
     return False
 
 
@@ -198,6 +260,22 @@ def _text(frame, selector: str) -> str:
         except Exception:
             continue
     return ""
+
+
+def _slot_date(value: str) -> str:
+    value = str(value).strip()
+    if value.isdigit() and len(value) == 8:
+        return f"{value[:4]}-{value[4:6]}-{value[6:]}"
+    match = re.fullmatch(r"(\d{4})\D+(\d{1,2})\D+(\d{1,2})\D*", value)
+    return f"{match.group(1)}-{int(match.group(2)):02d}-{int(match.group(3)):02d}" if match else value
+
+
+def _slot_time(value: str) -> str:
+    value = str(value).strip()
+    match = re.fullmatch(r"(\d{1,2}:\d{2})\s*~\s*(\d{1,2}:\d{2})", value)
+    return f"{match.group(1)} ~ {match.group(2)}" if match else value
+
+
 def _topics(frame) -> list[str]:
     values = []
     for row in range(10):
@@ -210,7 +288,7 @@ def _topics(frame) -> list[str]:
 
 def _advisors(frame, group: str = "G1") -> list[dict]:
     advisors = []
-    for row in range(10):
+    for row in range(_ADVISOR_ROWS):
         name = _text(frame, _webcrea_id(f"{group}.KOR_NM{row}"))
         if not name:
             continue
@@ -234,12 +312,36 @@ def _advisor_entries(frame) -> list[dict]:
 
 
 def _slots(frame) -> list[dict]:
+    try:
+        slots = frame.evaluate(
+            """() => {
+                const grid = Object.values(globalThis).find(value =>
+                    value?.arrRows && value?.arrData && value?.divPos === 'G3'
+                );
+                if (!grid) return null;
+                const { arrRows, arrData } = grid;
+                return arrRows.map((_, row) => ({
+                    date: arrData.RESER_DT?.[row] || '',
+                    time: arrData.TM?.[row] || '',
+                    row,
+                }));
+            }"""
+        )
+        if slots is not None:
+            return [
+                {**slot, "date": _slot_date(slot["date"])}
+                for slot in slots
+                if slot["date"] and slot["time"]
+            ]
+    except Exception:
+        pass
+
     slots = []
-    for row in range(30):
+    for row in range(_SLOT_ROWS):
         date = _text(frame, _webcrea_id(f"G3.RESER_DT{row}"))
         time_text = _text(frame, _webcrea_id(f"G3.TM{row}"))
         if date and time_text:
-            slots.append({"date": date, "time": time_text, "row": row})
+            slots.append({"date": _slot_date(date), "time": time_text, "row": row})
     return slots
 
 
@@ -259,17 +361,33 @@ def _select_advisor(frame, advisor: str) -> None:
             raise
 
 
-def _select_mode(frame, mode: str) -> None:
+def _advisor_name(value: str) -> str:
+    return value.strip().removesuffix("교수님").removesuffix("교수").strip()
+
+
+def _select_mode(frame, mode: str, advisor_row: int = 0) -> None:
     if mode not in {"online", "visit"}:
         raise RuntimeError("상담 방식은 online 또는 visit이어야 합니다.")
-    _webcrea_click(frame, f"G1.{'ON' if mode == 'online' else 'OFF'}_CNSL0")
+    _webcrea_click(frame, f"G1.{'ON' if mode == 'online' else 'OFF'}_CNSL{advisor_row}")
 
 
 def _select_slot(frame, date: str, time_text: str) -> None:
+    date, time_text = _slot_date(date), _slot_time(time_text)
     matches = [item for item in _slots(frame) if item["date"] == date and item["time"] == time_text]
     if len(matches) != 1:
         raise RuntimeError(f"선택한 상담 일시를 찾지 못했습니다: {date} {time_text}")
-    _webcrea_click(frame, f"G3.OFF_CNSL{matches[0]['row']}")
+    row = matches[0]["row"]
+    try:
+        frame.evaluate(
+            """row => {
+                const grid = Object.values(globalThis).find(value => value?.divPos === 'G3');
+                grid?.SetRowNo?.(row);
+            }""",
+            row,
+        )
+    except Exception:
+        pass
+    _webcrea_click(frame, f"G3.OFF_CNSL{row}")
 
 
 def _select_topics(frame, topics: list[str]) -> None:
@@ -298,23 +416,28 @@ def _open_advisor_search(context, frame):
     raise RuntimeError("상담교수 검색 창을 열지 못했습니다.")
 
 
-def _choose_advisor(context, frame, advisor: str):
-    search_frame = _open_advisor_search(context, frame)
+def _choose_advisor(context, frame, advisor: str, search_frame=None) -> int:
+    advisor = _advisor_name(advisor)
+    before = _advisors(frame)
+    search_frame = search_frame or _open_advisor_search(context, frame)
     _select_advisor(search_frame, advisor)
     deadline = time.time() + 5
     while time.time() < deadline:
-        if _find_advisor_search_frame(context) is None:
-            return
+        selected = [item for item in _advisors(frame) if item["name"] == advisor]
+        added = [item for item in selected if item not in before]
+        if len(added) == 1:
+            return added[0]["row"]
+        if len(selected) == 1:
+            return selected[0]["row"]
         time.sleep(0.1)
-    # Webcrea popup may remain visible after its value is returned to the parent.
-    if _text(frame, _webcrea_id("F1.CNSLR_NM")) != advisor:
-        raise RuntimeError(f"상담교수 선택을 확인하지 못했습니다: {advisor}")
+    raise RuntimeError(f"상담교수 선택을 확인하지 못했습니다: {advisor}")
 
 
 def _fill_title_and_content(frame, page, title: str, content: str) -> None:
-    title_field = frame.locator(_webcrea_id("F1.CNSL_TTL"))
+    # Webcrea keeps the table-cell wrapper hidden while its generated input is visible.
+    title_field = frame.locator(_webcrea_id("F1.CNSL_TTL_my_inputBox"))
     if title_field.count() == 0:
-        title_field = frame.locator(_webcrea_id("F1.CNSL_TTL_my_inputBox"))
+        title_field = frame.locator(_webcrea_id("F1.CNSL_TTL"))
     title_field.fill(title)
     content_field = frame.locator("#F1 > table > tbody > tr:nth-child(7) > td.mi75 > div > div")
     content_field.click()
@@ -340,8 +463,8 @@ def prepare_online_counseling(
             if not advisors:
                 raise RuntimeError("상담교수를 확인하지 못했습니다.")
             if advisor is not None:
-                _select_advisor(search_frame, advisor)
-                _select_mode(frame, mode)
+                advisor_row = _choose_advisor(context, frame, advisor, search_frame)
+                _select_mode(frame, mode, advisor_row)
                 page.wait_for_timeout(500)
                 slots = [
                     {"date": slot["date"], "time": slot["time"]}
@@ -360,6 +483,7 @@ def prepare_online_counseling(
             }
             if mode == "visit":
                 result["slots"] = slots
+                result["slot_count"] = len(slots)
             return result
         finally:
             browser.close()
@@ -384,8 +508,8 @@ def submit_online_counseling(
                 storage_state=storage_state, **_browser_context_options()
             )
             page, frame = _open_counseling_page(context)
-            _choose_advisor(context, frame, advisor)
-            _select_mode(frame, mode)
+            advisor_row = _choose_advisor(context, frame, advisor)
+            _select_mode(frame, mode, advisor_row)
             page.wait_for_timeout(500)
             if mode == "visit":
                 if not date or not time_text:
@@ -406,12 +530,9 @@ def submit_online_counseling(
                 raise RuntimeError("상담신청 확인창을 열지 못했습니다.")
             _webcrea_click(confirm_frame, "frmBtn5.btnOk")
 
-            deadline = time.time() + 10
-            while time.time() < deadline:
-                if _has_portal_message(context, "상담신청이 완료되었습니다."):
-                    break
-                time.sleep(0.1)
-            else:
+            if not _has_submitted_counseling(
+                context, advisor, mode, date, title, content
+            ):
                 raise RuntimeError("포털에서 상담신청 완료를 확인하지 못했습니다.")
             return {
                 "success": True,
