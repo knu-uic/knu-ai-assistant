@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 
@@ -125,7 +126,7 @@ def test_mcp_rate_limit_is_scoped_to_authenticated_principal(monkeypatch):
     assert all(limit == mcp_mod.RATE_LIMIT_MCP for _, limit in seen)
 
 
-def test_mcp_lists_grouped_notice_and_student_data_tools(monkeypatch):
+def test_mcp_lists_grouped_notice_student_and_counseling_tools(monkeypatch):
     import interfaces.mcp.server as mcp_mod
 
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
@@ -146,6 +147,9 @@ def test_mcp_lists_grouped_notice_and_student_data_tools(monkeypatch):
         "knu_list_lms_tasks",
         "knu_list_lms_courses",
         "knu_get_student_profile",
+        "knu_prepare_online_counseling",
+        "knu_counseling_job_status",
+        "knu_submit_online_counseling",
     }
     scan_tool = next(tool for tool in tools if tool["name"] == "knu_list_notices")
     deep_tool = next(tool for tool in tools if tool["name"] == "knu_search_notice_details")
@@ -174,6 +178,11 @@ def test_mcp_lists_grouped_notice_and_student_data_tools(monkeypatch):
     assert metadata["groupDescriptions"]["knu.portal"].startswith("로그인한 학생")
     assert scan_tool["annotations"]["readOnlyHint"] is True
     assert scan_tool["annotations"]["destructiveHint"] is False
+    prepare_tool = next(tool for tool in tools if tool["name"] == "knu_prepare_online_counseling")
+    assert "Online counseling has no appointment time" in prepare_tool["description"]
+    assert "slot_count" in prepare_tool["description"]
+    submit_tool = next(tool for tool in tools if tool["name"] == "knu_submit_online_counseling")
+    assert "explicitly confirmed" in submit_tool["description"]
     assert "limit" not in deep_tool["inputSchema"]["properties"]
     portal_tool = next(tool for tool in tools if tool["name"] == "knu_get_portal_academic_data")
     section_options = portal_tool["inputSchema"]["properties"]["section"]
@@ -224,6 +233,112 @@ def test_mcp_student_tools_use_authenticated_students_own_data(monkeypatch):
     assert courses["courses"][0]["student_id"] == "20260009"
     assert profile["profile"]["student_id"] == "20260009"
     assert seen == [("20260009", True)]
+
+
+def test_counseling_retry_requeues_after_failed_completion(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+    from arq.jobs import JobStatus
+
+    class FailedJob:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def status(self):
+            return JobStatus.complete
+
+        async def result_info(self):
+            return type("Result", (), {"success": False})()
+
+    class Pool:
+        def __init__(self):
+            self.calls = 0
+
+        async def enqueue_job(self, *_args, **_kwargs):
+            self.calls += 1
+            return None if self.calls == 1 else object()
+
+    pool = Pool()
+
+    async def get_pool():
+        return pool
+
+    monkeypatch.setattr(mcp_mod, "Job", FailedJob)
+    monkeypatch.setattr(mcp_mod, "get_arq_pool", get_pool)
+
+    job_id = asyncio.run(
+        mcp_mod._start_counseling_job("counseling_submit", "20260009", "t", "c", ["학업"])
+    )
+
+    assert job_id.startswith("counseling:counseling_submit:")
+    assert job_id.endswith(":20260009")
+    assert pool.calls == 2
+
+
+def test_counseling_jobs_do_not_reuse_a_completed_request_with_different_selection(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+    from arq.jobs import JobStatus
+
+    class MissingJob:
+        def __init__(self, job_id, **_kwargs):
+            self.job_id = job_id
+
+        async def status(self):
+            return JobStatus.not_found
+
+    class Pool:
+        async def enqueue_job(self, *_args, **kwargs):
+            return type("Queued", (), {"job_id": kwargs["_job_id"]})()
+
+    async def get_pool():
+        return Pool()
+
+    monkeypatch.setattr(mcp_mod, "Job", MissingJob)
+    monkeypatch.setattr(mcp_mod, "get_arq_pool", get_pool)
+
+    first = asyncio.run(mcp_mod._start_counseling_job("counseling_prepare", "20260009", None, "online"))
+    second = asyncio.run(mcp_mod._start_counseling_job("counseling_prepare", "20260009", "교수 A", "visit"))
+
+    assert first != second
+
+
+def test_counseling_submit_queues_the_user_selected_advisor_and_slot(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+
+    seen = []
+
+    async def start(name, student_id, *args):
+        seen.append((name, student_id, args))
+        return "counseling:counseling_submit:20260009"
+
+    monkeypatch.setattr(mcp_mod, "_counseling_student_id", lambda: "20260009")
+    monkeypatch.setattr(mcp_mod, "_start_counseling_job", start)
+
+    async def wait(student_id, job_id):
+        assert (student_id, job_id) == ("20260009", "counseling:counseling_submit:20260009")
+        return {"status": "done", "job_id": job_id, "result": {"success": True}}
+
+    monkeypatch.setattr(mcp_mod, "_wait_for_counseling_job", wait)
+
+    result = asyncio.run(
+        mcp_mod.knu_submit_online_counseling.fn(
+            advisor="교수 A",
+            mode="visit",
+            title="상담 제목",
+            content="상담 내용",
+            topics=["학업"],
+            confirmed="submit",
+            date="2026-09-10",
+            time="10:00 ~ 10:30",
+        )
+    )
+
+    assert result["job_id"] == "counseling:counseling_submit:20260009"
+    assert result["status"] == "done"
+    assert result["confirmed"] == "submit"
+    assert seen == [(
+        "counseling_submit", "20260009",
+        ("교수 A", "visit", "2026-09-10", "10:00 ~ 10:30", "상담 제목", "상담 내용", ["학업"]),
+    )]
 
 
 def test_knu_list_notices_returns_server_total(monkeypatch):

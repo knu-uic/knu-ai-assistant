@@ -236,6 +236,28 @@ def verify_portal_credentials(student_id: str, password: str) -> bool:
         return False
 
 
+def refresh_portal_session(student_id: str, storage_state: dict) -> dict | None:
+    """Touch an existing portal session and return its refreshed cookie state."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            context = browser.new_context(
+                storage_state=storage_state, **_browser_context_options()
+            )
+            page = context.new_page()
+            page.goto(DEFAULT_PORTAL_URL, wait_until="load", timeout=15_000)
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if _has_visible_system_button(page) or extract_portal_identity(page, student_id):
+                    return context.storage_state()
+                page.wait_for_timeout(250)
+            return None
+        finally:
+            browser.close()
+
+
 def sync_portal_data(student_id: str, storage_state: dict) -> dict:
     """Reuse the verified SSO session to sync all supported KNUIS data."""
     from sync.knuis_sync import run_portal_sync

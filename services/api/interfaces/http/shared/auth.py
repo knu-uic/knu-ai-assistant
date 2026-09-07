@@ -133,6 +133,7 @@ async def portal_login(
         save_portal_identity,
         sync_university_data,
     )
+    from api.sessions import save_portal_session
 
     student_id = req.student_id.strip()
     try:
@@ -149,6 +150,9 @@ async def portal_login(
     await anyio.to_thread.run_sync(
         partial(save_portal_identity, student_id, portal_auth.get("profile"))
     )
+    await anyio.to_thread.run_sync(
+        partial(save_portal_session, student_id, portal_auth["storage_state"])
+    )
     mark_portal_sync_started(student_id)
     background_tasks.add_task(
         sync_university_data,
@@ -163,8 +167,14 @@ async def portal_login(
 @router.post("/auth/logout")
 @limiter.limit(RATE_LIMIT_AUTH)
 async def logout(request: Request, principal: str = Depends(require_user)) -> dict:
+    from api.deps import portal_student_id
+    from api.sessions import delete_portal_session
+
     authorization = request.headers.get("Authorization", "")
     token = authorization.removeprefix("Bearer ").strip()
+    student_id = portal_student_id(principal)
+    if student_id:
+        await anyio.to_thread.run_sync(partial(delete_portal_session, student_id))
     return {
         "logged_out": True,
         "session_revoked": revoke_access_token(token, principal),
