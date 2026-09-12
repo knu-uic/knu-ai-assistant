@@ -1,4 +1,4 @@
-name: KNU Server Manager release
+name: KNU Server Manager macOS release
 
 on:
   workflow_dispatch:
@@ -9,10 +9,21 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: knu-server-manager-macos-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   macos-standalone:
-    runs-on: macos-14
-    timeout-minutes: 120
+    runs-on: macos-latest
+    timeout-minutes: 180
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,42 +46,158 @@ jobs:
         run: npm ci
         working-directory: apps/server-manager
 
+      - name: Resolve release metadata
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./apps/server-manager/package.json').version")"
+          tauri_version="$(node -p "require('./apps/server-manager/src-tauri/tauri.conf.json').version")"
+          [[ "$package_version" == "$tauri_version" ]] || {
+            echo "Manager version mismatch: package=$package_version tauri=$tauri_version" >&2
+            exit 1
+          }
+          if [[ "$GITHUB_REF" == refs/tags/knu-server-v* ]]; then
+            version="${GITHUB_REF_NAME#knu-server-v}"
+            [[ "$version" == "$package_version" ]] || {
+              echo "Tag version $version does not match manager version $package_version" >&2
+              exit 1
+            }
+            echo "tagged=true" >> "$GITHUB_OUTPUT"
+          else
+            version="$package_version"
+            echo "tagged=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Require Apple release credentials
+        if: steps.release.outputs.tagged == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in MACOS_CERTIFICATE MACOS_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} )); then
+            echo "Missing GitHub Actions secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Import Developer ID certificate
+        if: steps.release.outputs.tagged == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          keychain="$RUNNER_TEMP/knu-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security find-identity -v -p codesigning "$keychain"
+
       - name: Build relocatable database runtimes
         id: native
         shell: bash
         run: |
+          set -euo pipefail
           platform="$(uname -s | tr '[:upper:]' '[:lower:]')"
           architecture="$(uname -m)"
+          [[ "$platform" == "darwin" ]] || { echo "macOS runner required" >&2; exit 1; }
           output="$RUNNER_TEMP/knu-native-$platform-$architecture"
           bash apps/server-manager/scripts/build-native-runtime.sh "$output"
           echo "postgres=$output/postgres" >> "$GITHUB_OUTPUT"
           echo "redis=$output/redis" >> "$GITHUB_OUTPUT"
           echo "java=$output/java" >> "$GITHUB_OUTPUT"
-          echo "platform=$platform-$architecture" >> "$GITHUB_OUTPUT"
+          echo "architecture=$architecture" >> "$GITHUB_OUTPUT"
+
       - name: Test manager and extraction boundaries
         run: npm run check
         working-directory: apps/server-manager
 
-      - name: Build standalone installer
-        run: npm run bundle
+      - name: Stage standalone runtime
+        run: npm run stage:runtime
         working-directory: apps/server-manager
         env:
           KNU_POSTGRES_RUNTIME: ${{ steps.native.outputs.postgres }}
           KNU_REDIS_RUNTIME: ${{ steps.native.outputs.redis }}
           KNU_JAVA_RUNTIME: ${{ steps.native.outputs.java }}
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: knu-server-manager-${{ steps.native.outputs.platform }}
-          path: apps/server-manager/src-tauri/target/release/bundle/**
-          if-no-files-found: error
+      - name: Test packaged KNU API
+        working-directory: apps/server-manager/runtime/knu/services/api
+        run: ../../.knu-runtime/bin/python -m pytest tests -q
 
-      - name: Publish tagged release assets
-        if: startsWith(github.ref, 'refs/tags/knu-server-v')
+      - name: Build standalone application
+        shell: bash
+        working-directory: apps/server-manager
+        run: |
+          set -euo pipefail
+          npm run tauri build -- --bundles app --no-sign
+          app_path="$(find src-tauri/target/release/bundle -maxdepth 3 -type d -name '*.app' -print -quit)"
+          [[ -n "$app_path" ]] || { echo "Tauri did not create an app bundle" >&2; exit 1; }
+          echo "APP_PATH=$PWD/$app_path" >> "$GITHUB_ENV"
+
+      - name: Seal and verify signed application
+        if: steps.release.outputs.tagged == 'true'
         shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" --generate-notes
-          find apps/server-manager/src-tauri/target/release/bundle -type f \
-            -exec gh release upload "$GITHUB_REF_NAME" {} +
+          set -euo pipefail
+          while IFS= read -r -d '' candidate; do
+            if file "$candidate" | grep -q 'Mach-O'; then
+              codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$candidate"
+            fi
+          done < <(find "$APP_PATH" -type f -print0)
+          codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -dvvv "$APP_PATH"
+
+      - name: Create disk image
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/KnuServerManagerDmg"
+          output="$RUNNER_TEMP/KNU.Server.Manager_${{ steps.release.outputs.version }}_macOS-${{ steps.native.outputs.architecture }}.dmg"
+          mkdir -p "$stage"
+          ditto "$APP_PATH" "$stage/KNU Server Manager.app"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname "KNU Server Manager" -srcfolder "$stage" -ov -format UDZO "$output"
+          if [[ "${{ steps.release.outputs.tagged }}" == "true" ]]; then
+            codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$output"
+          fi
+          echo "DMG_PATH=$output" >> "$GITHUB_ENV"
+
+      - name: Notarize disk image
+        if: steps.release.outputs.tagged == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: knu-server-manager-macos-${{ steps.native.outputs.architecture }}
+          path: ${{ env.DMG_PATH }}
+          if-no-files-found: error
+
+      - name: Publish tagged release
+        if: steps.release.outputs.tagged == 'true'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "KNU Server Manager ${{ steps.release.outputs.version }}" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" "$DMG_PATH" --clobber

@@ -148,6 +148,21 @@ npm run bundle
 macOS·Linux용이며, Windows용 PostgreSQL/pgvector·Redis 배포 입력은 별도로
 준비해 `stage:runtime`에 전달해야 한다.
 
+초기 사용자용 배포는 macOS 14 이상을 대상으로 한다.
+`knu-server-vX.Y.Z` tag를 push하면 `KNU Server Manager macOS release`
+workflow가 독립 런타임을 build하고 Developer ID 서명과 Apple 공증을
+거친 DMG를 GitHub Release에 게시한다. tag 버전은
+`apps/server-manager/package.json`과 `src-tauri/tauri.conf.json`의 버전과
+일치해야 한다. workflow를 수동 실행하면 서명하지 않은
+개발 검증용 DMG만 artifact로 만든다.
+
+정식 배포에는 다음 GitHub Actions secret이 필요하다.
+
+- `MACOS_CERTIFICATE`: Developer ID Application `.p12`의 base64 문자열
+- `MACOS_CERTIFICATE_PASSWORD`: `.p12` 비밀번호
+- `APPLE_SIGNING_IDENTITY`: 인증서의 완전한 Developer ID Application 이름
+- `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`: `notarytool` 공증 자격 증명
+
 ## Codex 인증
 
 VLM 모델 화면에서 `OpenAI Codex (ChatGPT 계정)`을 고르고 로그인을 누르면
