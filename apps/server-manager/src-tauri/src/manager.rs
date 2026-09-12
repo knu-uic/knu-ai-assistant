@@ -2,8 +2,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::VecDeque,
-    env,
-    fs,
+    env, fs,
     io::{BufRead, BufReader},
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
@@ -14,12 +13,16 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
+use crate::standalone::{stop_child as stop_embedded_child, EmbeddedProcesses, StandaloneRuntime};
+
 const MAX_LOGS: usize = 1200;
 const API_ADDRESS: &str = "127.0.0.1:8000";
 
 struct Processes {
     api: Option<Child>,
     worker: Option<Child>,
+    postgres: Option<Child>,
+    redis: Option<Child>,
 }
 
 pub struct ManagerState {
@@ -30,6 +33,9 @@ pub struct ManagerState {
     python: PathBuf,
     preferences_path: PathBuf,
     runtime_settings_path: PathBuf,
+    data_root: PathBuf,
+    standalone: Option<StandaloneRuntime>,
+    standalone_error: Option<String>,
     show_dock_icon: Mutex<bool>,
 }
 
@@ -50,6 +56,10 @@ pub struct RuntimeStatus {
     python_path: String,
     logs: Vec<String>,
     show_dock_icon: bool,
+    deployment_mode: String,
+    data_root: String,
+    database_running: bool,
+    redis_running: bool,
 }
 
 fn find_repo_root() -> PathBuf {
@@ -68,14 +78,22 @@ fn find_repo_root() -> PathBuf {
     env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
-fn python_for(root: &Path) -> PathBuf {
+fn python_for(root: &Path, packaged: bool) -> PathBuf {
     if let Ok(value) = env::var("KNU_PYTHON_PATH") {
         return PathBuf::from(value);
     }
     #[cfg(target_os = "windows")]
-    let candidate = root.join(".venv/Scripts/python.exe");
+    let candidate = root.join(if packaged {
+        ".knu-runtime/python.exe"
+    } else {
+        ".venv/Scripts/python.exe"
+    });
     #[cfg(not(target_os = "windows"))]
-    let candidate = root.join(".venv/bin/python");
+    let candidate = root.join(if packaged {
+        ".knu-runtime/bin/python"
+    } else {
+        ".venv/bin/python"
+    });
     if candidate.exists() {
         candidate
     } else {
@@ -112,11 +130,35 @@ fn pipe_output(child: &mut Child, name: &'static str, logs: Arc<Mutex<VecDeque<S
 
 impl ManagerState {
     pub fn new(app: &AppHandle) -> Self {
-        let root = find_repo_root();
+        let configured_runtime = env::var("KNU_EMBEDDED_RUNTIME_ROOT")
+            .ok()
+            .map(PathBuf::from);
+        let packaged_runtime = if !cfg!(debug_assertions) {
+            app.path()
+                .resource_dir()
+                .ok()
+                .map(|path| path.join("runtime"))
+        } else {
+            None
+        };
+        let runtime_root = configured_runtime.or(packaged_runtime);
+        let packaged = runtime_root.is_some();
+        let root = runtime_root
+            .as_ref()
+            .map(|path| path.join("knu"))
+            .unwrap_or_else(find_repo_root);
+        let python = python_for(&root, packaged);
+        let data_root = env::var("KNU_DATA_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                app.path()
+                    .app_data_dir()
+                    .unwrap_or_else(|_| root.join(".knu-server-manager/data"))
+            });
         let preferences_path = app
             .path()
             .app_config_dir()
-            .unwrap_or_else(|_| root.join(".knu-server-manager"))
+            .unwrap_or_else(|_| data_root.join("config"))
             .join("manager.json");
         let preferences = fs::read_to_string(&preferences_path)
             .ok()
@@ -136,10 +178,20 @@ impl ManagerState {
                 let _ = fs::copy(legacy_path, &runtime_settings_path);
             }
         }
+        let (standalone, standalone_error) = if let Some(runtime_root) = runtime_root {
+            match StandaloneRuntime::discover(runtime_root, data_root.clone()) {
+                Ok(runtime) => (Some(runtime), None),
+                Err(error) => (None, Some(error)),
+            }
+        } else {
+            (None, None)
+        };
         Self {
             processes: Mutex::new(Processes {
                 api: None,
                 worker: None,
+                postgres: None,
+                redis: None,
             }),
             logs: Arc::new(Mutex::new(VecDeque::new())),
             admin_token: env::var("KNU_ADMIN_TOKEN").unwrap_or_else(|_| {
@@ -149,10 +201,13 @@ impl ManagerState {
                     .map(char::from)
                     .collect()
             }),
-            python: python_for(&root),
+            python,
             root,
             preferences_path,
             runtime_settings_path,
+            data_root,
+            standalone,
+            standalone_error,
             show_dock_icon: Mutex::new(preferences.show_dock_icon),
         }
     }
@@ -163,16 +218,24 @@ impl ManagerState {
         }
         fs::write(
             &self.preferences_path,
-            serde_json::to_vec_pretty(&ManagerPreferences { show_dock_icon: show })
-                .map_err(|error| error.to_string())?,
+            serde_json::to_vec_pretty(&ManagerPreferences {
+                show_dock_icon: show,
+            })
+            .map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
-        *self.show_dock_icon.lock().map_err(|_| "preference lock failed")? = show;
+        *self
+            .show_dock_icon
+            .lock()
+            .map_err(|_| "preference lock failed")? = show;
         Ok(())
     }
 
     pub fn show_dock_icon(&self) -> bool {
-        self.show_dock_icon.lock().map(|value| *value).unwrap_or(false)
+        self.show_dock_icon
+            .lock()
+            .map(|value| *value)
+            .unwrap_or(false)
     }
 }
 
@@ -181,6 +244,8 @@ impl Drop for ManagerState {
         if let Ok(mut processes) = self.processes.lock() {
             stop_child(&mut processes.worker);
             stop_child(&mut processes.api);
+            stop_embedded_child(&mut processes.redis);
+            stop_embedded_child(&mut processes.postgres);
         }
     }
 }
@@ -223,13 +288,21 @@ fn wait_for_api(child: &mut Child) -> Result<(), String> {
 
 #[tauri::command]
 pub fn runtime_status(state: tauri::State<ManagerState>) -> RuntimeStatus {
-    let (api_running, worker_running) = if let Ok(mut p) = state.processes.lock() {
-        (child_running(&mut p.api), child_running(&mut p.worker))
-    } else {
-        (false, false)
-    };
+    let (api_running, worker_running, database_running, redis_running) =
+        if let Ok(mut p) = state.processes.lock() {
+            (
+                child_running(&mut p.api),
+                child_running(&mut p.worker),
+                child_running(&mut p.postgres),
+                child_running(&mut p.redis),
+            )
+        } else {
+            (false, false, false, false)
+        };
     RuntimeStatus {
-        running: api_running && worker_running,
+        running: api_running
+            && worker_running
+            && (state.standalone.is_none() || (database_running && redis_running)),
         api_running,
         worker_running,
         url: "http://127.0.0.1:8000".into(),
@@ -242,6 +315,14 @@ pub fn runtime_status(state: tauri::State<ManagerState>) -> RuntimeStatus {
             .map(|v| v.iter().cloned().collect())
             .unwrap_or_default(),
         show_dock_icon: state.show_dock_icon(),
+        deployment_mode: if state.standalone.is_some() || state.standalone_error.is_some() {
+            "standalone".into()
+        } else {
+            "development".into()
+        },
+        data_root: state.data_root.display().to_string(),
+        database_running,
+        redis_running,
     }
 }
 
@@ -278,7 +359,11 @@ fn spawn_python(state: &ManagerState, args: &[&str], name: &'static str) -> Resu
             api_root.display()
         ));
     }
-    let mut child = Command::new(&state.python)
+    let mut command = Command::new(&state.python);
+    if let Some(runtime) = &state.standalone {
+        runtime.configure_command(&mut command);
+    }
+    let mut child = command
         .args(args)
         .current_dir(api_root)
         .env("KNU_ADMIN_TOKEN", &state.admin_token)
@@ -301,8 +386,12 @@ fn spawn_python(state: &ManagerState, args: &[&str], name: &'static str) -> Resu
 
 fn migrate_database(state: &ManagerState) -> Result<(), String> {
     let api_root = state.root.join("services/api");
-    let output = Command::new(&state.python)
-        .args(["-m", "db.migrate"])
+    let mut command = Command::new(&state.python);
+    if let Some(runtime) = &state.standalone {
+        runtime.configure_command(&mut command);
+    }
+    let output = command
+        .args(["-c", "from db.schema import init_db; init_db()"])
         .current_dir(api_root)
         .env("KNU_MANAGER_SETTINGS_PATH", &state.runtime_settings_path)
         .output()
@@ -335,13 +424,42 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
             state.python.display()
         ));
     }
-    migrate_database(&state)?;
+    if let Some(error) = &state.standalone_error {
+        return Err(format!("독립 실행 런타임이 올바르지 않습니다: {error}"));
+    }
+    if let Some(runtime) = &state.standalone {
+        if !child_running(&mut p.postgres) || !child_running(&mut p.redis) {
+            stop_embedded_child(&mut p.redis);
+            stop_embedded_child(&mut p.postgres);
+            let EmbeddedProcesses { postgres, redis } = runtime.start(&state.logs)?;
+            p.postgres = postgres;
+            p.redis = redis;
+            push_log(
+                &state.logs,
+                format!(
+                    "[manager] standalone data root: {}",
+                    runtime.data_root().display()
+                ),
+            );
+        }
+    }
+    if let Err(error) = migrate_database(state) {
+        if state.standalone.is_some() {
+            stop_embedded_child(&mut p.redis);
+            stop_embedded_child(&mut p.postgres);
+        }
+        return Err(error);
+    }
     if !child_running(&mut p.api) {
         if api_is_listening() {
+            if state.standalone.is_some() {
+                stop_embedded_child(&mut p.redis);
+                stop_embedded_child(&mut p.postgres);
+            }
             return Err("8000번 포트에서 다른 KNU API가 이미 실행 중입니다. 이전 KNU Server Manager를 종료한 뒤 다시 시도하세요.".into());
         }
         let mut api = spawn_python(
-            &state,
+            state,
             &[
                 "-m",
                 "uvicorn",
@@ -356,13 +474,17 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
         if let Err(error) = wait_for_api(&mut api) {
             let _ = api.kill();
             let _ = api.wait();
+            if state.standalone.is_some() {
+                stop_embedded_child(&mut p.redis);
+                stop_embedded_child(&mut p.postgres);
+            }
             return Err(error);
         }
         p.api = Some(api);
     }
     if !child_running(&mut p.worker) {
         match spawn_python(
-            &state,
+            state,
             &["-m", "arq", "workers.arq_worker.WorkerSettings"],
             "worker",
         ) {
@@ -370,6 +492,10 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
             Err(error) => {
                 if let Some(mut api) = p.api.take() {
                     let _ = api.kill();
+                }
+                if state.standalone.is_some() {
+                    stop_embedded_child(&mut p.redis);
+                    stop_embedded_child(&mut p.postgres);
                 }
                 return Err(error);
             }
@@ -410,6 +536,8 @@ pub fn stop_server(state: tauri::State<ManagerState>) -> Result<(), String> {
         .map_err(|_| "process state lock failed")?;
     stop_child(&mut p.worker);
     stop_child(&mut p.api);
+    stop_embedded_child(&mut p.redis);
+    stop_embedded_child(&mut p.postgres);
     push_log(&state.logs, "[manager] server stopped".into());
     Ok(())
 }

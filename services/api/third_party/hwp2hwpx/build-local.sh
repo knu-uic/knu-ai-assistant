@@ -32,7 +32,8 @@ cp "$build_tmp/source/src/main/java/kr/dogfoot/hwp2hwpx/ForContentHPFFile.java" 
 patch "$build_tmp/ForContentHPFFile.java" < "$script_dir/null-extension.patch"
 
 source_jar="$build_tmp/package/hwp2hwpx/jars/hwp2hwpx.jar"
-output_jar="$script_dir/build/hwp2hwpx-patched.jar"
+output_jar="${HWP2HWPX_OUTPUT_JAR:-$script_dir/build/hwp2hwpx-patched.jar}"
+mkdir -p "$(dirname "$output_jar")"
 "$javac_bin" -encoding UTF-8 -cp "$source_jar" \
   -d "$build_tmp/classes" "$build_tmp/ForContentHPFFile.java"
 cp "$source_jar" "$output_jar"

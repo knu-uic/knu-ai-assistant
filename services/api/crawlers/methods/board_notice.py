@@ -1,5 +1,6 @@
 import hashlib
 import math
+import os
 import queue
 import re
 import ssl
@@ -32,7 +33,11 @@ from extractors.attachments import (
     xlsx_relevant,
 )
 
-ASSETS_DIR = Path("data/assets")
+ASSETS_DIR = Path(
+    os.getenv("DOCUMENT_ASSETS_ROOT")
+    or os.getenv("HWP_ASSETS_ROOT")
+    or "data/assets"
+).expanduser()
 _BODY_BLOCK_TAGS = {
     "address", "article", "blockquote", "div", "fieldset", "figcaption",
     "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",

@@ -5,6 +5,8 @@ import openpyxl
 from openpyxl.drawing.image import Image as XLImage
 from PIL import Image
 from pptx import Presentation
+import pymupdf
+import extractors.structured_figures as structured_figures
 
 from extractors.structured_figures import (
     extract_docx_figures,
@@ -17,6 +19,10 @@ from extractors.structured_figures import (
 
 def _png() -> bytes:
     image = Image.new("RGB", (180, 100), "white")
+    return _image_bytes(image)
+
+
+def _image_bytes(image: Image.Image) -> bytes:
     output = io.BytesIO()
     image.save(output, "PNG")
     return output.getvalue()
@@ -100,11 +106,98 @@ def test_pptx_figure_uses_slide_shape_order(tmp_path):
 
 
 def test_pdf_figure_uses_page_level_context(tmp_path):
-    image = Image.new("RGB", (180, 100), "white")
-    source = io.BytesIO()
-    image.save(source, "PDF")
+    document = pymupdf.open()
+    page = document.new_page(width=600, height=800)
+    page.insert_text((30, 40), "PDF 본문 그림 앞 문맥")
+    page.insert_image(pymupdf.Rect(60, 100, 240, 200), stream=_png())
+    source = document.tobytes()
+    document.close()
 
-    result = extract_pdf_figures(source.getvalue(), "PDF 본문", tmp_path, _analyzer)
+    result = extract_pdf_figures(source, "PDF 본문", tmp_path, _analyzer)
 
     _assert_contract(result, "pdf_page_image_object")
     assert "PDF 1페이지" in result["figures"][0]["context"]
+
+
+def test_pdf_scan_background_resources_are_not_figures(tmp_path):
+    image = Image.new("RGB", (600, 800), "white")
+    source = io.BytesIO()
+    image.save(source, "PDF")
+
+    result = extract_pdf_figures(source.getvalue(), "OCR 본문", tmp_path, _analyzer)
+
+    assert result["pdf_structure"]["renderType"] == "raster_scan"
+    assert result["figures"] == []
+    assert result["derived_assets"] == []
+
+
+def test_pdf_scan_keeps_separate_subpage_figure(tmp_path):
+    background = Image.new("RGB", (600, 800), "white")
+    diagram = Image.new("RGB", (320, 180), "#df7373")
+    document = pymupdf.open()
+    page = document.new_page(width=600, height=800)
+    page.insert_image(page.rect, stream=_image_bytes(background))
+    page.insert_image(
+        pymupdf.Rect(120, 140, 440, 320),
+        stream=_image_bytes(diagram),
+    )
+    source = document.tobytes()
+    document.close()
+
+    result = extract_pdf_figures(source, "OCR 본문", tmp_path, _analyzer)
+
+    assert len(result["figures"]) == 1
+    assert result["figures"][0]["matchMethod"] == "pdf_subpage_image_object"
+    assert result["figures"][0]["pageNumber"] == 1
+    assert result["figures"][0]["placementAreaRatio"] < 0.8
+    assert (
+        result["figures"][0]["placementAreaRatio"]
+        >= result["figures"][0]["sourcePlacementAreaRatio"]
+    )
+    assert result["figures"][0]["analysis"]["ocrText"] == "학문기초교양"
+
+
+def test_pdf_uses_precomputed_continuation_without_second_detection(monkeypatch, tmp_path):
+    image_data = _png()
+    document = pymupdf.open()
+    document.new_page(width=600, height=800)
+    document.new_page(width=600, height=800)
+    source = document.tobytes()
+    document.close()
+    monkeypatch.setattr(
+        structured_figures,
+        "detect_pdf_continuations",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must reuse page renders")),
+    )
+
+    result = extract_pdf_figures(
+        source,
+        "OCR 본문",
+        tmp_path,
+        pdf_structure={
+            "pages": [
+                {"pageNumber": 1, "fullPageRaster": True},
+                {"pageNumber": 2, "fullPageRaster": True},
+            ],
+        },
+        pdf_continuations=[{
+            "pageSpan": [1, 2],
+            "kind": "code",
+            "confidence": 0.98,
+            "segments": [
+                {"pageNumber": 1, "bboxNormalized": [0.1, 0.7, 0.9, 1.0]},
+                {"pageNumber": 2, "bboxNormalized": [0.1, 0.0, 0.9, 0.3]},
+            ],
+            "evidence": {
+                "sequentialLineNumbers": True,
+                "sharedIdentifiers": ["sharedname"],
+                "matchingVerticalRules": 0,
+            },
+            "imageData": image_data,
+        }],
+    )
+
+    marker = "[PDF 1-2페이지 연속 code]"
+    assert result["text"].count(marker) == 1
+    assert result["figures"][0]["pageSpan"] == [1, 2]
+    assert result["figures"][0]["continuedKind"] == "code"

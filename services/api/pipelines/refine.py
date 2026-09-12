@@ -5,6 +5,7 @@ import httpx
 from langchain_core.messages import SystemMessage, HumanMessage
 from model import get_llm
 from schema import MetadataSchema, RefinementSchema
+from api.runtime_settings import load_settings
 from dotenv import load_dotenv
 from config import (
     REFINE_FULL_CONTENT_LIMIT,
@@ -24,6 +25,13 @@ _MAX_ATTEMPTS = 4
 _BACKOFF_BASE = 2.0  # 2s, 4s, 8s
 # Gemini Tier 1 RPM 1000 — 동시성 10이면 RPM 600 정도라 안전 마진.
 _BATCH_CONCURRENCY = 10
+
+
+def _structured_output_kwargs() -> dict[str, str]:
+    """Select the reliable structured-output mode for local runtimes."""
+
+    provider = str(load_settings().get("vlm", {}).get("provider") or VLM_PROVIDER).lower()
+    return {"method": "json_schema"} if provider in {"local", "lmstudio", "ollama"} else {}
 
 
 SYSTEM_PROMPT = """
@@ -373,11 +381,7 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
         # more reliably than emulated function calling. In function-calling
         # mode some local models keep generating until max_tokens and leave an
         # unparseable, truncated tool call.
-        structured_kwargs = (
-            {"method": "json_schema"}
-            if VLM_PROVIDER == "local"
-            else {}
-        )
+        structured_kwargs = _structured_output_kwargs()
         model = get_llm().with_structured_output(
             RefinementSchema,
             **structured_kwargs,

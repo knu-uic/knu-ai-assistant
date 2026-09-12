@@ -8,5 +8,12 @@
     "windows": [{ "title": "KNU Server Manager", "width": 1220, "height": 800, "minWidth": 980, "minHeight": 680 }],
     "security": { "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:8000; style-src 'self' 'unsafe-inline'" }
   },
-  "bundle": { "active": false }
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": {
+      "../runtime/": "runtime/"
+    },
+    "icon": ["icons/icon.png"]
+  }
 }

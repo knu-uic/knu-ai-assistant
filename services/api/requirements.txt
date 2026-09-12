@@ -63,9 +63,15 @@ openpyxl
 xlrd
 python-pptx
 pypdf>=5,<7
+pymupdf>=1.24
 pdf2image
 olefile==0.47
 syhwp==0.0.7
 
 # 이미지/OCR 처리
 pillow
+# 스캔 PDF 표: 한국어 OCR + 경량 셀 구조 모델. 서버매니저/Docker 빌드가
+# 모델 파일까지 미리 받아 독립 실행 시 네트워크 다운로드가 발생하지 않게 한다.
+paddlepaddle==3.3.1
+paddleocr==3.7.0
+paddlex[ocr]==3.7.2

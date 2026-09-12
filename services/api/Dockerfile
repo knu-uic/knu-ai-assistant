@@ -26,7 +26,10 @@ WORKDIR /app
 
 COPY --from=hwp2hwpx-builder /out/hwp2hwpx-patched.jar /opt/hwp2hwpx/hwp2hwpx-patched.jar
 
-ENV HF_HOME=/root/.cache/huggingface
+ENV HF_HOME=/root/.cache/huggingface \
+    PADDLE_PDX_CACHE_HOME=/opt/paddlex \
+    PADDLE_PDX_MODEL_SOURCE=BOS \
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
 
 # 시스템 패키지:
 #   - poppler-utils: pdf2image가 PDF 페이지를 이미지로 렌더링할 때 필요 (스캔 PDF VLM 폴백 경로)
@@ -43,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 파이썬 패키지 설치
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -c "from paddleocr import PaddleOCR, TableStructureRecognition; PaddleOCR(lang='korean', use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False); TableStructureRecognition(model_name='SLANet_plus'); print('PDF table models ready')"
 
 # playwright 브라우저 + 시스템 의존성 설치 (크롬리움만)
 RUN python -m playwright install --with-deps chromium

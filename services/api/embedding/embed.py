@@ -25,7 +25,7 @@ def _last_marker_line(content: str, marker: str, before: int) -> tuple[int, str]
 
 
 def _table_context_prefix(content: str, start: int, end: int, chunk: str) -> str:
-    """청킹 경계로 잘린 엑셀 표 조각 앞에 현재 Sheet/헤더를 보강."""
+    """청킹 경계로 잘린 엑셀/PDF 표 조각 앞에 출처와 헤더를 보강."""
     table_header_marker = "[표 헤더]"
     table_row_marker = "[행]"
     sheet_marker = "[Sheet:"
@@ -51,6 +51,9 @@ def _table_context_prefix(content: str, start: int, end: int, chunk: str) -> str
     lines = []
     if sheet_line:
         lines.append(sheet_line)
+    pdf_pos, pdf_line = _last_marker_line(content, "[PDF ", start)
+    if pdf_pos != -1 and " 표 " in pdf_line and pdf_pos <= header_pos:
+        lines.append(pdf_line)
     lines.append(header_line)
     return "\n".join(lines) + "\n"
 

@@ -1,9 +1,9 @@
 mod manager;
+mod standalone;
 
 use manager::{
     apply_dock_policy, clear_logs, open_auth_url, open_external_url, runtime_status,
-    set_show_dock_icon, start_managed_server, start_server, stop_server,
-    ManagerState,
+    set_show_dock_icon, start_managed_server, start_server, stop_server, ManagerState,
 };
 use tauri::{
     menu::{Menu, MenuItem},
@@ -38,8 +38,10 @@ fn menu_bar_template_icon(letter: char) -> tauri::image::Image<'static> {
             let mut covered = 0;
             for sy in 0..SAMPLES {
                 for sx in 0..SAMPLES {
-                    let px = ((x * SAMPLES + sx) as f32 + 0.5) / (SIZE * SAMPLES) as f32 * 2.0 - 1.0;
-                    let py = ((y * SAMPLES + sy) as f32 + 0.5) / (SIZE * SAMPLES) as f32 * 2.0 - 1.0;
+                    let px =
+                        ((x * SAMPLES + sx) as f32 + 0.5) / (SIZE * SAMPLES) as f32 * 2.0 - 1.0;
+                    let py =
+                        ((y * SAMPLES + sy) as f32 + 0.5) / (SIZE * SAMPLES) as f32 * 2.0 - 1.0;
                     let filled = match letter {
                         'C' => {
                             let radius = (px * px + py * py).sqrt();
@@ -65,15 +67,22 @@ fn menu_bar_template_icon(letter: char) -> tauri::image::Image<'static> {
 pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
-            let state = ManagerState::new(&app.handle());
+            let state = ManagerState::new(app.handle());
             let show_dock_icon = state.show_dock_icon();
             app.manage(state);
-            apply_dock_policy(&app.handle(), show_dock_icon);
+            apply_dock_policy(app.handle(), show_dock_icon);
 
-            let open = MenuItem::with_id(app, "open", "KNU Server Manager 열기", true, None::<&str>)?;
+            let open =
+                MenuItem::with_id(app, "open", "KNU Server Manager 열기", true, None::<&str>)?;
             let start = MenuItem::with_id(app, "start", "서버 실행", true, None::<&str>)?;
             let stop = MenuItem::with_id(app, "stop", "서버 종료", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "KNU Server Manager 완전히 종료", true, None::<&str>)?;
+            let quit = MenuItem::with_id(
+                app,
+                "quit",
+                "KNU Server Manager 완전히 종료",
+                true,
+                None::<&str>,
+            )?;
             let menu = Menu::with_items(app, &[&open, &start, &stop, &quit])?;
             let mut tray = TrayIconBuilder::new()
                 .tooltip("KNU Server Manager")
@@ -81,19 +90,37 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_manager(app),
-                    "start" => { let _ = start_managed_server(app.state::<ManagerState>().inner()); }
-                    "stop" => { let _ = stop_server(app.state::<ManagerState>()); }
-                    "quit" => { let _ = stop_server(app.state::<ManagerState>()); app.exit(0); }
+                    "start" => {
+                        let _ = start_managed_server(app.state::<ManagerState>().inner());
+                    }
+                    "stop" => {
+                        let _ = stop_server(app.state::<ManagerState>());
+                    }
+                    "quit" => {
+                        let _ = stop_server(app.state::<ManagerState>());
+                        app.exit(0);
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
                         show_manager(tray.app_handle());
                     }
                 });
-            if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
             #[cfg(target_os = "macos")]
-            { tray = tray.icon(menu_bar_template_icon('K')).icon_as_template(true); }
+            {
+                tray = tray
+                    .icon(menu_bar_template_icon('K'))
+                    .icon_as_template(true);
+            }
             tray.build(app)?;
             Ok(())
         })
@@ -110,9 +137,15 @@ pub fn run() {
         .expect("failed to build KNU Server Manager");
 
     app.run(|app, event| match event {
-        RunEvent::WindowEvent { label, event: WindowEvent::CloseRequested { api, .. }, .. } if label == "main" => {
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == "main" => {
             api.prevent_close();
-            if let Some(window) = app.get_webview_window("main") { let _ = window.hide(); }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.hide();
+            }
         }
         RunEvent::ExitRequested { .. } | RunEvent::Exit => {
             let _ = stop_server(app.state::<ManagerState>());

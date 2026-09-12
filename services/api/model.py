@@ -226,9 +226,15 @@ def get_embeddings():
         )
 
     if EMBEDDING_PROVIDER == "openai":
+        runtime_vlm = _active_vlm()
+        runtime_key = (
+            runtime_vlm.get("api_key", "")
+            if runtime_vlm.get("provider") == "openai"
+            else ""
+        )
         return OpenAIEmbeddings(
             model=EMBEDDING_MODEL,
-            api_key=OPENAI_API_KEY,
+            api_key=OPENAI_API_KEY or runtime_key,
         )
 
     if EMBEDDING_PROVIDER == "local":

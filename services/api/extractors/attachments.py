@@ -5,6 +5,12 @@
 """
 from model import get_llm, image_to_text
 from parsers.pdf_parser import parse_pdf      # ODL 기반 PDF→마크다운 공유 헬퍼
+from parsers.pdf_structure import analyze_pdf_structure
+from extractors.pdf_tables import (
+    extract_scanned_pdf_tables,
+    persist_pdf_table_analysis,
+)
+from extractors.pdf_continuations import continuation_from_page_pair
 from extractors.hwp_structured import extract_hwp_structured
 from extractors.structured_figures import (
     extract_docx_figures,
@@ -130,30 +136,74 @@ def pdf_to_text(data: bytes) -> str:
     return parse_pdf(data, markdown_with_html=False)
 
 
-def _pdf_bytes_full(data: bytes) -> str:
-    """ODL 1차(텍스트/표 마크다운) → 비어있으면 pdf2image+VLM fallback."""
-    try:
-        body = pdf_to_text(data)
-    except Exception as e:
-        # ODL(JVM) 변환 실패/타임아웃 → 빈값 취급해 아래 VLM 폴백으로 넘긴다.
-        print(f"[odl failed] {e}")
-        body = ""
-    if body:
-        # 텍스트 레이어가 있는 정상 PDF: 1차 결과를 그대로 사용
+def _pdf_bytes_full(
+    data: bytes,
+    structure: dict | None = None,
+    table_analysis: dict | None = None,
+    continuation_sink: list[dict] | None = None,
+) -> str:
+    """Use native text only for structurally digital PDFs; otherwise run visual OCR."""
+    structure = structure or analyze_pdf_structure(data)
+    table_text = str((table_analysis or {}).get("text") or "").strip()
+    table_pages = {
+        int(table["pageNumber"])
+        for table in (table_analysis or {}).get("tables") or []
+        if table.get("pageNumber") is not None
+    }
+    # Keep compatibility with persisted/older analyses that only contain text.
+    table_pages.update(
+        int(page_number)
+        for page_number in re.findall(r"\[PDF (\d+)페이지 표 \d+\]", table_text)
+    )
+    body = ""
+    # No text/outlined PDFs cannot produce useful ODL text.  Skipping Java here
+    # makes image-only scans and outlined Illustrator PDFs go directly to vision.
+    if structure["textType"] not in {"none", "outlined"}:
+        try:
+            body = pdf_to_text(data)
+        except Exception as e:
+            # ODL(JVM) 변환 실패/타임아웃 → 빈값 취급해 아래 VLM 폴백으로 넘긴다.
+            print(f"[odl failed] {e}")
+    if body and not structure["requiresVisualOcr"]:
+        # 구조상 디지털이고 텍스트 레이어를 사용할 수 있는 PDF만 그대로 사용한다.
         return body
 
-    # 여기 도달했다는 건 "스캔본 PDF" = 이미지 덩어리. 페이지를 렌더링해서 OCR로 돌린다.
-    # pdf2image는 무거운 의존성이라 폴백 경로에서만 lazy import.
-    from pdf2image import convert_from_bytes
-    images = convert_from_bytes(data, dpi=150)  # 150dpi면 OCR 품질과 속도의 합리적 절충
-
     chunks = []
-    for im in images:
-        # PIL 이미지를 PNG 바이트로 직렬화 → VLM에 전달
-        buf = io.BytesIO()
-        im.save(buf, format="PNG")
-        chunks.append(_image_to_text(buf.getvalue(), "image/png"))
-    return "\n".join(chunks).strip()
+    # 독립 배포판은 시스템 Poppler에 의존하지 않고 번들된
+    # PyMuPDF wheel로 페이지를 렌더링한다. 150dpi = 72dpi 기준 2.0833배.
+    import pymupdf
+    document = pymupdf.open(stream=data, filetype="pdf")
+    matrix = pymupdf.Matrix(150 / 72, 150 / 72)
+    previous_image = None
+    previous_page = None
+    try:
+        for page in document:
+            png = page.get_pixmap(matrix=matrix, alpha=False).tobytes("png")
+            if continuation_sink is not None:
+                image = Image.open(io.BytesIO(png)).convert("RGB")
+                if previous_image is not None and previous_page is not None:
+                    continuation = continuation_from_page_pair(
+                        previous_image, image, previous_page, page,
+                        previous_page.number + 1, page.number + 1,
+                    )
+                    if continuation:
+                        continuation_sink.append(continuation)
+                previous_image = image
+                previous_page = page
+            # The table extractor already OCRs the complete page around the table.
+            # Other pages in a mixed scan still need ordinary visual OCR.
+            if page.number + 1 not in table_pages:
+                try:
+                    visual_text = _image_to_text(png, "image/png").strip()
+                except Exception as error:
+                    print(f"[pdf visual OCR failed] page={page.number + 1}: {error}")
+                    visual_text = ""
+                if visual_text:
+                    chunks.append(f"[PDF {page.number + 1}페이지]\n{visual_text}")
+    finally:
+        document.close()
+    combined = [value for value in (table_text, *chunks) if value]
+    return "\n\n".join(combined).strip() or body
 
 
 def _hwp_para_payload_to_text(payload: bytes) -> str:
@@ -862,12 +912,57 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             meta["mime_type"] = "application/pdf"
             data = _download(source_url, context)
             meta["raw_bytes"] = data
-            body = _pdf_bytes_full(data)   # 텍스트 1차 → 실패 시 이미지 OCR 폴백 (위 함수 참고)
+            pdf_structure = analyze_pdf_structure(data)
+            meta["pdf_structure"] = pdf_structure
+            table_analysis = {}
+            if pdf_structure.get("requiresVisualOcr"):
+                table_analysis = extract_scanned_pdf_tables(data, pdf_structure)
+                meta["pdf_table_analysis"] = {
+                    "status": table_analysis.get("status"),
+                    "engine": table_analysis.get("engine"),
+                    "renderDpi": table_analysis.get("renderDpi"),
+                    "validation": table_analysis.get("validation") or {},
+                    "error": table_analysis.get("error"),
+                }
+                if table_analysis.get("tables"):
+                    validation = table_analysis.get("validation") or {}
+                    meta["quality"] = {
+                        "format": "pdf_table",
+                        "engine": table_analysis.get("engine"),
+                        "status": validation.get("status"),
+                        "requiresReview": validation.get("requiresReview", False),
+                        "metrics": validation.get("metrics") or {},
+                        "checks": validation.get("checks") or [],
+                    }
+                table_asset = persist_pdf_table_analysis(
+                    data, table_analysis, _document_assets_root()
+                )
+                if table_asset:
+                    meta["derived_assets"] = list(meta.get("derived_assets") or []) + [table_asset]
+            pdf_continuations: list[dict] = []
+            body = _pdf_bytes_full(
+                data, pdf_structure, table_analysis,
+                continuation_sink=pdf_continuations,
+            )
+            if pdf_continuations:
+                meta["pdf_continuations"] = [
+                    {
+                        key: value
+                        for key, value in continuation.items()
+                        if key not in {"imageData", "previousText", "nextText"}
+                    }
+                    for continuation in pdf_continuations
+                ]
             try:
                 body = _attach_structured_figures(
                     meta,
                     extract_pdf_figures(
-                        data, body, _document_assets_root(), _figure_analyzer()
+                        data,
+                        body,
+                        _document_assets_root(),
+                        _figure_analyzer(),
+                        pdf_structure=pdf_structure,
+                        pdf_continuations=pdf_continuations,
                     ),
                 )
             except Exception as error:

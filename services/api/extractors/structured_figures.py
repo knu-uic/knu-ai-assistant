@@ -17,6 +17,9 @@ from xml.etree import ElementTree as ET
 import openpyxl
 from PIL import Image, ImageOps
 from pypdf import PdfReader
+import pymupdf
+from parsers.pdf_structure import analyze_pdf_structure
+from extractors.pdf_continuations import _visual_blocks, detect_pdf_continuations
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
@@ -141,6 +144,13 @@ def _finalize(
                 "height": height,
                 "analysis": analysis,
             }
+            for key in (
+                "pageSpan", "segments", "continuationEvidence", "continuedKind",
+                "pageNumber", "bboxPdfPoints", "placementAreaRatio",
+                "sourcePlacementAreaRatio",
+            ):
+                if raw.get(key) is not None:
+                    figure[key] = raw[key]
             figures.append(figure)
             derived_assets.append({
                 "kind": "attachment_document_image",
@@ -286,19 +296,167 @@ def extract_xlsx_figures(data: bytes, base_text: str, assets_root: Path, image_a
     return _finalize(data=data, filename="document.xlsx", format_name="xlsx", base_text=generated, blocks=blocks, assets_root=assets_root, image_analyzer=image_analyzer)
 
 
-def extract_pdf_figures(data: bytes, base_text: str, assets_root: Path, image_analyzer=None) -> dict:
+def extract_pdf_figures(
+    data: bytes,
+    base_text: str,
+    assets_root: Path,
+    image_analyzer=None,
+    *,
+    pdf_structure: dict | None = None,
+    pdf_continuations: list[dict] | None = None,
+) -> dict:
+    pdf_structure = pdf_structure or analyze_pdf_structure(data)
+    page_structures = {
+        int(page["pageNumber"]): page for page in pdf_structure.get("pages", [])
+    }
     reader = PdfReader(io.BytesIO(data))
+    fitz_document = pymupdf.open(stream=data, filetype="pdf")
     blocks = []
     counter = 0
-    for page_no, page in enumerate(reader.pages, 1):
-        page_text = str(page.extract_text() or "").strip()
-        images = []
-        for image in page.images:
-            counter += 1
-            placeholder = f"[[PDF_FIGURE_{counter}]]"
-            images.append({"data": image.data, "name": image.name, "placeholder": placeholder, "location": f"PDF {page_no}페이지: {_clip(page_text, 500)}", "matchMethod": "pdf_page_image_object", "matchConfidence": 0.8})
-        if images:
-            markers = "\n".join(raw["placeholder"] for raw in images)
-            blocks.append({"text": f"[PDF {page_no}페이지]\n{page_text}\n{markers}", "images": images})
-    generated = base_text + ("\n\n## PDF 페이지별 그림\n\n" + "\n\n".join(block["text"] for block in blocks) if blocks else "")
-    return _finalize(data=data, filename="document.pdf", format_name="pdf", base_text=generated, blocks=blocks, assets_root=assets_root, image_analyzer=image_analyzer)
+    try:
+        for page_no, page in enumerate(reader.pages, 1):
+            page_text = str(page.extract_text() or "").strip()
+            page_structure = page_structures.get(page_no, {})
+            # Scanner OCR layers are frequently mojibake or geometrically
+            # unrelated to the visible region. The rendered crop and VLM OCR
+            # are authoritative for figure retrieval on these pages.
+            context_text = "" if page_structure.get("requiresVisualOcr") else page_text
+            fitz_page = fitz_document[page_no - 1]
+            page_area = max(1.0, fitz_page.rect.get_area())
+            scan_render = None
+            scan_blocks = []
+            images = []
+            for image in page.images:
+                xref = int(getattr(image.indirect_reference, "idnum", 0) or 0)
+                placements = fitz_page.get_image_rects(xref) if xref else []
+                largest_placement_ratio = max(
+                    (rect.get_area() / page_area for rect in placements),
+                    default=0.0,
+                )
+                # OCR/scanner PDFs may contain both a full-page scan and a
+                # separately overlaid high-resolution figure. Skip only the
+                # page background; preserve genuine sub-page image objects.
+                if (
+                    page_structure.get("fullPageRaster")
+                    and largest_placement_ratio >= 0.80
+                ):
+                    continue
+                counter += 1
+                placeholder = f"[[PDF_FIGURE_{counter}]]"
+                selected_rect = placements[0] if placements else None
+                output = io.BytesIO()
+                if (
+                    page_structure.get("fullPageRaster")
+                    and placements
+                ):
+                    # A sub-page resource on a scan can be a transparent repair
+                    # layer rather than a complete standalone image. Render the
+                    # composed page region so the stored figure has no holes.
+                    if scan_render is None:
+                        pixmap = fitz_page.get_pixmap(
+                            matrix=pymupdf.Matrix(2.5, 2.5), alpha=False,
+                        )
+                        scan_render = Image.open(io.BytesIO(
+                            pixmap.tobytes("png")
+                        )).convert("RGB")
+                        scan_blocks = _visual_blocks(scan_render)
+                    scale_x = scan_render.width / fitz_page.rect.width
+                    scale_y = scan_render.height / fitz_page.rect.height
+                    seed = (
+                        round(placements[0].x0 * scale_x),
+                        round(placements[0].y0 * scale_y),
+                        round(placements[0].x1 * scale_x),
+                        round(placements[0].y1 * scale_y),
+                    )
+                    candidates = []
+                    for block in scan_blocks:
+                        overlap_width = max(0, min(seed[2], block[2]) - max(seed[0], block[0]))
+                        overlap_height = max(0, min(seed[3], block[3]) - max(seed[1], block[1]))
+                        overlap_ratio = overlap_width * overlap_height / max(
+                            1, (seed[2] - seed[0]) * (seed[3] - seed[1])
+                        )
+                        block_ratio = (
+                            (block[2] - block[0]) * (block[3] - block[1])
+                            / max(1, scan_render.width * scan_render.height)
+                        )
+                        if overlap_ratio >= 0.45 and block_ratio <= 0.65:
+                            candidates.append((overlap_ratio, block_ratio, block))
+                    crop_box = max(candidates, default=(0.0, 0.0, seed))[2]
+                    selected_rect = pymupdf.Rect(
+                        crop_box[0] / scale_x, crop_box[1] / scale_y,
+                        crop_box[2] / scale_x, crop_box[3] / scale_y,
+                    )
+                    scan_render.crop(crop_box).save(output, "PNG", optimize=True)
+                else:
+                    image.image.save(output, "PNG", optimize=True)
+                bbox = (
+                    [round(value, 2) for value in selected_rect]
+                    if selected_rect else None
+                )
+                selected_area_ratio = (
+                    selected_rect.get_area() / page_area if selected_rect else 0.0
+                )
+                location = f"PDF {page_no}페이지"
+                if bbox:
+                    location += f", 영역 {bbox}"
+                if context_text:
+                    location += f": {_clip(context_text, 500)}"
+                images.append({
+                    "data": output.getvalue(),
+                    "name": f"page-{page_no}-xref-{xref or counter}.png",
+                    "placeholder": placeholder,
+                    "location": location,
+                    "matchMethod": (
+                        "pdf_subpage_image_object"
+                        if page_structure.get("fullPageRaster")
+                        else "pdf_page_image_object"
+                    ),
+                    "matchConfidence": 0.98 if placements else 0.8,
+                    "pageNumber": page_no,
+                    "bboxPdfPoints": bbox,
+                    "placementAreaRatio": round(selected_area_ratio, 5),
+                    "sourcePlacementAreaRatio": round(largest_placement_ratio, 5),
+                })
+            if images:
+                markers = "\n".join(raw["placeholder"] for raw in images)
+                blocks.append({
+                    "text": f"[PDF {page_no}페이지]\n{context_text}\n{markers}",
+                    "images": images,
+                })
+    finally:
+        fitz_document.close()
+    continuations = (
+        pdf_continuations
+        if pdf_continuations is not None
+        else detect_pdf_continuations(data, pdf_structure)
+    )
+    for continuation in continuations:
+        page_span = continuation["pageSpan"]
+        marker = f"[PDF {page_span[0]}-{page_span[1]}페이지 연속 {continuation['kind']}]"
+        evidence = continuation["evidence"]
+        context = (
+            f"PDF {page_span[0]}-{page_span[1]}페이지에 걸쳐 이어지는 {continuation['kind']}; "
+            f"연속 행 번호={evidence['sequentialLineNumbers']}, "
+            f"공통 식별자={', '.join(evidence['sharedIdentifiers']) or '없음'}, "
+            f"일치 세로선={evidence['matchingVerticalRules']}"
+        )
+        blocks.append({
+            "text": f"{marker}\n{context}",
+            "images": [{
+                "data": continuation["imageData"],
+                "name": f"continued-p{page_span[0]}-p{page_span[1]}.png",
+                "marker": marker,
+                "placeholder": marker,
+                "location": context,
+                "matchMethod": "pdf_adjacent_page_continuation",
+                "matchConfidence": continuation["confidence"],
+                "pageSpan": page_span,
+                "segments": continuation["segments"],
+                "continuationEvidence": evidence,
+                "continuedKind": continuation["kind"],
+            }],
+        })
+    generated = base_text + ("\n\n## PDF 그림 및 페이지 간 연속 객체\n\n" + "\n\n".join(block["text"] for block in blocks) if blocks else "")
+    result = _finalize(data=data, filename="document.pdf", format_name="pdf", base_text=generated, blocks=blocks, assets_root=assets_root, image_analyzer=image_analyzer)
+    result["pdf_structure"] = pdf_structure
+    return result

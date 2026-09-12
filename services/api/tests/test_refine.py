@@ -91,3 +91,24 @@ def test_local_refine_extracts_metadata_without_regenerating_original(monkeypatc
     assert document.application.method == "온라인 신청"
     assert assets == []
     assert extra == {"source": "test"}
+
+
+def test_ollama_refine_uses_native_json_schema(monkeypatch):
+    monkeypatch.setattr(
+        refine_module,
+        "load_settings",
+        lambda: {"vlm": {"provider": "ollama"}},
+    )
+
+    assert refine_module._structured_output_kwargs() == {"method": "json_schema"}
+
+
+def test_runtime_provider_overrides_legacy_provider(monkeypatch):
+    monkeypatch.setattr(refine_module, "VLM_PROVIDER", "google")
+    monkeypatch.setattr(
+        refine_module,
+        "load_settings",
+        lambda: {"vlm": {"provider": "lmstudio"}},
+    )
+
+    assert refine_module._structured_output_kwargs() == {"method": "json_schema"}

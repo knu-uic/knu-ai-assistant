@@ -76,6 +76,61 @@ KNU_SERVER_ROOT=/path/to/knu-ai-assistant \
 KNU_PYTHON_PATH=/path/to/python npm run tauri dev
 ```
 
+## 독립 실행형 릴리스
+
+릴리스 번들은 운영자 PC의 Homebrew, Docker, Python 가상환경을
+사용하지 않는다. 설치 패키지에 다음 런타임을 같은 OS·CPU용으로
+포함한다.
+
+- KNU FastAPI·crawler worker 소스
+- portable Python 3.12, `requirements.txt` 라이브러리, Playwright Chromium
+- PostgreSQL 16과 pgvector
+- Redis
+- PDF·HWP 처리용 Java runtime과 patched hwp2hwpx converter
+
+번들 빌드 머신에는 Node.js, Rust/Tauri, `uv`, JDK 21, C toolchain이
+필요하지만 완성된 설치본 사용자에게는 필요하지 않다.
+
+macOS·Linux에서 전용 native runtime을 먼저 빌드한다. 이 스크립트는
+PostgreSQL 16.15, pgvector 0.8.6, Redis 7.2.15를 검증된 버전과
+체크섬/commit으로 고정하고, 현재 CPU에 종속되는 pgvector 최적화는
+비활성화한다.
+
+```bash
+export KNU_BUILD_JAVA_HOME=/path/to/jdk-21
+bash apps/server-manager/scripts/build-native-runtime.sh
+```
+
+스크립트가 출력한 경로를 번들 명령에 전달한다.
+
+```bash
+export KNU_POSTGRES_RUNTIME="$PWD/apps/server-manager/native-runtime/darwin-arm64/postgres"
+export KNU_REDIS_RUNTIME="$PWD/apps/server-manager/native-runtime/darwin-arm64/redis"
+export KNU_JAVA_RUNTIME="$PWD/apps/server-manager/native-runtime/darwin-arm64/java"
+export KNU_BUILD_JAVA_HOME=/path/to/jdk-21
+
+cd apps/server-manager
+npm run bundle
+```
+
+`stage:runtime`은 개발 PC의 PostgreSQL/Redis를 자동 탐지하지 않는다.
+검증된 재배치 가능 런타임 경로가 하나라도 빠지면 릴리스 빌드를
+즉시 실패시켜 불완전한 설치본이 나오지 않게 한다.
+
+설치형 실행 시 Manager는 다음 순서를 자동 관리한다.
+
+1. 전용 PostgreSQL 데이터 디렉터리 초기화 및 127.0.0.1:55432 시작
+2. KNU DB 생성
+3. 전용 Redis를 127.0.0.1:56379에서 시작
+4. pgvector 포함 DB migration 실행
+5. FastAPI 준비 후 crawler worker 시작
+6. Manager 종료 시 worker, API, Redis, PostgreSQL 역순 종료
+
+영구 데이터는 앱 번들 밖의 OS application-data 디렉터리에 보관한다.
+`postgres/`, `redis/`, `assets/`, `config/`, `logs/`가 같은 루트 아래 생기므로
+앱 업데이트가 DB와 첨부 자산을 덮어쓰지 않는다. `KNU_DATA_ROOT`로
+운영 전용 디스크 경로를 지정할 수도 있다.
+
 ## 보안 경계
 
 - 관리자 API는 앱이 기동할 때 만든 임의 토큰으로 보호됩니다.
@@ -87,11 +142,11 @@ KNU_PYTHON_PATH=/path/to/python npm run tauri dev
 
 ## 배포 상태
 
-현재 Manager는 저장소 개발 환경의 Python 가상환경과 별도 PostgreSQL·Redis를
-사용하는 운영자용 개발 앱이다. Tauri 소스 버전은 `0.1.0`이지만 독립 설치본
-GitHub Release는 아직 발행하지 않는다. 일반 사용자용 설치본으로 배포하려면 운영체제별
-Python runtime, DB·Redis 생명주기, OS keychain을 패키지에 포함한 후 별도 배포
-워크플로우를 추가해야 한다.
+개발 모드는 기존 `.venv`와 외부 PostgreSQL·Redis를 계속 사용하여
+기존 작업 흐름을 깨지 않는다. `npm run bundle`이 만드는 설치 패키지는
+위 런타임을 포함하는 독립 실행형이다. 현재 native runtime 소스 빌더는
+macOS·Linux용이며, Windows용 PostgreSQL/pgvector·Redis 배포 입력은 별도로
+준비해 `stage:runtime`에 전달해야 한다.
 
 ## Codex 인증
 
