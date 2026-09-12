@@ -171,6 +171,7 @@ def test_notice_filter_catalog(monkeypatch):
         [("main_notice", "공주대학교 학생 공지"), ("cse_notice", "컴퓨터공학과 공지")],
         [(2026,), (2025,)],
         [("notice-v5",), ("notice-v4",)],
+        [("ollama · bge-m3:latest",)],
     ])
 
     class Result:
@@ -198,6 +199,7 @@ def test_notice_filter_catalog(monkeypatch):
     assert result["sources"][1] == {"code": "cse_notice", "name": "컴퓨터공학과 공지"}
     assert result["years"] == [2026, 2025]
     assert result["extraction_versions"] == ["notice-v5", "notice-v4"]
+    assert result["embedding_models"] == ["ollama · bge-m3:latest"]
     assert "일반(기타)" in result["categories"]
 
 
@@ -253,6 +255,29 @@ def test_ollama_models_use_installed_model_catalog(tmp_path, monkeypatch):
     assert result["models"] == ["gemma3:4b", "qwen3-vl:8b"]
 
 
+def test_ollama_embedding_models_only_include_embedding_capability(tmp_path, monkeypatch):
+    monkeypatch.setenv("KNU_MANAGER_SETTINGS_PATH", str(tmp_path / "manager.json"))
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, url, **_kwargs):
+            return httpx.Response(200, request=httpx.Request("GET", url), json={"models": [
+                {"model": "gemma4:12b-mlx", "capabilities": ["completion", "vision"]},
+                {"model": "bge-m3:latest", "capabilities": ["embedding"]},
+            ]})
+
+    monkeypatch.setattr(admin.httpx, "AsyncClient", lambda **_kwargs: Client())
+    result = asyncio.run(admin._discover_embedding_models(admin.EmbeddingSettings(
+        provider="ollama", base_url="http://127.0.0.1:11434/v1"
+    )))
+    assert result["models"] == ["bge-m3:latest"]
+
+
 def test_notice_storage_combines_database_and_unique_asset_files(tmp_path, monkeypatch):
     first = tmp_path / "first.png"
     second = tmp_path / "second.pdf"
@@ -299,7 +324,7 @@ def test_notice_list_reports_each_notice_storage_size(tmp_path, monkeypatch):
     asset.write_bytes(b"x" * 300)
     results = iter([
         (1,),
-        [(7, "title", "수강", None, None, 0.9, None, "source", "https://example.com", "notice-v5", 1000, ["asset"])],
+        [(7, "title", "수강", None, None, 0.9, None, "source", "https://example.com", "notice-v5", ["ollama · bge-m3:latest"], 1000, ["asset"])],
     ])
 
     class Result:
@@ -331,5 +356,6 @@ def test_notice_list_reports_each_notice_storage_size(tmp_path, monkeypatch):
 
     assert result["total"] == 1
     assert result["items"][0]["database_bytes"] == 1000
+    assert result["items"][0]["embedding_models"] == ["ollama · bge-m3:latest"]
     assert result["items"][0]["asset_file_bytes"] == 300
     assert result["items"][0]["storage_bytes"] == 1300

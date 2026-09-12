@@ -13,6 +13,7 @@ from threading import RLock
 
 ALLOWED_CRAWL_INTERVAL_HOURS = (1, 6, 12, 24)
 ALLOWED_VLM_PROVIDERS = ("ollama", "lmstudio", "openai", "google", "openai-codex")
+ALLOWED_EMBEDDING_PROVIDERS = ("ollama", "lmstudio", "openai", "google")
 
 _DEFAULT_PATH = Path(__file__).resolve().parents[1] / "data" / "server-manager.json"
 _LOCK = RLock()
@@ -39,6 +40,19 @@ def default_settings() -> dict:
         key = os.getenv("OPENAI_API_KEY") or ""
     elif provider == "google":
         key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
+    embedding_provider = (
+        (os.getenv("EMBEDDING_PROVIDER") or "ollama")
+        .strip().lower().replace("local", "ollama")
+    )
+    try:
+        embedding_dimension = int(os.getenv("EMBEDDING_DIM", "1024"))
+    except ValueError:
+        embedding_dimension = 1024
+    embedding_key = ""
+    if embedding_provider == "openai":
+        embedding_key = os.getenv("OPENAI_API_KEY") or ""
+    elif embedding_provider == "google":
+        embedding_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY") or ""
     return {
         # 첫 설치나 사용자가 명시적으로 켜지지 안도록 기본은 OFF로 둔다.
         "crawl_enabled": _env_bool("NOTICE_POLL_ENABLED", False),
@@ -56,6 +70,13 @@ def default_settings() -> dict:
             "model": os.getenv("LLM_MODEL") or "",
             "base_url": os.getenv("OPENAI_COMPAT_BASE_URL") or "http://127.0.0.1:1234/v1",
             "api_key": key,
+        },
+        "embedding": {
+            "provider": embedding_provider,
+            "model": os.getenv("EMBEDDING_MODEL") or "bge-m3:latest",
+            "base_url": os.getenv("OPENAI_COMPAT_BASE_URL") or "http://127.0.0.1:11434/v1",
+            "dimension": embedding_dimension,
+            "api_key": embedding_key,
         },
     }
 
@@ -106,6 +127,18 @@ def _sanitize(raw: dict) -> dict:
     if provider not in ALLOWED_VLM_PROVIDERS:
         provider = defaults["vlm"]["provider"]
     base_url = str(vlm_raw.get("base_url", defaults["vlm"]["base_url"])).strip()
+    embedding_raw = raw.get("embedding") if isinstance(raw.get("embedding"), dict) else {}
+    embedding_provider = str(
+        embedding_raw.get("provider", defaults["embedding"]["provider"])
+    ).strip().lower().replace("local", "ollama")
+    if embedding_provider not in ALLOWED_EMBEDDING_PROVIDERS:
+        embedding_provider = defaults["embedding"]["provider"]
+    try:
+        embedding_dimension = int(
+            embedding_raw.get("dimension", defaults["embedding"]["dimension"])
+        )
+    except (TypeError, ValueError):
+        embedding_dimension = defaults["embedding"]["dimension"]
     return {
         "crawl_enabled": crawl_enabled,
         "crawl_interval_hours": interval,
@@ -122,6 +155,19 @@ def _sanitize(raw: dict) -> dict:
             "model": str(vlm_raw.get("model", defaults["vlm"]["model"])).strip(),
             "base_url": base_url,
             "api_key": str(vlm_raw.get("api_key", defaults["vlm"]["api_key"])),
+        },
+        "embedding": {
+            "provider": embedding_provider,
+            "model": str(
+                embedding_raw.get("model", defaults["embedding"]["model"])
+            ).strip(),
+            "base_url": str(
+                embedding_raw.get("base_url", defaults["embedding"]["base_url"])
+            ).strip(),
+            "dimension": max(1, embedding_dimension),
+            "api_key": str(
+                embedding_raw.get("api_key", defaults["embedding"]["api_key"])
+            ),
         },
     }
 
@@ -160,4 +206,6 @@ def public_settings(value: dict | None = None) -> dict:
     safe = json.loads(json.dumps(result))
     key = safe["vlm"].pop("api_key", "")
     safe["vlm"]["has_api_key"] = bool(key)
+    embedding_key = safe["embedding"].pop("api_key", "")
+    safe["embedding"]["has_api_key"] = bool(embedding_key)
     return safe

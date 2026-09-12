@@ -20,6 +20,23 @@ def test_runtime_settings_roundtrip_and_secret_redaction(tmp_path, monkeypatch):
     assert path.stat().st_mode & 0o777 == 0o600
 
 
+def test_embedding_defaults_to_ollama_and_redacts_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("KNU_MANAGER_SETTINGS_PATH", str(tmp_path / "manager.json"))
+    saved = save_settings({
+        "embedding": {
+            "provider": "ollama",
+            "model": "bge-m3:latest",
+            "base_url": "http://127.0.0.1:11434/v1",
+            "dimension": 1024,
+            "api_key": "embedding-secret",
+        },
+    })
+
+    assert saved["embedding"]["provider"] == "ollama"
+    assert public_settings(saved)["embedding"]["has_api_key"] is True
+    assert "api_key" not in public_settings(saved)["embedding"]
+
+
 def test_runtime_settings_rejects_unknown_values(tmp_path, monkeypatch):
     monkeypatch.setenv("KNU_MANAGER_SETTINGS_PATH", str(tmp_path / "manager.json"))
     saved = save_settings({"crawl_interval_hours": 5, "vlm": {"provider": "unknown"}})

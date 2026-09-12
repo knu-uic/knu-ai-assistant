@@ -5,6 +5,7 @@ import json
 from datetime import date
 from typing import Any
 
+from api.runtime_settings import load_settings
 from db.pool import sync_pool
 from db.schema import _months_ago
 
@@ -528,8 +529,16 @@ def insert_assets(notice_id: int, assets: list[dict]) -> None:
 
 
 def insert_chunks(notice_id: int, chunks: list[tuple]) -> None:
+    embedding = load_settings()["embedding"]
+    provider = embedding["provider"]
+    model = embedding["model"]
+    dimension = int(embedding["dimension"])
     with sync_pool.connection() as conn:
-        conn.execute("DELETE FROM notice_chunk WHERE notice_id = %s", (notice_id,))
+        conn.execute(
+            "DELETE FROM notice_chunk WHERE notice_id = %s "
+            "AND embedding_provider = %s AND embedding_model = %s",
+            (notice_id, provider, model),
+        )
         for chunk in chunks:
             if len(chunk) == 3:
                 idx, content, vector = chunk
@@ -541,8 +550,9 @@ def insert_chunks(notice_id: int, chunks: list[tuple]) -> None:
                 """
                 INSERT INTO notice_chunk
                     (notice_id, chunk_idx, content, chunk_type,
-                     attachment_name, embedding)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                     attachment_name, embedding, embedding_provider,
+                     embedding_model, embedding_dimension)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     notice_id,
@@ -551,6 +561,9 @@ def insert_chunks(notice_id: int, chunks: list[tuple]) -> None:
                     chunk_type,
                     attachment_name,
                     vector,
+                    provider,
+                    model,
+                    dimension,
                 ),
             )
         conn.commit()
@@ -643,8 +656,16 @@ def search_chunks(
     year: int | None = None,
     notice_ids: list[int] | None = None,
 ):
-    conditions: list[str] = []
-    params: list[Any] = [query_embedding]
+    embedding = load_settings()["embedding"]
+    conditions: list[str] = [
+        "nc.embedding_provider = %s",
+        "nc.embedding_model = %s",
+    ]
+    params: list[Any] = [
+        query_embedding,
+        embedding["provider"],
+        embedding["model"],
+    ]
 
     if time_scope == "current":
         conditions.append("n.archived_at IS NULL")

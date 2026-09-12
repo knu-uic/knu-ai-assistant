@@ -93,14 +93,21 @@ def init_db():
                     chunk_type VARCHAR(20) NOT NULL DEFAULT 'body',
                     attachment_name VARCHAR(500),
                     embedding vector({embedding_dim}) NOT NULL,
+                    embedding_provider VARCHAR(40) NOT NULL DEFAULT 'ollama',
+                    embedding_model VARCHAR(255) NOT NULL DEFAULT 'bge-m3:latest',
+                    embedding_dimension INT NOT NULL DEFAULT {embedding_dim},
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    UNIQUE(notice_id, chunk_idx)
+                    UNIQUE(notice_id, embedding_provider, embedding_model, chunk_idx)
                 )
                 """
             ).format(embedding_dim=sql.SQL(str(EMBEDDING_DIM)))
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_notice_chunk_notice ON notice_chunk(notice_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notice_chunk_embedding_model "
+            "ON notice_chunk(embedding_provider, embedding_model, notice_id)"
         )
         conn.execute(
             """

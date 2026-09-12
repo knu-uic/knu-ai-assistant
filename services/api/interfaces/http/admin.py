@@ -5,6 +5,7 @@ import os
 from datetime import date
 from typing import Any, Literal
 
+import anyio
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse
@@ -23,11 +24,14 @@ from api.codex_oauth import (
 )
 from api.runtime_settings import (
     ALLOWED_CRAWL_INTERVAL_HOURS,
+    ALLOWED_EMBEDDING_PROVIDERS,
     ALLOWED_VLM_PROVIDERS,
     load_settings,
     public_settings,
     save_settings,
 )
+from embedding.rebuild import rebuild_status, start_rebuild
+from model import get_embeddings
 from db.pool import pool
 from db.documents import CURRENT_NOTICE_EXTRACTION_VERSION, NOTICE_CATEGORIES
 from interfaces.mcp.server import get_public_tool_catalog
@@ -80,11 +84,28 @@ NOTICE_STORAGE_PATHS_SQL = """
           WHERE a.notice_id=n.id AND a.storage_path IS NOT NULL)
 """
 
+NOTICE_EMBEDDING_MODELS_SQL = """
+    ARRAY(
+        SELECT DISTINCT nc2.embedding_provider || ' · ' || nc2.embedding_model
+        FROM notice_chunk nc2
+        WHERE nc2.notice_id=n.id
+        ORDER BY 1
+    )
+"""
+
 
 class VlmSettings(BaseModel):
     provider: str
     model: str = ""
     base_url: str = ""
+    api_key: str | None = None
+
+
+class EmbeddingSettings(BaseModel):
+    provider: str = "ollama"
+    model: str = ""
+    base_url: str = ""
+    dimension: int | None = Field(default=None, ge=1, le=4096)
     api_key: str | None = None
 
 
@@ -164,11 +185,72 @@ async def _discover_vlm_models(req: VlmSettings) -> dict:
     raise HTTPException(status_code=422, detail="지원하지 않는 VLM 제공자입니다.")
 
 
+async def _discover_embedding_models(req: EmbeddingSettings) -> dict:
+    saved = load_settings()["embedding"]
+    key = req.api_key or saved.get("api_key", "")
+    provider = req.provider
+    base = _provider_base_url(provider, req.base_url)
+    headers = {"Authorization": f"Bearer {key or 'local'}"}
+    async with httpx.AsyncClient(timeout=12) as client:
+        if provider == "ollama":
+            response = await client.get(f"{_server_root(base)}/api/tags")
+            response.raise_for_status()
+            names = [
+                item.get("model") or item.get("name")
+                for item in response.json().get("models", [])
+                if isinstance(item, dict)
+                and "embedding" in (item.get("capabilities") or [])
+            ]
+        elif provider == "lmstudio":
+            root = _server_root(base)
+            native = await client.get(f"{root}/api/v1/models", headers=headers)
+            if native.is_success:
+                names = [
+                    item.get("key") or item.get("id")
+                    for item in native.json().get("models", [])
+                    if isinstance(item, dict)
+                    and str(item.get("type") or "").lower() == "embedding"
+                ]
+            else:
+                response = await client.get(f"{base}/models", headers=headers)
+                response.raise_for_status()
+                names = [
+                    item.get("id") for item in response.json().get("data", [])
+                    if isinstance(item, dict)
+                ]
+        elif provider == "openai":
+            response = await client.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            response.raise_for_status()
+            names = [
+                item.get("id") for item in response.json().get("data", [])
+                if isinstance(item, dict) and "embedding" in str(item.get("id") or "")
+            ]
+        elif provider == "google":
+            response = await client.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                params={"key": key},
+            )
+            response.raise_for_status()
+            names = [
+                item.get("name", "").removeprefix("models/")
+                for item in response.json().get("models", [])
+                if isinstance(item, dict)
+                and "embedContent" in (item.get("supportedGenerationMethods") or [])
+            ]
+        else:
+            raise HTTPException(status_code=422, detail="지원하지 않는 임베딩 제공자입니다.")
+    return {"ok": True, "provider": provider, "base_url": base, "models": _unique_models(names)}
+
+
 class RuntimeSettingsUpdate(BaseModel):
     crawl_enabled: bool | None = None
     crawl_interval_hours: int
     crawl_request: dict[str, Any] | None = None
     vlm: VlmSettings
+    embedding: EmbeddingSettings | None = None
 
 
 CRAWL_SOURCES = (
@@ -242,6 +324,7 @@ async def get_settings() -> dict:
         "crawl_modes": ["all", "recent", "range"],
         "current_extraction_version": CURRENT_NOTICE_EXTRACTION_VERSION,
         "vlm_providers": list(ALLOWED_VLM_PROVIDERS),
+        "embedding_providers": list(ALLOWED_EMBEDDING_PROVIDERS),
         "codex_oauth": "available",
     }
     return result
@@ -254,6 +337,11 @@ async def update_settings(req: RuntimeSettingsUpdate) -> dict:
     if req.vlm.provider not in ALLOWED_VLM_PROVIDERS:
         raise HTTPException(status_code=422, detail="지원하지 않는 VLM 제공자입니다.")
     previous = load_settings()
+    if req.crawl_enabled and rebuild_status()["state"] == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="임베딩 모델 교체가 끝난 뒤 자동 수집을 켜세요.",
+        )
     payload = req.model_dump()
     if payload["crawl_enabled"] is None:
         payload["crawl_enabled"] = previous["crawl_enabled"]
@@ -271,6 +359,9 @@ async def update_settings(req: RuntimeSettingsUpdate) -> dict:
             )
     if not payload["vlm"].get("api_key"):
         payload["vlm"]["api_key"] = previous["vlm"].get("api_key", "")
+    # Embedding activation is only performed by the blue-green rebuild endpoint.
+    # A normal crawl/VLM settings save must never switch query vectors early.
+    payload["embedding"] = previous["embedding"]
     return public_settings(save_settings(payload))
 
 
@@ -295,6 +386,87 @@ async def list_vlm_models(req: VlmSettings) -> dict:
     if not result.get("models"):
         raise HTTPException(status_code=409, detail="이 제공자에서 사용할 수 있는 모델을 찾지 못했습니다.")
     return result
+
+
+@router.post("/settings/embedding-models", dependencies=[Admin])
+async def list_embedding_models(req: EmbeddingSettings) -> dict:
+    try:
+        return await _discover_embedding_models(req)
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status_code=502, detail=f"임베딩 모델 목록 조회 실패: {exc}") from exc
+
+
+async def _checked_embedding(req: EmbeddingSettings) -> dict:
+    if req.provider not in ALLOWED_EMBEDDING_PROVIDERS:
+        raise HTTPException(status_code=422, detail="지원하지 않는 임베딩 제공자입니다.")
+    if not req.model.strip():
+        raise HTTPException(status_code=422, detail="임베딩 모델을 선택하세요.")
+    saved = load_settings()["embedding"]
+    target = req.model_dump()
+    target["base_url"] = _provider_base_url(req.provider, req.base_url)
+    target["api_key"] = req.api_key or saved.get("api_key", "")
+    vector = await anyio.to_thread.run_sync(
+        lambda: get_embeddings(target).embed_query("KNU embedding connection test")
+    )
+    target["dimension"] = len(vector)
+    if target["dimension"] != int(saved["dimension"]):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"현재 인덱스는 {saved['dimension']}차원입니다. 선택 모델은 "
+                f"{target['dimension']}차원이어서 자동 교체할 수 없습니다."
+            ),
+        )
+    return target
+
+
+@router.post("/settings/test-embedding", dependencies=[Admin])
+async def test_embedding(req: EmbeddingSettings) -> dict:
+    try:
+        target = await _checked_embedding(req)
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status_code=502, detail=f"임베딩 연결 실패: {exc}") from exc
+    return {
+        "ok": True,
+        "provider": target["provider"],
+        "model": target["model"],
+        "base_url": target["base_url"],
+        "dimension": target["dimension"],
+    }
+
+
+@router.post("/settings/rebuild-embedding", dependencies=[Admin])
+async def rebuild_embedding(req: EmbeddingSettings) -> dict:
+    if load_settings()["crawl_enabled"]:
+        raise HTTPException(
+            status_code=409,
+            detail="자동 수집을 끈 뒤 임베딩 모델을 교체하세요.",
+        )
+    redis = await get_arq_pool()
+    if await redis.exists("notice-crawl:active"):
+        raise HTTPException(
+            status_code=409,
+            detail="현재 공지 수집이 끝난 뒤 임베딩 모델을 교체하세요.",
+        )
+    try:
+        target = await _checked_embedding(req)
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status_code=502, detail=f"임베딩 연결 실패: {exc}") from exc
+    try:
+        return start_rebuild(target)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/settings/rebuild-embedding", dependencies=[Admin])
+async def get_rebuild_embedding() -> dict:
+    return rebuild_status()
 
 
 @router.get("/auth/codex/accounts", dependencies=[Admin])
@@ -352,6 +524,11 @@ async def codex_models() -> dict:
 @router.post("/crawl/run", dependencies=[Admin])
 async def run_crawl(req: CrawlRunRequest | None = None) -> dict:
     request = req or CrawlRunRequest()
+    if rebuild_status()["state"] == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="임베딩 모델 교체가 끝난 뒤 공지 수집을 시작하세요.",
+        )
     if load_settings()["crawl_enabled"]:
         raise HTTPException(
             status_code=409,
@@ -442,6 +619,7 @@ async def list_notices(
             f"""SELECT n.id, n.title, n.category, n.posted_at, n.crawled_at,
                       n.extraction_confidence, n.archived_at, s.name, n.url,
                       n.extraction_version,
+                      {NOTICE_EMBEDDING_MODELS_SQL} AS embedding_models,
                       {NOTICE_DATABASE_BYTES_SQL} AS database_bytes,
                       {NOTICE_STORAGE_PATHS_SQL} AS storage_paths
                FROM notice n JOIN source s ON s.id=n.source_id
@@ -454,7 +632,7 @@ async def list_notices(
     keys = (
         "id", "title", "category", "posted_at", "crawled_at",
         "extraction_confidence", "archived_at", "source", "url",
-        "extraction_version", "database_bytes", "storage_paths",
+        "extraction_version", "embedding_models", "database_bytes", "storage_paths",
     )
     for row in rows:
         item = dict(zip(keys, row))
@@ -509,11 +687,16 @@ async def notice_filters() -> dict:
             """SELECT DISTINCT extraction_version FROM notice
                WHERE extraction_version IS NOT NULL ORDER BY 1 DESC"""
         )).fetchall()
+        embedding_models = await (await conn.execute(
+            """SELECT DISTINCT embedding_provider || ' · ' || embedding_model
+               FROM notice_chunk ORDER BY 1"""
+        )).fetchall()
     return {
         "sources": [{"code": row[0], "name": row[1]} for row in sources],
         "categories": list(NOTICE_CATEGORIES),
         "years": [row[0] for row in years],
         "extraction_versions": [row[0] for row in versions],
+        "embedding_models": [row[0] for row in embedding_models],
     }
 
 
@@ -524,6 +707,7 @@ async def notice_detail(notice_id: int) -> dict:
             """SELECT n.id,n.title,n.url,n.content,n.body_content,n.summary,n.category,n.topics,
                       n.posted_at,n.crawled_at,n.updated_at,n.extraction_version,
                       n.extraction_confidence,n.extra,n.archived_at,s.name,
+                      """ + NOTICE_EMBEDDING_MODELS_SQL + """ AS embedding_models,
                       """ + NOTICE_DATABASE_BYTES_SQL + """ AS database_bytes,
                       """ + NOTICE_STORAGE_PATHS_SQL + """ AS storage_paths
                FROM notice n JOIN source s ON s.id=n.source_id WHERE n.id=%s""", (notice_id,)
@@ -542,7 +726,7 @@ async def notice_detail(notice_id: int) -> dict:
             "SELECT kind,value,source_text,confidence FROM notice_audience WHERE notice_id=%s ORDER BY order_idx,id",
             (notice_id,),
         )).fetchall()
-    keys = ("id","title","url","content","body_content","summary","category","topics","posted_at","crawled_at","updated_at","extraction_version","extraction_confidence","extra","archived_at","source","database_bytes","storage_paths")
+    keys = ("id","title","url","content","body_content","summary","category","topics","posted_at","crawled_at","updated_at","extraction_version","extraction_confidence","extra","archived_at","source","embedding_models","database_bytes","storage_paths")
     result = dict(zip(keys, row))
     file_bytes = _stored_file_bytes(result.pop("storage_paths", []))
     result["asset_file_bytes"] = file_bytes

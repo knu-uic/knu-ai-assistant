@@ -217,34 +217,47 @@ def get_llm():
     raise ValueError(f"지원하지 않는 provider: {provider}")
 
 
-@lru_cache(maxsize=1)
-def get_embeddings():
-    if EMBEDDING_PROVIDER == "google":
+def _active_embedding() -> dict:
+    return load_settings()["embedding"]
+
+
+@lru_cache(maxsize=12)
+def _embedding_client(provider: str, model: str, base_url: str, api_key: str, dimension: int):
+    if provider == "google":
         return GoogleGenerativeAIEmbeddings(
-            model=EMBEDDING_MODEL,
-            output_dimensionality=EMBEDDING_DIM,
+            model=model,
+            output_dimensionality=dimension,
+            google_api_key=api_key or GOOGLE_API_KEY,
         )
 
-    if EMBEDDING_PROVIDER == "openai":
-        runtime_vlm = _active_vlm()
-        runtime_key = (
-            runtime_vlm.get("api_key", "")
-            if runtime_vlm.get("provider") == "openai"
-            else ""
-        )
+    if provider == "openai":
         return OpenAIEmbeddings(
-            model=EMBEDDING_MODEL,
-            api_key=OPENAI_API_KEY or runtime_key,
+            model=model,
+            api_key=api_key or OPENAI_API_KEY,
         )
 
-    if EMBEDDING_PROVIDER == "local":
+    if provider in {"ollama", "lmstudio", "local"}:
+        default_url = (
+            "http://127.0.0.1:11434/v1"
+            if provider in {"ollama", "local"}
+            else "http://127.0.0.1:1234/v1"
+        )
         return OpenAIEmbeddings(
-            model=EMBEDDING_MODEL,
-            base_url=OPENAI_COMPAT_BASE_URL,
-            api_key="lm-studio",
+            model=model,
+            base_url=base_url or default_url,
+            api_key=api_key or "local",
             check_embedding_ctx_length=False,
         )
 
-    raise ValueError(
-        f"지원하지 않는 provider: {EMBEDDING_PROVIDER}"
+    raise ValueError(f"지원하지 않는 provider: {provider}")
+
+
+def get_embeddings(settings: dict | None = None):
+    value = settings or _active_embedding()
+    return _embedding_client(
+        str(value.get("provider") or EMBEDDING_PROVIDER).lower(),
+        str(value.get("model") or EMBEDDING_MODEL),
+        str(value.get("base_url") or OPENAI_COMPAT_BASE_URL),
+        str(value.get("api_key") or ""),
+        int(value.get("dimension") or EMBEDDING_DIM),
     )
