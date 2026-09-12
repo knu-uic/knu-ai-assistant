@@ -25,5 +25,7 @@ KONGJU_CRAWLERS = {
         wait_selector="article",
         title_selector="h2",
         content_selector="article",
+        category="장학",
+        keywords=("장학", "장학금", "지원"),
     )),
 }

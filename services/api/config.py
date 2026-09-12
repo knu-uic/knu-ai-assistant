@@ -28,7 +28,12 @@ LOCAL_LLM_PORT = os.getenv(
     "1234",
 ).strip()
 
-if RUNTIME_ENV == "docker":
+_configured_openai_compat_url = os.getenv("OPENAI_COMPAT_BASE_URL", "").strip().rstrip("/")
+
+if _configured_openai_compat_url:
+    DB_HOST = "db" if RUNTIME_ENV == "docker" else "localhost"
+    OPENAI_COMPAT_BASE_URL = _configured_openai_compat_url
+elif RUNTIME_ENV == "docker":
     DB_HOST = "db"
 
     OPENAI_COMPAT_BASE_URL = (

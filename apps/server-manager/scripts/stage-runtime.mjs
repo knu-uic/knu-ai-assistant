@@ -42,6 +42,7 @@ const packagedPython = await stagePortablePython();
 await stageNativeRuntime("postgres", "KNU_POSTGRES_RUNTIME", postgresChecks());
 await stageNativeRuntime("redis", "KNU_REDIS_RUNTIME", [binary("bin/redis-server")]);
 await stageNativeRuntime("java", "KNU_JAVA_RUNTIME", [binary("bin/java")]);
+await archiveJavaLegalNotices();
 await stageOptionalRuntime("poppler", "KNU_POPPLER_RUNTIME");
 await stageHwpConverter(packagedPython);
 
@@ -52,7 +53,7 @@ await fs.writeFile(
     platform: process.platform,
     arch: process.arch,
     python: "3.12",
-    required: ["python", "postgresql-16", "pgvector", "redis", "paddleocr-tables"],
+    required: ["python", "postgresql-16", "pgvector", "pg_trgm", "redis", "paddleocr-tables"],
     optional: ["poppler"],
   }, null, 2)}\n`,
 );
@@ -118,6 +119,23 @@ async function stageNativeRuntime(name, envName, checks) {
   await fs.cp(absolute, path.join(stageRoot, name), { recursive: true, dereference: true });
 }
 
+async function archiveJavaLegalNotices() {
+  const javaRoot = path.join(stageRoot, "java");
+  const legalRoot = path.join(javaRoot, "legal");
+  try {
+    await fs.access(legalRoot);
+  } catch {
+    return;
+  }
+
+  // jlink repeats common notices through module-level links. Tauri's resource
+  // walker can fail on that tree on macOS, so retain every notice in one
+  // portable archive instead of exposing the link-heavy directory to it.
+  const archive = path.join(javaRoot, "legal-notices.tar.gz");
+  await run("tar", ["-czf", archive, "-C", javaRoot, "legal"], managerRoot);
+  await fs.rm(legalRoot, { recursive: true, force: true });
+}
+
 async function validateRuntimeInput(name, envName, checks) {
   const source = process.env[envName];
   if (!source) throw new Error(`${envName} is required for the ${name} runtime.`);
@@ -142,18 +160,25 @@ async function stageOptionalRuntime(name, envName) {
 }
 
 function postgresChecks() {
-  const library = process.platform === "win32"
+  const vectorLibrary = process.platform === "win32"
     ? ["lib/vector.dll", "lib/postgresql/vector.dll"]
     : process.platform === "darwin"
       ? ["lib/postgresql/vector.dylib", "lib/vector.dylib"]
       : ["lib/postgresql/vector.so", "lib/vector.so"];
+  const trigramLibrary = process.platform === "win32"
+    ? ["lib/pg_trgm.dll", "lib/postgresql/pg_trgm.dll"]
+    : process.platform === "darwin"
+      ? ["lib/postgresql/pg_trgm.dylib", "lib/pg_trgm.dylib"]
+      : ["lib/postgresql/pg_trgm.so", "lib/pg_trgm.so"];
   return [
     binary("bin/postgres"),
     binary("bin/initdb"),
     binary("bin/createdb"),
     binary("bin/psql"),
     ["share/postgresql/extension/vector.control", "share/extension/vector.control"],
-    library,
+    ["share/postgresql/extension/pg_trgm.control", "share/extension/pg_trgm.control"],
+    vectorLibrary,
+    trigramLibrary,
   ];
 }
 

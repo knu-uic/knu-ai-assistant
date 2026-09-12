@@ -13,7 +13,9 @@ use std::{
     time::Duration,
 };
 
-pub const POSTGRES_PORT: u16 = 55432;
+// Keep this distinct from Codmes Server's managed PostgreSQL port (55432) so
+// both desktop managers can run on the same Mac.
+pub const POSTGRES_PORT: u16 = 55433;
 pub const REDIS_PORT: u16 = 56379;
 
 #[derive(Deserialize, Serialize)]
@@ -107,18 +109,26 @@ impl StandaloneRuntime {
             .env("DB_NAME", "knu")
             .env("DB_USER", "knu")
             .env("DB_PASSWORD", postgres_password)
+            // PostgreSQL CLI tools (psql/createdb) do not read DB_PASSWORD.
+            // Pass their standard password variable for the first-run database
+            // existence check and creation over the SCRAM-protected TCP socket.
+            .env("PGPASSWORD", postgres_password)
             .env("REDIS_URL", format!("redis://127.0.0.1:{REDIS_PORT}"))
             .env("AUTH_JWT_SECRET", &self.secrets.auth_jwt_secret)
             .env("PORTAL_SYNC_ENC_KEY", &self.secrets.portal_sync_enc_key)
             .env("MCP_AUTH_TOKEN", &self.secrets.mcp_auth_token)
-            .env("EMBEDDING_DIM", env_or("EMBEDDING_DIM", "1536"))
-            .env("EMBEDDING_PROVIDER", env_or("EMBEDDING_PROVIDER", "openai"))
+            .env("EMBEDDING_DIM", env_or("EMBEDDING_DIM", "1024"))
+            .env("EMBEDDING_PROVIDER", env_or("EMBEDDING_PROVIDER", "local"))
             .env(
                 "EMBEDDING_MODEL",
-                env_or("EMBEDDING_MODEL", "text-embedding-3-small"),
+                env_or("EMBEDDING_MODEL", "bge-m3:latest"),
             )
-            .env("VLM_PROVIDER", env_or("VLM_PROVIDER", "openai"))
-            .env("LLM_MODEL", env_or("LLM_MODEL", "gpt-4o-mini"))
+            .env(
+                "OPENAI_COMPAT_BASE_URL",
+                env_or("OPENAI_COMPAT_BASE_URL", "http://127.0.0.1:11434/v1"),
+            )
+            .env("VLM_PROVIDER", env_or("VLM_PROVIDER", "ollama"))
+            .env("LLM_MODEL", env_or("LLM_MODEL", "gemma4:12b-mlx"))
             .env(
                 "DOCUMENT_IMAGE_ANALYSIS_ENABLED",
                 env_or("DOCUMENT_IMAGE_ANALYSIS_ENABLED", "true"),

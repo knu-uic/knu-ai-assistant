@@ -34,6 +34,8 @@ class StaticPageConfig:
     wait_selector: str
     title_selector: str
     content_selector: str
+    category: str = "기타"
+    keywords: tuple[str, ...] = ()
 
 
 class StaticPageCrawler:
@@ -87,6 +89,8 @@ class StaticPageCrawler:
         print(f"제목: {title}")
         print(content[:300] + ("..." if len(content) > 300 else ""))
 
+        summary = " ".join(content.split())[:240]
+
         return [{
             "title": title,
             "date": "",
@@ -100,4 +104,19 @@ class StaticPageCrawler:
             "url": self.config.page_url,
             "assets": [],
             "replace_by_source": True,
+            # A curated static information page already has a stable source,
+            # title, category and body. Avoid a slow, lossy LLM round-trip for
+            # metadata that can be produced deterministically.
+            "pre_refined": True,
+            "metadata": {
+                "title": title,
+                "content": content,
+                "summary": summary,
+                "target": ["전체"],
+                "start_date": None,
+                "end_date": None,
+                "category": self.config.category,
+                "keywords": list(self.config.keywords),
+                "url": self.config.page_url,
+            },
         }]

@@ -119,7 +119,7 @@ npm run bundle
 
 설치형 실행 시 Manager는 다음 순서를 자동 관리한다.
 
-1. 전용 PostgreSQL 데이터 디렉터리 초기화 및 127.0.0.1:55432 시작
+1. 전용 PostgreSQL 데이터 디렉터리 초기화 및 127.0.0.1:55433 시작
 2. KNU DB 생성
 3. 전용 Redis를 127.0.0.1:56379에서 시작
 4. pgvector 포함 DB migration 실행
@@ -174,6 +174,10 @@ VLM 추출에 적용되며, 공지 구조화·RAG는 기존 서버 LLM 설정을
 Antigravity는 아직 제공자로 추가하지 않았습니다.
 
 ## 모델 선택
+
+macOS 독립 실행형의 기본 로컬 구성은 Ollama
+`gemma4:12b-mlx`(질문·답변)와 `bge-m3:latest`(1024차원 임베딩)를 사용합니다.
+Ollama에서 두 모델을 먼저 설치하면 별도 환경변수 없이 서버를 시작할 수 있습니다.
 
 모델 이름을 직접 입력하지 않습니다. 제공자 선택 시 Manager가 해당 제공자의
 모델 API를 조회해 드롭다운을 채웁니다. LM Studio는 `api/v1/models`, Ollama는

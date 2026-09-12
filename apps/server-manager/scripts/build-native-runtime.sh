@@ -65,6 +65,8 @@ pushd "$build_root/postgresql-$postgres_version" >/dev/null
   --without-zlib
 make -j"$jobs"
 make install
+make -C contrib/pg_trgm -j"$jobs"
+make -C contrib/pg_trgm install
 cp COPYRIGHT "$output_root/licenses/PostgreSQL.txt"
 popd >/dev/null
 
@@ -114,6 +116,8 @@ fi
 "$output_root/java/bin/java" -version
 test -f "$output_root/postgres/share/extension/vector.control" \
   || test -f "$output_root/postgres/share/postgresql/extension/vector.control"
+test -f "$output_root/postgres/share/extension/pg_trgm.control" \
+  || test -f "$output_root/postgres/share/postgresql/extension/pg_trgm.control"
 
 echo "Native runtime ready: $output_root"
 echo "KNU_POSTGRES_RUNTIME=$output_root/postgres"
