@@ -38,7 +38,8 @@ def find_dataset(value: dict) -> dict | None:
         row = conn.execute(
             """
             SELECT id, provider, model, dimension, base_url, status,
-                   completed_notices, total_notices, total_chunks, error
+                   completed_notices, total_notices, total_chunks, error,
+                   completed_at, last_synced_at
             FROM embedding_dataset
             WHERE provider=%s AND model=%s AND dimension=%s AND base_url=%s
             """,
@@ -49,6 +50,7 @@ def find_dataset(value: dict) -> dict | None:
     keys = (
         "id", "provider", "model", "dimension", "base_url", "status",
         "completed_notices", "total_notices", "total_chunks", "error",
+        "completed_at", "last_synced_at",
     )
     return dict(zip(keys, row))
 
@@ -58,7 +60,8 @@ def get_dataset(dataset_id: int) -> dict | None:
         row = conn.execute(
             """
             SELECT id, provider, model, dimension, base_url, status,
-                   completed_notices, total_notices, total_chunks, error
+                   completed_notices, total_notices, total_chunks, error,
+                   completed_at, last_synced_at
             FROM embedding_dataset WHERE id=%s
             """,
             (dataset_id,),
@@ -68,6 +71,7 @@ def get_dataset(dataset_id: int) -> dict | None:
     keys = (
         "id", "provider", "model", "dimension", "base_url", "status",
         "completed_notices", "total_notices", "total_chunks", "error",
+        "completed_at", "last_synced_at",
     )
     return dict(zip(keys, row))
 
@@ -82,7 +86,7 @@ def activate_dataset(dataset_id: int, *, api_key: str = "") -> dict:
     dataset = get_dataset(dataset_id)
     if not dataset:
         raise ValueError("임베딩 데이터셋을 찾을 수 없습니다.")
-    if dataset["status"] != "ready":
+    if dataset["status"] != "ready" or dataset["completed_at"] is None:
         raise ValueError("완료된 임베딩 데이터셋만 사용할 수 있습니다.")
     settings = load_settings()
     previous = settings["embedding"]
@@ -128,6 +132,8 @@ def list_datasets() -> list[dict]:
     result = []
     for row in rows:
         item = dict(zip(keys, row))
+        if item["status"] == "ready" and item["completed_at"] is None:
+            item["status"] = "stale"
         item["active"] = dataset_key(item) == active_key
         item["search_mode"] = "hnsw" if int(item["dimension"]) <= 2000 else "exact"
         result.append(item)

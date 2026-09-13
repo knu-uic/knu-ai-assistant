@@ -2,6 +2,49 @@ from api.runtime_settings import load_settings, save_settings
 from embedding import rebuild
 
 
+def test_incomplete_ready_dataset_is_rebuilt(monkeypatch):
+    target = {
+        "provider": "ollama",
+        "model": "bge-m3:latest",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "dimension": 1024,
+        "api_key": "",
+    }
+    existing = {
+        "id": 8,
+        "status": "ready",
+        "completed_notices": 0,
+        "total_notices": 0,
+        "total_chunks": 0,
+        "completed_at": None,
+    }
+    started = []
+
+    class ImmediateThread:
+        def __init__(self, *, target, args, daemon):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            started.append(self.args)
+
+    rebuild._set_status(state="idle", completed=0, total=0, target=None)
+    monkeypatch.setattr(rebuild, "find_dataset", lambda _target: existing)
+    monkeypatch.setattr(rebuild, "active_dataset_id", lambda: 2)
+    monkeypatch.setattr(rebuild, "_set_dataset", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(rebuild, "Thread", ImmediateThread)
+    monkeypatch.setattr(
+        rebuild, "activate_dataset",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not reuse")),
+    )
+
+    result = rebuild.start_rebuild(target)
+
+    assert result["state"] == "running"
+    assert result["reused"] is False
+    assert started == [(target, 8)]
+
+
 def test_rebuild_keeps_old_rows_until_target_is_complete(tmp_path, monkeypatch):
     monkeypatch.setenv("KNU_MANAGER_SETTINGS_PATH", str(tmp_path / "manager.json"))
     save_settings({

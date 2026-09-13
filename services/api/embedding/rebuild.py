@@ -56,7 +56,12 @@ def start_rebuild(target: dict, *, force: bool = False) -> dict:
             raise RuntimeError("이미 임베딩 데이터셋 생성이 진행 중입니다.")
 
     existing = find_dataset(target)
-    if existing and existing["status"] == "ready" and not force:
+    if (
+        existing
+        and existing["status"] == "ready"
+        and existing["completed_at"] is not None
+        and not force
+    ):
         activate_dataset(existing["id"], api_key=target.get("api_key", ""))
         _set_status(
             state="complete", completed=existing["completed_notices"],
