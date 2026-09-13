@@ -1,0 +1,4 @@
+.confirm-dialog { min-width: 380px; max-width: 520px; }
+.confirm-dialog h3 { margin: 0 0 10px; }
+.confirm-dialog p { margin: 0; color: #5f6d65; font-size: 13px; line-height: 1.65; }
+.confirm-dialog .actions { margin-top: 22px; }
