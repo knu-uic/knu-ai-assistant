@@ -30,7 +30,13 @@ from api.runtime_settings import (
     public_settings,
     save_settings,
 )
-from embedding.rebuild import rebuild_status, start_rebuild
+from embedding.datasets import activate_dataset, delete_dataset, get_dataset, list_datasets
+from embedding.rebuild import (
+    rebuild_status,
+    recover_interrupted_builds,
+    resume_dataset,
+    start_rebuild,
+)
 from model import get_embeddings
 from db.pool import pool
 from db.documents import CURRENT_NOTICE_EXTRACTION_VERSION, NOTICE_CATEGORIES
@@ -87,6 +93,7 @@ NOTICE_STORAGE_PATHS_SQL = """
 NOTICE_EMBEDDING_MODELS_SQL = """
     ARRAY(
         SELECT DISTINCT nc2.embedding_provider || ' · ' || nc2.embedding_model
+               || ' · ' || nc2.embedding_dimension || '차원'
         FROM notice_chunk nc2
         WHERE nc2.notice_id=n.id
         ORDER BY 1
@@ -106,6 +113,10 @@ class EmbeddingSettings(BaseModel):
     model: str = ""
     base_url: str = ""
     dimension: int | None = Field(default=None, ge=1, le=4096)
+    api_key: str | None = None
+
+
+class EmbeddingDatasetAction(BaseModel):
     api_key: str | None = None
 
 
@@ -406,19 +417,13 @@ async def _checked_embedding(req: EmbeddingSettings) -> dict:
     saved = load_settings()["embedding"]
     target = req.model_dump()
     target["base_url"] = _provider_base_url(req.provider, req.base_url)
-    target["api_key"] = req.api_key or saved.get("api_key", "")
+    target["api_key"] = req.api_key or (
+        saved.get("api_key", "") if saved.get("provider") == req.provider else ""
+    )
     vector = await anyio.to_thread.run_sync(
         lambda: get_embeddings(target).embed_query("KNU embedding connection test")
     )
     target["dimension"] = len(vector)
-    if target["dimension"] != int(saved["dimension"]):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"현재 인덱스는 {saved['dimension']}차원입니다. 선택 모델은 "
-                f"{target['dimension']}차원이어서 자동 교체할 수 없습니다."
-            ),
-        )
     return target
 
 
@@ -467,6 +472,62 @@ async def rebuild_embedding(req: EmbeddingSettings) -> dict:
 @router.get("/settings/rebuild-embedding", dependencies=[Admin])
 async def get_rebuild_embedding() -> dict:
     return rebuild_status()
+
+
+@router.get("/settings/embedding-datasets", dependencies=[Admin])
+async def embedding_datasets() -> dict:
+    await anyio.to_thread.run_sync(recover_interrupted_builds)
+    return {"items": await anyio.to_thread.run_sync(list_datasets)}
+
+
+async def _ensure_no_crawl() -> None:
+    if load_settings()["crawl_enabled"]:
+        raise HTTPException(status_code=409, detail="자동 수집을 먼저 끄세요.")
+    redis = await get_arq_pool()
+    if await redis.exists("notice-crawl:active"):
+        raise HTTPException(status_code=409, detail="현재 공지 수집이 끝난 뒤 진행하세요.")
+
+
+@router.put("/settings/embedding-datasets/{dataset_id}/activate", dependencies=[Admin])
+async def activate_embedding_dataset(
+    dataset_id: int, action: EmbeddingDatasetAction,
+) -> dict:
+    await _ensure_no_crawl()
+    if rebuild_status()["state"] == "running":
+        raise HTTPException(status_code=409, detail="데이터셋 생성이 끝난 뒤 전환하세요.")
+    try:
+        dataset = await anyio.to_thread.run_sync(
+            lambda: activate_dataset(dataset_id, api_key=action.api_key or "")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "dataset": dataset}
+
+
+@router.post("/settings/embedding-datasets/{dataset_id}/sync", dependencies=[Admin])
+async def sync_embedding_dataset(
+    dataset_id: int, action: EmbeddingDatasetAction,
+) -> dict:
+    await _ensure_no_crawl()
+    if not await anyio.to_thread.run_sync(lambda: get_dataset(dataset_id)):
+        raise HTTPException(status_code=404, detail="임베딩 데이터셋을 찾을 수 없습니다.")
+    try:
+        return await anyio.to_thread.run_sync(
+            lambda: resume_dataset(dataset_id, api_key=action.api_key or "")
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete("/settings/embedding-datasets/{dataset_id}", dependencies=[Admin])
+async def remove_embedding_dataset(dataset_id: int) -> dict:
+    try:
+        deleted_chunks = await anyio.to_thread.run_sync(
+            lambda: delete_dataset(dataset_id)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "deleted_chunks": deleted_chunks}
 
 
 @router.get("/auth/codex/accounts", dependencies=[Admin])

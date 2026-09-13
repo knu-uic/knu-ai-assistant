@@ -234,6 +234,7 @@ def _embedding_client(provider: str, model: str, base_url: str, api_key: str, di
         return OpenAIEmbeddings(
             model=model,
             api_key=api_key or OPENAI_API_KEY,
+            dimensions=dimension,
         )
 
     if provider in {"ollama", "lmstudio", "local"}:
@@ -246,6 +247,7 @@ def _embedding_client(provider: str, model: str, base_url: str, api_key: str, di
             model=model,
             base_url=base_url or default_url,
             api_key=api_key or "local",
+            dimensions=dimension,
             check_embedding_ctx_length=False,
         )
 

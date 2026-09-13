@@ -273,6 +273,17 @@ def run_ingest(options: dict | CrawlOptions | None = None) -> dict:
         total["dropped"] += dropped_count
         total["review"] += review_count
 
+    if total["inserted"]:
+        # Keep retained embedding datasets current after the active model has
+        # ingested new notices. Failures never affect the active search model.
+        from embedding.rebuild import sync_stale_datasets
+
+        try:
+            sync_stale_datasets()
+        except Exception as exc:
+            # Retained copies are optional; active-model ingestion must remain
+            # successful even when an inactive provider is unavailable.
+            print(f"⚠️ 보관 임베딩 데이터셋 동기화 실패: {exc}")
     return total
 
 

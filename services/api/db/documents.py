@@ -529,15 +529,18 @@ def insert_assets(notice_id: int, assets: list[dict]) -> None:
 
 
 def insert_chunks(notice_id: int, chunks: list[tuple]) -> None:
+    from embedding.datasets import ensure_dataset, mark_other_datasets_stale
+
     embedding = load_settings()["embedding"]
     provider = embedding["provider"]
     model = embedding["model"]
     dimension = int(embedding["dimension"])
+    dataset_id = ensure_dataset(embedding, status="ready")
     with sync_pool.connection() as conn:
         conn.execute(
             "DELETE FROM notice_chunk WHERE notice_id = %s "
-            "AND embedding_provider = %s AND embedding_model = %s",
-            (notice_id, provider, model),
+            "AND embedding_dataset_id = %s",
+            (notice_id, dataset_id),
         )
         for chunk in chunks:
             if len(chunk) == 3:
@@ -551,8 +554,8 @@ def insert_chunks(notice_id: int, chunks: list[tuple]) -> None:
                 INSERT INTO notice_chunk
                     (notice_id, chunk_idx, content, chunk_type,
                      attachment_name, embedding, embedding_provider,
-                     embedding_model, embedding_dimension)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     embedding_model, embedding_dimension, embedding_dataset_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     notice_id,
@@ -564,9 +567,23 @@ def insert_chunks(notice_id: int, chunks: list[tuple]) -> None:
                     provider,
                     model,
                     dimension,
+                    dataset_id,
                 ),
             )
+        conn.execute(
+            """
+            UPDATE embedding_dataset
+            SET status='ready',
+                completed_notices=(SELECT count(DISTINCT notice_id) FROM notice_chunk WHERE embedding_dataset_id=%s),
+                total_notices=(SELECT count(DISTINCT notice_id) FROM notice_chunk WHERE embedding_dataset_id=%s),
+                total_chunks=(SELECT count(*) FROM notice_chunk WHERE embedding_dataset_id=%s),
+                last_synced_at=now(), updated_at=now(), error=NULL
+            WHERE id=%s
+            """,
+            (dataset_id, dataset_id, dataset_id, dataset_id),
+        )
         conn.commit()
+    mark_other_datasets_stale(dataset_id)
     if chunks:
         print(f"  ↳ chunk {len(chunks)}건 저장 완료")
 
@@ -575,7 +592,7 @@ _SEARCH_SELECT = """
     n.url,
     n.title,
     nc.content,
-    1 - (nc.embedding <=> %s::vector) AS score,
+    1 - ({distance}) AS score,
     n.posted_at,
     period.starts_on,
     period.ends_on,
@@ -657,14 +674,21 @@ def search_chunks(
     notice_ids: list[int] | None = None,
 ):
     embedding = load_settings()["embedding"]
+    dimension = int(embedding["dimension"])
+    distance_sql = (
+        f"nc.embedding::vector({dimension}) <=> %s::vector({dimension})"
+    )
+    search_select = _SEARCH_SELECT.format(distance=distance_sql)
     conditions: list[str] = [
         "nc.embedding_provider = %s",
         "nc.embedding_model = %s",
+        "nc.embedding_dimension = %s",
     ]
     params: list[Any] = [
         query_embedding,
         embedding["provider"],
         embedding["model"],
+        dimension,
     ]
 
     if time_scope == "current":
@@ -708,10 +732,10 @@ def search_chunks(
     if distinct_by_doc:
         query = f"""
             WITH candidates AS (
-                SELECT {_SEARCH_SELECT},
+                SELECT {search_select},
                        row_number() OVER (
                            PARTITION BY n.id
-                           ORDER BY nc.embedding <=> %s::vector
+                           ORDER BY {distance_sql}
                        ) AS document_rank
                 {_SEARCH_JOINS}
                 WHERE {where}
@@ -727,10 +751,10 @@ def search_chunks(
         params.insert(1, query_embedding)
     else:
         query = f"""
-            SELECT {_SEARCH_SELECT}
+            SELECT {search_select}
             {_SEARCH_JOINS}
             WHERE {where}
-            ORDER BY nc.embedding <=> %s::vector
+            ORDER BY {distance_sql}
             LIMIT %s
         """
         params.append(query_embedding)

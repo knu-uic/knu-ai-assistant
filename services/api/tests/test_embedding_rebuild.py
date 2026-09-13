@@ -25,6 +25,9 @@ def test_rebuild_keeps_old_rows_until_target_is_complete(tmp_path, monkeypatch):
         def fetchall(self):
             return self.rows
 
+        def fetchone(self):
+            return (2,)
+
         def commit(self):
             return None
 
@@ -45,6 +48,17 @@ def test_rebuild_keeps_old_rows_until_target_is_complete(tmp_path, monkeypatch):
 
     monkeypatch.setattr(rebuild, "sync_pool", Pool())
     monkeypatch.setattr(rebuild, "get_embeddings", lambda _settings: Embedder())
+    monkeypatch.setattr(rebuild, "ensure_dataset", lambda *_args, **_kwargs: 22)
+    monkeypatch.setattr(rebuild, "active_dataset_id", lambda: 11)
+    monkeypatch.setattr(rebuild, "_set_dataset", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(rebuild, "ensure_search_index", lambda *_args: "hnsw")
+
+    def activate(_dataset_id, *, api_key=""):
+        settings = load_settings()
+        settings["embedding"] = target
+        save_settings(settings)
+
+    monkeypatch.setattr(rebuild, "activate_dataset", activate)
     target = {
         "provider": "ollama",
         "model": "new-model",
@@ -59,6 +73,6 @@ def test_rebuild_keeps_old_rows_until_target_is_complete(tmp_path, monkeypatch):
     assert rebuild.rebuild_status()["state"] == "complete"
     assert sum("INSERT INTO notice_chunk" in query for query, _ in statements) == 2
     assert not any(
-        "DELETE FROM notice_chunk" in query and params[-1] == "old-model"
+        "DELETE FROM notice_chunk" in query and params[-1] == 11
         for query, params in statements
     )

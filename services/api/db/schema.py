@@ -76,12 +76,48 @@ def reset_db():
 
 
 def init_db():
-    """마이그레이션과 환경별 임베딩 차원의 통합 notice_chunk를 준비한다."""
+    """마이그레이션과 모델별 임베딩 데이터셋을 준비한다."""
     from db.migrate import migrate
 
     migrate()
     with psycopg.connect(DB_URL) as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS embedding_dataset (
+                id BIGSERIAL PRIMARY KEY,
+                provider VARCHAR(40) NOT NULL,
+                model VARCHAR(255) NOT NULL,
+                dimension INT NOT NULL CHECK (dimension > 0 AND dimension <= 4096),
+                base_url VARCHAR(1000) NOT NULL DEFAULT '',
+                status VARCHAR(20) NOT NULL DEFAULT 'ready',
+                completed_notices INT NOT NULL DEFAULT 0,
+                total_notices INT NOT NULL DEFAULT 0,
+                total_chunks INT NOT NULL DEFAULT 0,
+                error TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                completed_at TIMESTAMPTZ,
+                last_synced_at TIMESTAMPTZ,
+                UNIQUE(provider, model, dimension, base_url)
+            )
+            """
+        )
+        dataset_id = conn.execute(
+            """
+            INSERT INTO embedding_dataset(provider, model, dimension, base_url)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT(provider, model, dimension, base_url) DO UPDATE
+            SET updated_at = embedding_dataset.updated_at
+            RETURNING id
+            """,
+            (
+                "ollama",
+                os.getenv("EMBEDDING_MODEL") or "bge-m3:latest",
+                EMBEDDING_DIM,
+                "http://127.0.0.1:11434/v1",
+            ),
+        ).fetchone()[0]
         conn.execute(
             sql.SQL(
                 """
@@ -92,28 +128,28 @@ def init_db():
                     content TEXT NOT NULL,
                     chunk_type VARCHAR(20) NOT NULL DEFAULT 'body',
                     attachment_name VARCHAR(500),
-                    embedding vector({embedding_dim}) NOT NULL,
+                    embedding vector NOT NULL,
                     embedding_provider VARCHAR(40) NOT NULL DEFAULT 'ollama',
                     embedding_model VARCHAR(255) NOT NULL DEFAULT 'bge-m3:latest',
                     embedding_dimension INT NOT NULL DEFAULT {embedding_dim},
+                    embedding_dataset_id BIGINT NOT NULL
+                        REFERENCES embedding_dataset(id) ON DELETE CASCADE
+                        DEFAULT {dataset_id},
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    UNIQUE(notice_id, embedding_provider, embedding_model, chunk_idx)
+                    UNIQUE(embedding_dataset_id, notice_id, chunk_idx)
                 )
                 """
-            ).format(embedding_dim=sql.SQL(str(EMBEDDING_DIM)))
+            ).format(
+                embedding_dim=sql.SQL(str(EMBEDDING_DIM)),
+                dataset_id=sql.SQL(str(dataset_id)),
+            )
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_notice_chunk_notice ON notice_chunk(notice_id)"
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_notice_chunk_embedding_model "
-            "ON notice_chunk(embedding_provider, embedding_model, notice_id)"
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_notice_chunk_embedding
-            ON notice_chunk USING hnsw (embedding vector_cosine_ops)
-            """
+            "CREATE INDEX IF NOT EXISTS idx_notice_chunk_dataset_notice "
+            "ON notice_chunk(embedding_dataset_id, notice_id)"
         )
         conn.commit()
     print("✅ 통합 notice v2 스키마 준비 완료")
