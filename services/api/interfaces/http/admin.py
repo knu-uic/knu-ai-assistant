@@ -256,6 +256,41 @@ async def _discover_embedding_models(req: EmbeddingSettings) -> dict:
     return {"ok": True, "provider": provider, "base_url": base, "models": _unique_models(names)}
 
 
+async def _discover_embedding_model_info(req: EmbeddingSettings) -> dict:
+    provider = req.provider
+    base = _provider_base_url(provider, req.base_url)
+    if provider != "ollama":
+        return {
+            "ok": True, "provider": provider, "model": req.model,
+            "base_url": base, "native_dimension": None,
+        }
+    if not req.model.strip():
+        raise HTTPException(status_code=422, detail="임베딩 모델을 선택하세요.")
+    async with httpx.AsyncClient(timeout=12) as client:
+        response = await client.post(
+            f"{_server_root(base)}/api/show", json={"model": req.model}
+        )
+        response.raise_for_status()
+    payload = response.json()
+    dimensions = [
+        int(value)
+        for key, value in (payload.get("model_info") or {}).items()
+        if str(key).endswith(".embedding_length")
+        and isinstance(value, (int, float))
+        and int(value) > 0
+    ]
+    if not dimensions:
+        raise HTTPException(
+            status_code=409,
+            detail="Ollama 모델 메타데이터에서 embedding length를 확인하지 못했습니다.",
+        )
+    return {
+        "ok": True, "provider": provider, "model": req.model,
+        "base_url": base, "native_dimension": max(dimensions),
+        "parameter_size": (payload.get("details") or {}).get("parameter_size"),
+    }
+
+
 class RuntimeSettingsUpdate(BaseModel):
     crawl_enabled: bool | None = None
     crawl_interval_hours: int
@@ -407,6 +442,16 @@ async def list_embedding_models(req: EmbeddingSettings) -> dict:
         if isinstance(exc, HTTPException):
             raise
         raise HTTPException(status_code=502, detail=f"임베딩 모델 목록 조회 실패: {exc}") from exc
+
+
+@router.post("/settings/embedding-model-info", dependencies=[Admin])
+async def embedding_model_info(req: EmbeddingSettings) -> dict:
+    try:
+        return await _discover_embedding_model_info(req)
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status_code=502, detail=f"임베딩 모델 정보 조회 실패: {exc}") from exc
 
 
 async def _checked_embedding(req: EmbeddingSettings) -> dict:

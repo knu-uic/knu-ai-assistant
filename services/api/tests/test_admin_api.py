@@ -278,6 +278,38 @@ def test_ollama_embedding_models_only_include_embedding_capability(tmp_path, mon
     assert result["models"] == ["bge-m3:latest"]
 
 
+def test_ollama_embedding_model_info_reads_native_dimension(tmp_path, monkeypatch):
+    monkeypatch.setenv("KNU_MANAGER_SETTINGS_PATH", str(tmp_path / "manager.json"))
+    requested = []
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, **kwargs):
+            requested.append((url, kwargs["json"]))
+            return httpx.Response(200, request=httpx.Request("POST", url), json={
+                "details": {"parameter_size": "7.6B"},
+                "model_info": {
+                    "qwen3.context_length": 40960,
+                    "qwen3.embedding_length": 4096,
+                },
+            })
+
+    monkeypatch.setattr(admin.httpx, "AsyncClient", lambda **_kwargs: Client())
+    result = asyncio.run(admin._discover_embedding_model_info(admin.EmbeddingSettings(
+        provider="ollama", model="qwen3-embedding:latest",
+        base_url="http://127.0.0.1:11434/v1",
+    )))
+
+    assert requested == [("http://127.0.0.1:11434/api/show", {"model": "qwen3-embedding:latest"})]
+    assert result["native_dimension"] == 4096
+    assert result["parameter_size"] == "7.6B"
+
+
 def test_notice_storage_combines_database_and_unique_asset_files(tmp_path, monkeypatch):
     first = tmp_path / "first.png"
     second = tmp_path / "second.pdf"
