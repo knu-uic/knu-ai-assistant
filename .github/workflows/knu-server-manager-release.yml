@@ -133,7 +133,12 @@ jobs:
 
       - name: Test packaged KNU API
         working-directory: apps/server-manager/runtime/knu/services/api
-        run: ../../.knu-runtime/bin/python -m pytest tests -q
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_python="../../.knu-runtime/bin/python"
+          site_packages="$($runtime_python -c 'import site; print(site.getsitepackages()[0])')"
+          PYTHONPATH="$PWD:$site_packages" uvx --python "$runtime_python" --from pytest pytest tests -q
 
       - name: Build standalone application
         shell: bash
