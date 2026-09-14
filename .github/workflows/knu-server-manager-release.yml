@@ -70,7 +70,8 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Require Apple release credentials
+      - name: Resolve Apple signing availability
+        id: signing
         if: steps.release.outputs.tagged == 'true'
         shell: bash
         run: |
@@ -80,12 +81,14 @@ jobs:
             [[ -n "${!name:-}" ]] || missing+=("$name")
           done
           if (( ${#missing[@]} )); then
-            echo "Missing GitHub Actions secrets: ${missing[*]}" >&2
-            exit 1
+            echo "::warning::Publishing an unsigned build because Apple release secrets are missing: ${missing[*]}"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Import Developer ID certificate
-        if: steps.release.outputs.tagged == 'true'
+        if: steps.release.outputs.tagged == 'true' && steps.signing.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -143,7 +146,7 @@ jobs:
           echo "APP_PATH=$PWD/$app_path" >> "$GITHUB_ENV"
 
       - name: Seal and verify signed application
-        if: steps.release.outputs.tagged == 'true'
+        if: steps.release.outputs.tagged == 'true' && steps.signing.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -161,18 +164,22 @@ jobs:
         run: |
           set -euo pipefail
           stage="$RUNNER_TEMP/KnuServerManagerDmg"
-          output="$RUNNER_TEMP/KNU.Server.Manager_${{ steps.release.outputs.version }}_macOS-${{ steps.native.outputs.architecture }}.dmg"
+          suffix=""
+          if [[ "${{ steps.release.outputs.tagged }}" == "true" && "${{ steps.signing.outputs.enabled }}" != "true" ]]; then
+            suffix="_unsigned"
+          fi
+          output="$RUNNER_TEMP/KNU.Server.Manager_${{ steps.release.outputs.version }}_macOS-${{ steps.native.outputs.architecture }}${suffix}.dmg"
           mkdir -p "$stage"
           ditto "$APP_PATH" "$stage/KNU Server Manager.app"
           ln -s /Applications "$stage/Applications"
           hdiutil create -volname "KNU Server Manager" -srcfolder "$stage" -ov -format UDZO "$output"
-          if [[ "${{ steps.release.outputs.tagged }}" == "true" ]]; then
+          if [[ "${{ steps.release.outputs.tagged }}" == "true" && "${{ steps.signing.outputs.enabled }}" == "true" ]]; then
             codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$output"
           fi
           echo "DMG_PATH=$output" >> "$GITHUB_ENV"
 
       - name: Notarize disk image
-        if: steps.release.outputs.tagged == 'true'
+        if: steps.release.outputs.tagged == 'true' && steps.signing.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -198,6 +205,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          title="KNU Server Manager ${{ steps.release.outputs.version }}"
+          if [[ "${{ steps.signing.outputs.enabled }}" != "true" ]]; then
+            title="$title (unsigned)"
+          fi
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --title "KNU Server Manager ${{ steps.release.outputs.version }}" --generate-notes
+            || gh release create "$GITHUB_REF_NAME" --title "$title" --generate-notes
           gh release upload "$GITHUB_REF_NAME" "$DMG_PATH" --clobber
