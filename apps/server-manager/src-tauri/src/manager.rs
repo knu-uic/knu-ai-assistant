@@ -243,10 +243,47 @@ impl Drop for ManagerState {
     fn drop(&mut self) {
         if let Ok(mut processes) = self.processes.lock() {
             stop_child(&mut processes.worker);
+            cleanup_interrupted_crawl(self);
             stop_child(&mut processes.api);
             stop_embedded_child(&mut processes.redis);
             stop_embedded_child(&mut processes.postgres);
         }
+    }
+}
+
+fn cleanup_interrupted_crawl(state: &ManagerState) {
+    let api_root = state.root.join("services/api");
+    let mut command = Command::new(&state.python);
+    if let Some(runtime) = &state.standalone {
+        runtime.configure_command(&mut command);
+    }
+    match command
+        .args([
+            "-c",
+            "from workers.crawl_control import cleanup_interrupted_crawl; print(cleanup_interrupted_crawl())",
+        ])
+        .current_dir(api_root)
+        .env("KNU_MANAGER_SETTINGS_PATH", &state.runtime_settings_path)
+        .output()
+    {
+        Ok(output) if output.status.success() => push_log(
+            &state.logs,
+            format!(
+                "[manager] cleared {} interrupted crawl state entries",
+                String::from_utf8_lossy(&output.stdout).trim()
+            ),
+        ),
+        Ok(output) => push_log(
+            &state.logs,
+            format!(
+                "[manager] crawl state cleanup failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ),
+        Err(error) => push_log(
+            &state.logs,
+            format!("[manager] crawl state cleanup could not start: {error}"),
+        ),
     }
 }
 
@@ -483,6 +520,10 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
         p.api = Some(api);
     }
     if !child_running(&mut p.worker) {
+        // Redis is persistent, so a manager crash can leave ARQ's in-progress
+        // marker and the crawl lock behind. No manager-owned worker is alive at
+        // this point; clear only that transient job state before replacement.
+        cleanup_interrupted_crawl(state);
         match spawn_python(
             state,
             &["-m", "arq", "workers.arq_worker.WorkerSettings"],
@@ -535,6 +576,7 @@ pub fn stop_server(state: tauri::State<ManagerState>) -> Result<(), String> {
         .lock()
         .map_err(|_| "process state lock failed")?;
     stop_child(&mut p.worker);
+    cleanup_interrupted_crawl(state.inner());
     stop_child(&mut p.api);
     stop_embedded_child(&mut p.redis);
     stop_embedded_child(&mut p.postgres);

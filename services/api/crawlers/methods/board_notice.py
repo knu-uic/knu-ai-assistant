@@ -749,6 +749,14 @@ class BoardNoticeCrawler:
                                 failure = f"{type(error).__name__}: {error}"
                             if result is not None:
                                 succeeded += 1
+                                # Persist each completed detail before waiting for
+                                # slow siblings (large attachment/OCR work in
+                                # particular). A single timeout must not hide all
+                                # otherwise completed notices from the data view.
+                                yield result
+                                # The generator resumes here only after the caller
+                                # has saved the yielded notice. Pause/stop therefore
+                                # preserves every item that already finished.
                                 if on_progress:
                                     on_progress({
                                         "phase": "details",
@@ -757,11 +765,6 @@ class BoardNoticeCrawler:
                                         "processed_increment": 1,
                                         "current_url": url,
                                     })
-                                # Persist each completed detail before waiting for
-                                # slow siblings (large attachment/OCR work in
-                                # particular). A single timeout must not hide all
-                                # otherwise completed notices from the data view.
-                                yield result
                             elif on_detail_failure:
                                 on_detail_failure(
                                     url,

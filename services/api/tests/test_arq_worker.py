@@ -1,6 +1,7 @@
 import asyncio
 
 from workers.arq_worker import (
+    NoticeCrawlStopped,
     WorkerSettings,
     counseling_prepare,
     counseling_submit,
@@ -33,6 +34,85 @@ def test_manual_notice_poll_is_registered():
     registered = next(item for item in WorkerSettings.functions if getattr(item, "name", "") == "poll_notices")
     assert registered.coroutine is poll_notices
     assert registered.timeout_s == 21600
+
+
+def test_notice_crawl_stop_is_a_clean_result(monkeypatch):
+    writes = {}
+
+    class AsyncRedis:
+        async def set(self, key, value, **_kwargs):
+            writes[key] = value
+            return True
+
+        async def delete(self, *keys):
+            for key in keys:
+                writes.pop(key, None)
+
+    class SyncRedis:
+        def set(self, key, value, **_kwargs):
+            writes[key] = value
+
+        def exists(self, key):
+            return key == "notice-crawl:stop"
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(arq_worker.redis_sync, "from_url", lambda _url: SyncRedis())
+    monkeypatch.setitem(__import__("sys").modules, "pipelines.ingest", type("Ingest", (), {
+        "run_ingest": staticmethod(lambda _request, on_progress: on_progress({"phase": "source"}))
+    }))
+
+    result = asyncio.run(poll_notices({"redis": AsyncRedis(), "job_id": "manual"}, {}))
+
+    assert result["stopped"] is True
+    assert '"status": "stopped"' in writes["notice-crawl:progress"]
+
+
+def test_notice_crawl_pause_resumes_without_losing_progress(monkeypatch):
+    writes = []
+
+    class AsyncRedis:
+        async def set(self, *_args, **_kwargs):
+            return True
+
+        async def delete(self, *_keys):
+            pass
+
+    class SyncRedis:
+        pause_checks = 0
+
+        def set(self, _key, value, **_kwargs):
+            writes.append(value)
+
+        def exists(self, key):
+            if key == "notice-crawl:stop":
+                return False
+            if key == "notice-crawl:pause":
+                self.pause_checks += 1
+                return self.pause_checks < 3
+            return False
+
+        def close(self):
+            pass
+
+    def run_ingest(_request, on_progress):
+        on_progress({"phase": "details", "processed_increment": 1})
+        return {"inserted": 1}
+
+    monkeypatch.setattr(arq_worker.redis_sync, "from_url", lambda _url: SyncRedis())
+    monkeypatch.setattr(arq_worker.time, "sleep", lambda _seconds: None)
+    monkeypatch.setitem(__import__("sys").modules, "pipelines.ingest", type("Ingest", (), {
+        "run_ingest": staticmethod(run_ingest)
+    }))
+
+    result = asyncio.run(poll_notices({"redis": AsyncRedis(), "job_id": "manual"}, {}))
+
+    states = [__import__("json").loads(value)["status"] for value in writes]
+    assert result == {"inserted": 1}
+    assert "paused" in states
+    assert states[-1] == "complete"
+    assert __import__("json").loads(writes[-1])["processed"] == 1
 
 
 def test_scheduled_poll_uses_recent_seven_day_scope(monkeypatch):

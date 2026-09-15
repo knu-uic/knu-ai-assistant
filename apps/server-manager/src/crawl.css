@@ -96,6 +96,7 @@
   background: #319768;
   transition: width .25s ease;
 }
+.crawl-controls { display:flex; gap:8px; margin-top:12px; }
 
 .section-tabs {
   display: flex;

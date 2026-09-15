@@ -11,6 +11,7 @@
 """
 import asyncio
 import json
+import time
 from datetime import datetime, timezone
 
 import redis as redis_sync
@@ -20,11 +21,21 @@ from arq.worker import func
 
 from config import PORTAL_SYNC_TIMEOUT_SECONDS, REDIS_URL
 from api.runtime_settings import load_settings
+from workers.crawl_control import (
+    NOTICE_CRAWL_ACTIVE_KEY,
+    NOTICE_CRAWL_PAUSE_KEY,
+    NOTICE_CRAWL_PENDING_KEY,
+    NOTICE_CRAWL_PROGRESS_KEY,
+    NOTICE_CRAWL_STOP_KEY,
+)
 
 STEP_KEY_PREFIX = "portal-sync:step:"
 STEP_TTL_SECONDS = 600
-NOTICE_CRAWL_PROGRESS_KEY = "notice-crawl:progress"
 NOTICE_CRAWL_PROGRESS_TTL_SECONDS = 86400
+
+
+class NoticeCrawlStopped(Exception):
+    """Raised inside the ingest thread when a user requests a clean stop."""
 
 
 def step_key(job_id: str) -> str:
@@ -188,15 +199,17 @@ async def keep_portal_session(ctx: dict, student_id: str) -> dict:
 
 async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
     redis = ctx.get("redis")
-    lock_key = "notice-crawl:active"
+    lock_key = NOTICE_CRAWL_ACTIVE_KEY
     if redis is not None:
         acquired = await redis.set(lock_key, ctx.get("job_id", "crawler"), ex=25200, nx=True)
         if not acquired:
             return {"skipped": True, "reason": "already_running"}
+        await redis.delete(
+            NOTICE_CRAWL_PAUSE_KEY,
+            NOTICE_CRAWL_STOP_KEY,
+            NOTICE_CRAWL_PENDING_KEY,
+        )
     # 크롤+임베딩은 sync·장시간 작업 → 워커 이벤트루프 비블로킹 위해 스레드에서.
-    # import도 여기서: 크롤러·임베딩(torch 등) 무거운 의존성을 잡 실행 시점에만 로드.
-    from pipelines.ingest import run_ingest
-
     progress_redis = redis_sync.from_url(REDIS_URL or "redis://localhost:6379")
     progress = {
         "job_id": ctx.get("job_id", "crawler"),
@@ -209,7 +222,7 @@ async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    def publish_progress(update: dict) -> None:
+    def write_progress(update: dict) -> None:
         for key, value in update.items():
             if key.endswith("_increment"):
                 target = key.removesuffix("_increment")
@@ -223,17 +236,46 @@ async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
             ex=NOTICE_CRAWL_PROGRESS_TTL_SECONDS,
         )
 
-    publish_progress({})
+    def publish_progress(update: dict) -> None:
+        write_progress(update)
+        if progress_redis.exists(NOTICE_CRAWL_STOP_KEY):
+            raise NoticeCrawlStopped
+        if not progress_redis.exists(NOTICE_CRAWL_PAUSE_KEY):
+            return
+
+        resume_phase = progress.get("phase", "details")
+        write_progress({"status": "paused", "phase": "paused"})
+        while progress_redis.exists(NOTICE_CRAWL_PAUSE_KEY):
+            if progress_redis.exists(NOTICE_CRAWL_STOP_KEY):
+                raise NoticeCrawlStopped
+            time.sleep(0.25)
+        write_progress({"status": "running", "phase": resume_phase})
+
+    write_progress({})
 
     try:
+        # Import after the initial progress record so the UI never has to infer
+        # activity from the lock alone during a cold module load.
+        from pipelines.ingest import run_ingest
+
         result = await asyncio.to_thread(
             run_ingest, crawl_request, on_progress=publish_progress
         )
-        publish_progress({"status": "complete", "phase": "complete", "result": result})
+        write_progress({"status": "complete", "phase": "complete", "result": result})
         print(f"📥 공지 폴링 결과: {result}")
         return result
+    except NoticeCrawlStopped:
+        result = {
+            "stopped": True,
+            "processed": progress.get("processed", 0),
+            "saved": progress.get("saved", 0),
+            "failed": progress.get("failed", 0),
+        }
+        write_progress({"status": "stopped", "phase": "stopped", "result": result})
+        print(f"⏹️ 공지 수집 중지: {result}")
+        return result
     except BaseException as exc:
-        publish_progress({
+        write_progress({
             "status": "stopped" if isinstance(exc, asyncio.CancelledError) else "failed",
             "phase": "stopped" if isinstance(exc, asyncio.CancelledError) else "failed",
             "error": "" if isinstance(exc, asyncio.CancelledError) else str(exc),
@@ -242,7 +284,7 @@ async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
     finally:
         progress_redis.close()
         if redis is not None:
-            await redis.delete(lock_key)
+            await redis.delete(lock_key, NOTICE_CRAWL_PAUSE_KEY, NOTICE_CRAWL_STOP_KEY)
 
 
 async def scheduled_poll_notices(ctx: dict) -> dict:

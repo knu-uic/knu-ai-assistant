@@ -5,6 +5,7 @@ import json
 import os
 from datetime import date
 from typing import Any, Literal
+from uuid import uuid4
 
 import anyio
 import httpx
@@ -42,7 +43,14 @@ from model import get_embeddings
 from db.pool import pool
 from db.documents import CURRENT_NOTICE_EXTRACTION_VERSION, NOTICE_CATEGORIES
 from interfaces.mcp.server import get_public_tool_catalog
-from workers.arq_worker import NOTICE_CRAWL_PROGRESS_KEY
+from workers.crawl_control import (
+    NOTICE_CRAWL_ACTIVE_KEY,
+    NOTICE_CRAWL_PAUSE_KEY,
+    NOTICE_CRAWL_PENDING_KEY,
+    NOTICE_CRAWL_PROGRESS_KEY,
+    NOTICE_CRAWL_STOP_KEY,
+    MANUAL_NOTICE_JOB_PREFIX,
+)
 
 router = APIRouter(prefix="/admin", tags=["server-manager"])
 
@@ -643,14 +651,52 @@ async def run_crawl(req: CrawlRunRequest | None = None) -> dict:
             detail="자동 수집이 켜져 있을 때는 수동 수집을 시작할 수 없습니다. 자동 수집을 꺼고 시작하세요.",
         )
     redis = await get_arq_pool()
+    if await redis.exists(NOTICE_CRAWL_ACTIVE_KEY):
+        raise HTTPException(status_code=409, detail="이미 크롤링이 실행 중입니다.")
+    job_id = f"{MANUAL_NOTICE_JOB_PREFIX}-{uuid4().hex}"
+    reserved = await redis.set(NOTICE_CRAWL_PENDING_KEY, job_id, ex=300, nx=True)
+    if not reserved:
+        raise HTTPException(status_code=409, detail="이미 크롤링 시작을 준비하고 있습니다.")
     job = await redis.enqueue_job(
         "poll_notices",
         request.model_dump(),
-        _job_id="manual-notice-crawl",
+        _job_id=job_id,
     )
     if job is None:
+        await redis.delete(NOTICE_CRAWL_PENDING_KEY)
         raise HTTPException(status_code=409, detail="이미 크롤링이 실행 중입니다.")
     return {"ok": True, "job_id": job.job_id, "request": request.model_dump()}
+
+
+async def _active_crawl_redis():
+    redis = await get_arq_pool()
+    if not await redis.exists(NOTICE_CRAWL_ACTIVE_KEY):
+        raise HTTPException(status_code=409, detail="현재 실행 중인 공지 수집이 없습니다.")
+    return redis
+
+
+@router.post("/crawl/pause", dependencies=[Admin])
+async def pause_crawl() -> dict:
+    redis = await _active_crawl_redis()
+    if await redis.exists(NOTICE_CRAWL_STOP_KEY):
+        raise HTTPException(status_code=409, detail="공지 수집을 중지하는 중입니다.")
+    await redis.set(NOTICE_CRAWL_PAUSE_KEY, "1", ex=25200)
+    return {"ok": True, "state": "pausing"}
+
+
+@router.post("/crawl/resume", dependencies=[Admin])
+async def resume_crawl() -> dict:
+    redis = await _active_crawl_redis()
+    await redis.delete(NOTICE_CRAWL_PAUSE_KEY)
+    return {"ok": True, "state": "running"}
+
+
+@router.post("/crawl/stop", dependencies=[Admin])
+async def stop_crawl() -> dict:
+    redis = await _active_crawl_redis()
+    await redis.set(NOTICE_CRAWL_STOP_KEY, "1", ex=25200)
+    await redis.delete(NOTICE_CRAWL_PAUSE_KEY)
+    return {"ok": True, "state": "stopping"}
 
 
 @router.get("/crawl/status", dependencies=[Admin])
@@ -667,7 +713,9 @@ async def crawl_status() -> dict:
             """
         )).fetchone()
     redis = await get_arq_pool()
-    active = bool(await redis.exists("notice-crawl:active"))
+    active = bool(await redis.exists(NOTICE_CRAWL_ACTIVE_KEY))
+    paused = bool(await redis.exists(NOTICE_CRAWL_PAUSE_KEY))
+    stop_requested = bool(await redis.exists(NOTICE_CRAWL_STOP_KEY))
     progress = {}
     raw_progress = await redis.get(NOTICE_CRAWL_PROGRESS_KEY)
     if raw_progress:
@@ -677,6 +725,8 @@ async def crawl_status() -> dict:
             progress = {}
     return {
         "active": active,
+        "paused": paused,
+        "stop_requested": stop_requested,
         "total": row[0],
         "completed": row[1],
         "discovered": row[2],

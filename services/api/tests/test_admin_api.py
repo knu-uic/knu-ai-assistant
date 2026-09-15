@@ -51,6 +51,16 @@ def test_manual_crawl_forwards_url_based_page_scope(monkeypatch):
         job_id = "manual-notice-crawl"
 
     class Redis:
+        async def exists(self, _key):
+            return 0
+
+        async def set(self, key, value, **_kwargs):
+            captured["pending"] = (key, value)
+            return True
+
+        async def delete(self, *_keys):
+            pass
+
         async def enqueue_job(self, function, request, **kwargs):
             captured.update(function=function, request=request, kwargs=kwargs)
             return Job()
@@ -73,6 +83,10 @@ def test_manual_crawl_forwards_url_based_page_scope(monkeypatch):
 
     assert response.status_code == 200
     assert captured["function"] == "poll_notices"
+    assert captured["kwargs"]["_job_id"].startswith("manual-notice-crawl-")
+    assert captured["pending"] == (
+        "notice-crawl:pending", captured["kwargs"]["_job_id"],
+    )
     assert captured["request"]["start_page"] == 3
     assert captured["request"]["end_page"] == 20
     assert captured["request"]["refresh_outdated_extraction"] is True
@@ -120,8 +134,7 @@ def test_crawl_status_reports_url_registry_counts(monkeypatch):
 
     class Redis:
         async def exists(self, key):
-            assert key == "notice-crawl:active"
-            return 1
+            return int(key == "notice-crawl:active")
 
         async def get(self, key):
             assert key == "notice-crawl:progress"
@@ -137,6 +150,8 @@ def test_crawl_status_reports_url_registry_counts(monkeypatch):
 
     assert result == {
         "active": True,
+        "paused": False,
+        "stop_requested": False,
         "total": 25,
         "completed": 20,
         "discovered": 3,
@@ -144,6 +159,59 @@ def test_crawl_status_reports_url_registry_counts(monkeypatch):
         "last_seen_at": None,
         "run": {"status": "running", "processed": 7, "saved": 5},
     }
+
+
+def test_crawl_pause_resume_and_stop_controls(monkeypatch):
+    class Redis:
+        def __init__(self):
+            self.values = {"notice-crawl:active": "manual-notice-crawl"}
+
+        async def exists(self, key):
+            return int(key in self.values)
+
+        async def set(self, key, value, **_kwargs):
+            self.values[key] = value
+            return True
+
+        async def delete(self, *keys):
+            for key in keys:
+                self.values.pop(key, None)
+
+    redis = Redis()
+
+    async def get_pool():
+        return redis
+
+    monkeypatch.setattr(admin, "get_arq_pool", get_pool)
+    with TestClient(app) as client:
+        assert client.post("/api/admin/crawl/pause").json() == {
+            "ok": True, "state": "pausing",
+        }
+        assert "notice-crawl:pause" in redis.values
+        assert client.post("/api/admin/crawl/resume").json() == {
+            "ok": True, "state": "running",
+        }
+        assert "notice-crawl:pause" not in redis.values
+        assert client.post("/api/admin/crawl/stop").json() == {
+            "ok": True, "state": "stopping",
+        }
+        assert "notice-crawl:stop" in redis.values
+
+
+def test_crawl_controls_require_an_active_run(monkeypatch):
+    class Redis:
+        async def exists(self, _key):
+            return 0
+
+    async def get_pool():
+        return Redis()
+
+    monkeypatch.setattr(admin, "get_arq_pool", get_pool)
+    with TestClient(app) as client:
+        response = client.post("/api/admin/crawl/pause")
+
+    assert response.status_code == 409
+    assert "실행 중" in response.json()["detail"]
 
 
 def test_admin_updates_runtime_settings_without_returning_secret(tmp_path, monkeypatch):
