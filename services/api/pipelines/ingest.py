@@ -2,6 +2,7 @@ import sitecustomize  # noqa: F401  # project-level pycache routing
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Callable
 
 from crawlers import CRAWLERS
 from crawlers.methods.board_notice import CrawlPageScope
@@ -76,7 +77,11 @@ class CrawlOptions:
         )
 
 
-def run_ingest(options: dict | CrawlOptions | None = None) -> dict:
+def run_ingest(
+    options: dict | CrawlOptions | None = None,
+    *,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
     """전체 크롤러 증분 수집 1회. 합산 카운트를 반환한다(워커 로그·모니터링용).
 
     DB에 이미 있는 글은 should_skip으로 건너뛰므로 반복 실행해도 안전하다.
@@ -100,6 +105,12 @@ def run_ingest(options: dict | CrawlOptions | None = None) -> dict:
     archive_documents(retention_months=24, protected_urls=pinned_urls)
 
     for mod in selected_crawlers:
+        if on_progress:
+            on_progress({
+                "phase": "source",
+                "source_code": mod.SOURCE_CODE,
+                "source_name": mod.SOURCE_NAME,
+            })
         source_id = upsert_source(
             code=mod.SOURCE_CODE,
             name=mod.SOURCE_NAME,
@@ -135,6 +146,7 @@ def run_ingest(options: dict | CrawlOptions | None = None) -> dict:
                     refresh_outdated_extraction=options.refresh_outdated_extraction,
                 ),
                 "on_detail_failure": mark_crawl_url_failed,
+                "on_progress": on_progress,
             }
 
         iterator = (
@@ -251,6 +263,14 @@ def run_ingest(options: dict | CrawlOptions | None = None) -> dict:
             if uses_url_registry:
                 mark_crawl_url_completed(item["url"], posted_at=posted_at)
             inserted_count += 1
+            if on_progress:
+                on_progress({
+                    "phase": "saved",
+                    "source_code": mod.SOURCE_CODE,
+                    "saved_increment": 1,
+                    "current_url": item["url"],
+                    "current_title": doc.title,
+                })
 
         print(
             f"2. 크롤링/적재 완료: 수집 {crawled_count}개, "

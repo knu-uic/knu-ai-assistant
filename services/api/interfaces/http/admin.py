@@ -1,6 +1,7 @@
 """로컬 KNU Server Manager 전용 관리자 API."""
 from __future__ import annotations
 
+import json
 import os
 from datetime import date
 from typing import Any, Literal
@@ -41,6 +42,7 @@ from model import get_embeddings
 from db.pool import pool
 from db.documents import CURRENT_NOTICE_EXTRACTION_VERSION, NOTICE_CATEGORIES
 from interfaces.mcp.server import get_public_tool_catalog
+from workers.arq_worker import NOTICE_CRAWL_PROGRESS_KEY
 
 router = APIRouter(prefix="/admin", tags=["server-manager"])
 
@@ -666,6 +668,13 @@ async def crawl_status() -> dict:
         )).fetchone()
     redis = await get_arq_pool()
     active = bool(await redis.exists("notice-crawl:active"))
+    progress = {}
+    raw_progress = await redis.get(NOTICE_CRAWL_PROGRESS_KEY)
+    if raw_progress:
+        try:
+            progress = json.loads(raw_progress)
+        except (TypeError, ValueError):
+            progress = {}
     return {
         "active": active,
         "total": row[0],
@@ -673,6 +682,7 @@ async def crawl_status() -> dict:
         "discovered": row[2],
         "failed": row[3],
         "last_seen_at": row[4],
+        "run": progress,
     }
 
 

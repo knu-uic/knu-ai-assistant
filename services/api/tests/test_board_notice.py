@@ -406,7 +406,7 @@ def test_real_http_timeout_then_retry_recovers_twenty_megabyte_response():
     assert response.content == expected
 
 
-def test_page_results_wait_for_minimum_success_evidence(monkeypatch):
+def test_successful_page_results_stream_before_minimum_success_check(monkeypatch):
     crawler = BoardNoticeCrawler(_config(min_success_ratio=0.5, min_success_count=3))
     browser = _BrowserContext()
     crawler._browser_context_factory = lambda: browser
@@ -423,7 +423,7 @@ def test_page_results_wait_for_minimum_success_evidence(monkeypatch):
         ),
     )
 
-    assert list(crawler.crawling()) == []
+    assert list(crawler.crawling()) == [{"url": "https://example.test/notice/0"}]
     assert crawler.last_run_stats == {
         "discovered": 4,
         "known": 0,
@@ -432,6 +432,35 @@ def test_page_results_wait_for_minimum_success_evidence(monkeypatch):
         "accepted_pages": 0,
         "rejected_pages": 1,
     }
+
+
+def test_completed_detail_yields_while_slow_sibling_is_still_running(monkeypatch):
+    crawler = BoardNoticeCrawler(_config(max_workers=2))
+    crawler._browser_context_factory = _BrowserContext
+    records = [
+        {"url": "https://example.test/notice/fast", "is_pinned": False},
+        {"url": "https://example.test/notice/slow", "is_pinned": False},
+    ]
+    slow_started = threading.Event()
+    release_slow = threading.Event()
+
+    monkeypatch.setattr(crawler, "_collect_post_records", lambda page, number: records)
+
+    def crawl_detail(_context, url, idx, total, is_pinned=False):
+        if url.endswith("/slow"):
+            slow_started.set()
+            assert release_slow.wait(timeout=5)
+        else:
+            assert slow_started.wait(timeout=5)
+        return {"url": url}
+
+    monkeypatch.setattr(crawler, "_crawl_post_parallel", crawl_detail)
+    results = crawler.crawling()
+
+    assert next(results) == {"url": "https://example.test/notice/fast"}
+    assert release_slow.is_set() is False
+    release_slow.set()
+    assert list(results) == [{"url": "https://example.test/notice/slow"}]
 
 
 def test_known_and_new_successes_can_meet_page_threshold(monkeypatch):

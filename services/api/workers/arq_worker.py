@@ -10,6 +10,8 @@
   받아 복호화해 쓰고 폐기. 진행 단계는 redis 키(portal-sync:step:{job_id})로 노출.
 """
 import asyncio
+import json
+from datetime import datetime, timezone
 
 import redis as redis_sync
 from arq import cron
@@ -21,6 +23,8 @@ from api.runtime_settings import load_settings
 
 STEP_KEY_PREFIX = "portal-sync:step:"
 STEP_TTL_SECONDS = 600
+NOTICE_CRAWL_PROGRESS_KEY = "notice-crawl:progress"
+NOTICE_CRAWL_PROGRESS_TTL_SECONDS = 86400
 
 
 def step_key(job_id: str) -> str:
@@ -193,11 +197,50 @@ async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
     # import도 여기서: 크롤러·임베딩(torch 등) 무거운 의존성을 잡 실행 시점에만 로드.
     from pipelines.ingest import run_ingest
 
+    progress_redis = redis_sync.from_url(REDIS_URL or "redis://localhost:6379")
+    progress = {
+        "job_id": ctx.get("job_id", "crawler"),
+        "status": "running",
+        "phase": "starting",
+        "discovered": 0,
+        "processed": 0,
+        "saved": 0,
+        "failed": 0,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    def publish_progress(update: dict) -> None:
+        for key, value in update.items():
+            if key.endswith("_increment"):
+                target = key.removesuffix("_increment")
+                progress[target] = int(progress.get(target, 0)) + int(value)
+            else:
+                progress[key] = value
+        progress["updated_at"] = datetime.now(timezone.utc).isoformat()
+        progress_redis.set(
+            NOTICE_CRAWL_PROGRESS_KEY,
+            json.dumps(progress, ensure_ascii=False),
+            ex=NOTICE_CRAWL_PROGRESS_TTL_SECONDS,
+        )
+
+    publish_progress({})
+
     try:
-        result = await asyncio.to_thread(run_ingest, crawl_request)
+        result = await asyncio.to_thread(
+            run_ingest, crawl_request, on_progress=publish_progress
+        )
+        publish_progress({"status": "complete", "phase": "complete", "result": result})
         print(f"📥 공지 폴링 결과: {result}")
         return result
+    except BaseException as exc:
+        publish_progress({
+            "status": "stopped" if isinstance(exc, asyncio.CancelledError) else "failed",
+            "phase": "stopped" if isinstance(exc, asyncio.CancelledError) else "failed",
+            "error": "" if isinstance(exc, asyncio.CancelledError) else str(exc),
+        })
+        raise
     finally:
+        progress_redis.close()
         if redis is not None:
             await redis.delete(lock_key)
 

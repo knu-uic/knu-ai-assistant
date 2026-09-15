@@ -123,6 +123,10 @@ def test_crawl_status_reports_url_registry_counts(monkeypatch):
             assert key == "notice-crawl:active"
             return 1
 
+        async def get(self, key):
+            assert key == "notice-crawl:progress"
+            return b'{"status":"running","processed":7,"saved":5}'
+
     async def get_pool():
         return Redis()
 
@@ -138,6 +142,7 @@ def test_crawl_status_reports_url_registry_counts(monkeypatch):
         "discovered": 3,
         "failed": 2,
         "last_seen_at": None,
+        "run": {"status": "running", "processed": 7, "saved": 5},
     }
 
 

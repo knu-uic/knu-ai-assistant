@@ -627,6 +627,7 @@ class BoardNoticeCrawler:
         scope: CrawlPageScope | None = None,
         select_records: Callable[[list[dict]], list[dict]] | None = None,
         on_detail_failure: Callable[[str, str], None] | None = None,
+        on_progress: Callable[[dict], None] | None = None,
     ) -> Iterator[dict]:
         scope = scope or CrawlPageScope()
         seen_urls: set[str] = set()
@@ -716,9 +717,16 @@ class BoardNoticeCrawler:
                         f"{len(new_records)}건 신규 처리"
                     )
 
-                page_results: list[dict] = []
+                succeeded = 0
                 workers = max(1, self.config.max_workers or MAX_CRAWL_WORKERS)
                 if new_records:
+                    if on_progress:
+                        on_progress({
+                            "phase": "details",
+                            "source_code": self.SOURCE_CODE,
+                            "page": page_num,
+                            "discovered_increment": len(new_records),
+                        })
                     with ThreadPoolExecutor(max_workers=workers) as executor:
                         futures = {
                             executor.submit(
@@ -740,14 +748,35 @@ class BoardNoticeCrawler:
                                 result = None
                                 failure = f"{type(error).__name__}: {error}"
                             if result is not None:
-                                page_results.append(result)
+                                succeeded += 1
+                                if on_progress:
+                                    on_progress({
+                                        "phase": "details",
+                                        "source_code": self.SOURCE_CODE,
+                                        "page": page_num,
+                                        "processed_increment": 1,
+                                        "current_url": url,
+                                    })
+                                # Persist each completed detail before waiting for
+                                # slow siblings (large attachment/OCR work in
+                                # particular). A single timeout must not hide all
+                                # otherwise completed notices from the data view.
+                                yield result
                             elif on_detail_failure:
                                 on_detail_failure(
                                     url,
                                     failure or "detail extraction returned no result",
                                 )
+                                if on_progress:
+                                    on_progress({
+                                        "phase": "details",
+                                        "source_code": self.SOURCE_CODE,
+                                        "page": page_num,
+                                        "processed_increment": 1,
+                                        "failed_increment": 1,
+                                        "current_url": url,
+                                    })
 
-                succeeded = len(page_results)
                 failed = len(new_records) - succeeded
                 self.last_run_stats["succeeded"] += succeeded
                 self.last_run_stats["failed"] += failed
@@ -768,7 +797,8 @@ class BoardNoticeCrawler:
                     break
 
                 self.last_run_stats["accepted_pages"] += 1
-                yield from page_results
+                # Results were yielded as their futures completed so callers can
+                # refine and persist them immediately.
 
         finally:
             browser_context.close()
