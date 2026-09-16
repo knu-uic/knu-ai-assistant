@@ -292,9 +292,10 @@
   font-size: 22px;
 }
 
-.notice-filters + .split {
+.notice-filters + .unified-notice-list {
   height: calc(100vh - 315px);
   min-height: 320px;
+  overflow: auto;
 }
 
 .unified-notice-list .list-head {
@@ -443,6 +444,43 @@
 #notice-list .notice-feed-item .notice-progress-detail {
   grid-column: auto;
   margin-top: 10px;
+}
+
+.notice-dialog {
+  width: min(860px, calc(100vw - 80px));
+  max-width: 860px;
+  height: min(760px, calc(100vh - 80px));
+  max-height: calc(100vh - 80px);
+  padding: 0;
+  overflow: hidden;
+}
+
+.notice-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e1e8e3;
+  background: #f8faf9;
+}
+
+.notice-dialog-head > strong {
+  font-size: 14px;
+}
+
+.notice-dialog-head button {
+  padding: 7px 12px;
+}
+
+.notice-dialog .detail {
+  height: calc(100% - 63px);
+  padding: 22px 24px 28px;
+  overflow: auto;
+}
+
+.notice-dialog .detail h2 {
+  margin-top: 8px;
 }
 
 .filter-grid {
