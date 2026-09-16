@@ -145,6 +145,81 @@ def test_notice_crawl_pause_resumes_without_losing_progress(monkeypatch):
     assert __import__("json").loads(writes[-1])["processed"] == 1
 
 
+def test_retry_keeps_the_persisted_notice_list(monkeypatch):
+    import copy
+
+    request = {
+        "mode": "range",
+        "start_page": 1,
+        "end_page": 1,
+        "source_codes": ["cse_notice"],
+    }
+    previous = {
+        "status": "interrupted",
+        "request": request,
+        "discovered": 18,
+        "processed": 2,
+        "saved": 2,
+        "failed": 0,
+        "sources": {
+            "cse_notice": {
+                "code": "cse_notice",
+                "pages": {
+                    "1": {
+                        "page": 1,
+                        "notices": {
+                            "https://example.test/1": {
+                                "url": "https://example.test/1",
+                                "title": "복원할 공지",
+                                "status": "ready",
+                                "stage": "LLM 정제 대기",
+                            }
+                        },
+                    }
+                },
+            }
+        },
+    }
+    snapshots = []
+
+    class AsyncRedis:
+        async def set(self, *_args, **_kwargs):
+            return True
+
+        async def delete(self, *_keys):
+            pass
+
+    class SyncRedis:
+        def set(self, *_args, **_kwargs):
+            pass
+
+        def exists(self, _key):
+            return False
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(arq_worker.redis_sync, "from_url", lambda _url: SyncRedis())
+    monkeypatch.setattr(arq_worker, "load_crawl_progress", lambda: copy.deepcopy(previous))
+    monkeypatch.setattr(
+        arq_worker,
+        "save_crawl_progress",
+        lambda value: snapshots.append(copy.deepcopy(value)),
+    )
+    monkeypatch.setitem(__import__("sys").modules, "pipelines.ingest", type("Ingest", (), {
+        "run_ingest": staticmethod(lambda _request, on_progress: {"inserted": 0})
+    }))
+
+    asyncio.run(poll_notices({"redis": AsyncRedis(), "job_id": "resumed"}, request, True))
+
+    running = next(value for value in snapshots if value["status"] == "running")
+    assert running["discovered"] == 18
+    assert running["processed"] == 2
+    assert running["sources"]["cse_notice"]["pages"]["1"]["notices"][
+        "https://example.test/1"
+    ]["title"] == "복원할 공지"
+
+
 def test_scheduled_poll_uses_recent_seven_day_scope(monkeypatch):
     received = []
 

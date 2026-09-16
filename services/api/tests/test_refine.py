@@ -6,6 +6,7 @@ from schema import (
     RefinementSchema,
 )
 import pipelines.refine as refine_module
+from model import _local_extra_body
 
 
 class _FakeStructuredModel:
@@ -103,6 +104,30 @@ def test_ollama_refine_uses_native_json_schema(monkeypatch):
     assert refine_module._structured_output_kwargs() == {"method": "json_schema"}
 
 
+def test_refinement_json_schema_bounds_local_model_output():
+    schema = RefinementSchema.model_json_schema()
+    properties = schema["properties"]
+
+    assert properties["summary"]["maxLength"] == 700
+    assert properties["topics"]["minItems"] == 1
+    assert properties["topics"]["maxItems"] == 5
+    assert properties["topics"]["items"]["maxLength"] == 160
+    assert properties["periods"]["maxItems"] == 12
+    assert properties["audiences"]["maxItems"] == 12
+
+    application_ref = properties["application"]["$ref"].rsplit("/", 1)[-1]
+    application = schema["$defs"][application_ref]["properties"]
+    method_string = next(
+        branch for branch in application["method"]["anyOf"]
+        if branch.get("type") == "string"
+    )
+    assert method_string["maxLength"] == 500
+    assert application["required_documents"]["maxItems"] == 20
+    assert application["required_documents"]["items"]["maxLength"] == 300
+    assert application["evidence"]["maxProperties"] == 12
+    assert application["evidence"]["additionalProperties"]["maxLength"] == 800
+
+
 def test_runtime_provider_overrides_legacy_provider(monkeypatch):
     monkeypatch.setattr(refine_module, "VLM_PROVIDER", "google")
     monkeypatch.setattr(
@@ -112,3 +137,10 @@ def test_runtime_provider_overrides_legacy_provider(monkeypatch):
     )
 
     assert refine_module._structured_output_kwargs() == {"method": "json_schema"}
+
+
+def test_local_provider_uses_native_thinking_switch():
+    assert _local_extra_body("ollama") == {"reasoning_effort": "none"}
+    assert _local_extra_body("lmstudio") == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }

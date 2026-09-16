@@ -24,13 +24,17 @@ def test_cleanup_interrupted_crawl_only_removes_transient_job_state(monkeypatch)
             calls.append(("zrem", key, values))
             return len(values)
 
+        def zrange(self, key, start, end):
+            assert (key, start, end) == ("arq:queue", 0, -1)
+            return [b"manual-notice-crawl-queued", b"unrelated-job"]
+
         def close(self):
             calls.append(("close",))
 
     monkeypatch.setattr("redis.from_url", lambda _url: Redis())
     monkeypatch.setattr(crawl_control, "mark_crawl_progress_interrupted", lambda: True)
 
-    assert crawl_control.cleanup_interrupted_crawl() == 19
+    assert crawl_control.cleanup_interrupted_crawl() == 24
     deleted = calls[0][1]
     assert "notice-crawl:active" in deleted
     assert "notice-crawl:progress" not in deleted
@@ -42,4 +46,5 @@ def test_cleanup_interrupted_crawl_only_removes_transient_job_state(monkeypatch)
         "manual-notice-crawl",
         "manual-notice-crawl-live",
         "manual-notice-crawl-pending",
+        "manual-notice-crawl-queued",
     }

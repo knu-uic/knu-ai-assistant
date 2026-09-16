@@ -155,6 +155,7 @@ def test_crawl_status_reports_url_registry_counts(monkeypatch):
 
     assert result == {
         "active": True,
+        "pending": False,
         "paused": False,
         "stop_requested": False,
         "total": 25,

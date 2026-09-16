@@ -22,7 +22,7 @@ from arq.worker import func
 
 from config import PORTAL_SYNC_TIMEOUT_SECONDS, REDIS_URL
 from api.runtime_settings import load_settings
-from db.crawl_progress import save_crawl_progress
+from db.crawl_progress import load_crawl_progress, save_crawl_progress
 from workers.crawl_control import (
     NOTICE_CRAWL_ACTIVE_KEY,
     NOTICE_CRAWL_PAUSE_KEY,
@@ -321,7 +321,11 @@ async def keep_portal_session(ctx: dict, student_id: str) -> dict:
     return {"success": True}
 
 
-async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
+async def poll_notices(
+    ctx: dict,
+    crawl_request: dict | None = None,
+    resume: bool = False,
+) -> dict:
     redis = ctx.get("redis")
     lock_key = NOTICE_CRAWL_ACTIVE_KEY
     if redis is not None:
@@ -335,19 +339,31 @@ async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
         )
     # 크롤+임베딩은 sync·장시간 작업 → 워커 이벤트루프 비블로킹 위해 스레드에서.
     progress_redis = redis_sync.from_url(REDIS_URL or "redis://localhost:6379")
+    previous = (
+        await asyncio.to_thread(load_crawl_progress)
+        if resume
+        else {}
+    )
+    if previous.get("request") != (crawl_request or {}):
+        previous = {}
     progress = {
+        **previous,
         "job_id": ctx.get("job_id", "crawler"),
         "status": "running",
         "phase": "starting",
         "request": crawl_request or {},
         "resumable": False,
-        "discovered": 0,
-        "processed": 0,
-        "saved": 0,
-        "failed": 0,
-        "sources": {},
-        "started_at": datetime.now(timezone.utc).isoformat(),
+        "discovered": int(previous.get("discovered", 0)),
+        "processed": int(previous.get("processed", 0)),
+        "saved": int(previous.get("saved", 0)),
+        "failed": int(previous.get("failed", 0)),
+        "sources": previous.get("sources") or {},
+        "started_at": previous.get("started_at") or datetime.now(timezone.utc).isoformat(),
     }
+    if resume:
+        progress["resumed_at"] = datetime.now(timezone.utc).isoformat()
+    progress.pop("error", None)
+    progress.pop("result", None)
     progress_lock = threading.RLock()
 
     def write_progress(update: dict) -> None:

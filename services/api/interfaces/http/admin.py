@@ -638,7 +638,7 @@ async def codex_models() -> dict:
         raise HTTPException(status_code=502, detail=f"Codex 모델 조회 실패: {exc}") from exc
 
 
-async def _enqueue_manual_crawl(request: CrawlRunRequest) -> dict:
+async def _enqueue_manual_crawl(request: CrawlRunRequest, *, resume: bool = False) -> dict:
     if rebuild_status()["state"] == "running":
         raise HTTPException(
             status_code=409,
@@ -656,11 +656,19 @@ async def _enqueue_manual_crawl(request: CrawlRunRequest) -> dict:
     reserved = await redis.set(NOTICE_CRAWL_PENDING_KEY, job_id, ex=300, nx=True)
     if not reserved:
         raise HTTPException(status_code=409, detail="이미 크롤링 시작을 준비하고 있습니다.")
-    job = await redis.enqueue_job(
-        "poll_notices",
-        request.model_dump(),
-        _job_id=job_id,
-    )
+    if resume:
+        job = await redis.enqueue_job(
+            "poll_notices",
+            request.model_dump(),
+            True,
+            _job_id=job_id,
+        )
+    else:
+        job = await redis.enqueue_job(
+            "poll_notices",
+            request.model_dump(),
+            _job_id=job_id,
+        )
     if job is None:
         await redis.delete(NOTICE_CRAWL_PENDING_KEY)
         raise HTTPException(status_code=409, detail="이미 크롤링이 실행 중입니다.")
@@ -686,7 +694,7 @@ async def retry_crawl() -> dict:
         request = CrawlRunRequest.model_validate(request_data)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail="이전 수집 범위를 복원할 수 없습니다.") from exc
-    result = await _enqueue_manual_crawl(request)
+    result = await _enqueue_manual_crawl(request, resume=True)
     result["resumed_from"] = progress.get("job_id")
     return result
 
@@ -737,6 +745,7 @@ async def crawl_status() -> dict:
         )).fetchone()
     redis = await get_arq_pool()
     active = bool(await redis.exists(NOTICE_CRAWL_ACTIVE_KEY))
+    pending = bool(await redis.exists(NOTICE_CRAWL_PENDING_KEY))
     paused = bool(await redis.exists(NOTICE_CRAWL_PAUSE_KEY))
     stop_requested = bool(await redis.exists(NOTICE_CRAWL_STOP_KEY))
     progress = {}
@@ -750,6 +759,7 @@ async def crawl_status() -> dict:
                 progress = {}
     return {
         "active": active,
+        "pending": pending,
         "paused": paused,
         "stop_requested": stop_requested,
         "total": row[0],

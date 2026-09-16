@@ -13,7 +13,10 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-use crate::standalone::{stop_child as stop_embedded_child, EmbeddedProcesses, StandaloneRuntime};
+use crate::standalone::{
+    stop_child as stop_embedded_child, EmbeddedProcesses, StandaloneRuntime, POSTGRES_PORT,
+    REDIS_PORT,
+};
 
 const MAX_LOGS: usize = 1200;
 const API_ADDRESS: &str = "127.0.0.1:8000";
@@ -23,6 +26,32 @@ struct Processes {
     worker: Option<Child>,
     postgres: Option<Child>,
     redis: Option<Child>,
+}
+
+#[derive(Deserialize, Serialize, Default)]
+struct ManagedProcessIds {
+    api: Option<u32>,
+    worker: Option<u32>,
+    postgres: Option<u32>,
+    redis: Option<u32>,
+}
+
+impl ManagedProcessIds {
+    fn from_processes(processes: &Processes) -> Self {
+        Self {
+            api: processes.api.as_ref().map(Child::id),
+            worker: processes.worker.as_ref().map(Child::id),
+            postgres: processes.postgres.as_ref().map(Child::id),
+            redis: processes.redis.as_ref().map(Child::id),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.api.is_none()
+            && self.worker.is_none()
+            && self.postgres.is_none()
+            && self.redis.is_none()
+    }
 }
 
 pub struct ManagerState {
@@ -186,6 +215,8 @@ impl ManagerState {
         } else {
             (None, None)
         };
+        let logs = Arc::new(Mutex::new(VecDeque::new()));
+        recover_orphaned_processes(&data_root, &logs);
         Self {
             processes: Mutex::new(Processes {
                 api: None,
@@ -193,7 +224,7 @@ impl ManagerState {
                 postgres: None,
                 redis: None,
             }),
-            logs: Arc::new(Mutex::new(VecDeque::new())),
+            logs,
             admin_token: env::var("KNU_ADMIN_TOKEN").unwrap_or_else(|_| {
                 rand::thread_rng()
                     .sample_iter(&Alphanumeric)
@@ -237,6 +268,24 @@ impl ManagerState {
             .map(|value| *value)
             .unwrap_or(false)
     }
+
+    fn persist_process_ids(&self, processes: &Processes) {
+        let path = managed_process_path(&self.data_root);
+        let ids = ManagedProcessIds::from_processes(processes);
+        if ids.is_empty() {
+            let _ = fs::remove_file(path);
+            return;
+        }
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let temporary = path.with_extension("json.tmp");
+        if let Ok(value) = serde_json::to_vec_pretty(&ids) {
+            if fs::write(&temporary, value).is_ok() {
+                let _ = fs::rename(temporary, path);
+            }
+        }
+    }
 }
 
 impl Drop for ManagerState {
@@ -247,7 +296,93 @@ impl Drop for ManagerState {
             stop_child(&mut processes.api);
             stop_embedded_child(&mut processes.redis);
             stop_embedded_child(&mut processes.postgres);
+            self.persist_process_ids(&processes);
         }
+    }
+}
+
+fn managed_process_path(data_root: &Path) -> PathBuf {
+    data_root.join("config/managed-processes.json")
+}
+
+fn recover_orphaned_processes(data_root: &Path, logs: &Arc<Mutex<VecDeque<String>>>) {
+    let path = managed_process_path(data_root);
+    let Ok(raw) = fs::read(&path) else {
+        return;
+    };
+    let Ok(ids) = serde_json::from_slice::<ManagedProcessIds>(&raw) else {
+        push_log(
+            logs,
+            "[manager] ignored an unreadable managed process record".into(),
+        );
+        return;
+    };
+    let mut recovered = 0;
+    for (role, pid) in [
+        ("worker", ids.worker),
+        ("api", ids.api),
+        ("redis", ids.redis),
+        ("postgres", ids.postgres),
+    ] {
+        if let Some(pid) = pid {
+            if terminate_orphaned_process(pid, role, data_root) {
+                recovered += 1;
+            }
+        }
+    }
+    let _ = fs::remove_file(path);
+    if recovered > 0 {
+        push_log(
+            logs,
+            format!("[manager] stopped {recovered} orphaned managed processes"),
+        );
+    }
+}
+
+#[cfg(unix)]
+fn terminate_orphaned_process(pid: u32, role: &str, data_root: &Path) -> bool {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    let command = String::from_utf8_lossy(&output.stdout);
+    if !managed_command_matches(role, &command, data_root) {
+        return false;
+    }
+    unsafe {
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+    for _ in 0..30 {
+        let running = unsafe { libc::kill(pid as i32, 0) == 0 };
+        if !running {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    unsafe {
+        libc::kill(pid as i32, libc::SIGKILL);
+    }
+    true
+}
+
+#[cfg(not(unix))]
+fn terminate_orphaned_process(_pid: u32, _role: &str, _data_root: &Path) -> bool {
+    false
+}
+
+fn managed_command_matches(role: &str, command: &str, data_root: &Path) -> bool {
+    match role {
+        "worker" => command.contains("arq") && command.contains("workers.arq_worker"),
+        "api" => command.contains("uvicorn") && command.contains("api.main:app"),
+        "redis" => command.contains("redis-server") && command.contains(&REDIS_PORT.to_string()),
+        "postgres" => {
+            command.contains("postgres")
+                && command.contains(&data_root.join("postgres").to_string_lossy().to_string())
+                && command.contains(&POSTGRES_PORT.to_string())
+        }
+        _ => false,
     }
 }
 
@@ -471,6 +606,7 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
             let EmbeddedProcesses { postgres, redis } = runtime.start(&state.logs)?;
             p.postgres = postgres;
             p.redis = redis;
+            state.persist_process_ids(&p);
             push_log(
                 &state.logs,
                 format!(
@@ -484,6 +620,7 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
         if state.standalone.is_some() {
             stop_embedded_child(&mut p.redis);
             stop_embedded_child(&mut p.postgres);
+            state.persist_process_ids(&p);
         }
         return Err(error);
     }
@@ -492,10 +629,11 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
             if state.standalone.is_some() {
                 stop_embedded_child(&mut p.redis);
                 stop_embedded_child(&mut p.postgres);
+                state.persist_process_ids(&p);
             }
             return Err("8000번 포트에서 다른 KNU API가 이미 실행 중입니다. 이전 KNU Server Manager를 종료한 뒤 다시 시도하세요.".into());
         }
-        let mut api = spawn_python(
+        let api = spawn_python(
             state,
             &[
                 "-m",
@@ -508,16 +646,22 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
             ],
             "api",
         )?;
-        if let Err(error) = wait_for_api(&mut api) {
-            let _ = api.kill();
-            let _ = api.wait();
+        p.api = Some(api);
+        state.persist_process_ids(&p);
+        let api_ready = p
+            .api
+            .as_mut()
+            .ok_or_else(|| "KNU API process was not recorded".to_string())
+            .and_then(wait_for_api);
+        if let Err(error) = api_ready {
+            stop_child(&mut p.api);
             if state.standalone.is_some() {
                 stop_embedded_child(&mut p.redis);
                 stop_embedded_child(&mut p.postgres);
             }
+            state.persist_process_ids(&p);
             return Err(error);
         }
-        p.api = Some(api);
     }
     if !child_running(&mut p.worker) {
         // Redis is persistent, so a manager crash can leave ARQ's in-progress
@@ -529,7 +673,10 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
             &["-m", "arq", "workers.arq_worker.WorkerSettings"],
             "worker",
         ) {
-            Ok(child) => p.worker = Some(child),
+            Ok(child) => {
+                p.worker = Some(child);
+                state.persist_process_ids(&p);
+            }
             Err(error) => {
                 if let Some(mut api) = p.api.take() {
                     let _ = api.kill();
@@ -538,6 +685,7 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
                     stop_embedded_child(&mut p.redis);
                     stop_embedded_child(&mut p.postgres);
                 }
+                state.persist_process_ids(&p);
                 return Err(error);
             }
         }
@@ -560,6 +708,31 @@ mod tests {
         let address = listener.local_addr().unwrap();
         assert!(TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_ok());
     }
+
+    #[test]
+    fn orphan_recovery_only_matches_manager_owned_commands() {
+        let data_root = PathBuf::from("/tmp/KNU Server Manager data");
+        assert!(managed_command_matches(
+            "postgres",
+            "/Applications/KNU Server Manager.app/Contents/Resources/runtime/postgres/bin/postgres -D /tmp/KNU Server Manager data/postgres -p 55433",
+            &data_root,
+        ));
+        assert!(managed_command_matches(
+            "worker",
+            "python -m arq workers.arq_worker.WorkerSettings",
+            &data_root,
+        ));
+        assert!(!managed_command_matches(
+            "postgres",
+            "/opt/postgres -D /tmp/unrelated -p 55433",
+            &data_root,
+        ));
+        assert!(!managed_command_matches(
+            "api",
+            "python -m uvicorn another.main:app --port 8000",
+            &data_root,
+        ));
+    }
 }
 
 fn stop_child(child: &mut Option<Child>) {
@@ -580,6 +753,7 @@ pub fn stop_server(state: tauri::State<ManagerState>) -> Result<(), String> {
     stop_child(&mut p.api);
     stop_embedded_child(&mut p.redis);
     stop_embedded_child(&mut p.postgres);
+    state.persist_process_ids(&p);
     push_log(&state.logs, "[manager] server stopped".into());
     Ok(())
 }

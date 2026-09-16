@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +20,10 @@ NoticeAudienceKind = Literal[
     "eligibility",
 ]
 
+TopicText = Annotated[str, Field(max_length=160)]
+DocumentNameText = Annotated[str, Field(max_length=300)]
+EvidenceText = Annotated[str, Field(max_length=800)]
+
 
 class NoticePeriodSchema(BaseModel):
     kind: NoticePeriodKind = Field(description="일정의 의미")
@@ -31,7 +35,10 @@ class NoticePeriodSchema(BaseModel):
         default=None,
         description="종료일 yyyy-mm-dd. 원문에 없으면 null",
     )
-    source_text: str = Field(description="이 일정을 추출한 원문 문장")
+    source_text: str = Field(
+        max_length=800,
+        description="이 일정을 추출한 원문 문장. 필요한 원문 구절만 짧게 인용",
+    )
     confidence: float = Field(ge=0, le=1, description="추출 신뢰도")
     inferred_year: bool = Field(
         default=False,
@@ -41,24 +48,29 @@ class NoticePeriodSchema(BaseModel):
 
 class NoticeAudienceSchema(BaseModel):
     kind: NoticeAudienceKind = Field(description="대상 조건 종류")
-    value: str = Field(description="정규화한 대상 조건")
-    source_text: str = Field(description="대상 조건의 원문 근거")
+    value: str = Field(max_length=240, description="정규화한 대상 조건")
+    source_text: str = Field(
+        max_length=800,
+        description="대상 조건의 원문 근거. 필요한 원문 구절만 짧게 인용",
+    )
     confidence: float = Field(ge=0, le=1, description="추출 신뢰도")
 
 
 class NoticeApplicationSchema(BaseModel):
-    method: str | None = Field(default=None, description="신청 방법")
-    application_url: str | None = Field(default=None, description="신청 URL")
-    required_documents: list[str] = Field(
+    method: str | None = Field(default=None, max_length=500, description="신청 방법")
+    application_url: str | None = Field(default=None, max_length=2048, description="신청 URL")
+    required_documents: list[DocumentNameText] = Field(
         default_factory=list,
+        max_length=20,
         description="명시된 제출서류",
     )
-    contact: str | None = Field(default=None, description="문의처")
-    location: str | None = Field(default=None, description="장소")
-    benefit: str | None = Field(default=None, description="금액·혜택")
-    evidence: dict[str, str] = Field(
+    contact: str | None = Field(default=None, max_length=500, description="문의처")
+    location: str | None = Field(default=None, max_length=500, description="장소")
+    benefit: str | None = Field(default=None, max_length=500, description="금액·혜택")
+    evidence: dict[str, EvidenceText] = Field(
         default_factory=dict,
-        description="각 값의 원문 근거",
+        max_length=12,
+        description="각 값의 원문 근거. 값마다 필요한 원문 구절만 짧게 인용",
     )
 
 
@@ -66,6 +78,7 @@ class RefinementSchema(BaseModel):
     """LLM이 공지 원문에서 추출하는 v2 구조화 메타데이터."""
 
     summary: str = Field(
+        max_length=700,
         description=(
             "공지의 핵심 내용을 2~3문장으로 요약한다. "
             "대상, 기간, 장소, 신청/참여 방법, 혜택이 명시되어 있으면 포함하고 "
@@ -73,19 +86,24 @@ class RefinementSchema(BaseModel):
         )
     )
     category: NoticeCategory = Field(description="글의 대표 대분류 카테고리")
-    topics: list[str] = Field(
+    topics: list[TopicText] = Field(
+        min_length=1,
+        max_length=5,
         description="본문의 핵심 주제·제도·활동을 나타내는 복수 topic 1~5개"
     )
     series_key: str | None = Field(
         default=None,
+        max_length=120,
         description="매년 반복되는 같은 계열 공지를 묶는 영문 kebab-case 식별자",
     )
     periods: list[NoticePeriodSchema] = Field(
         default_factory=list,
+        max_length=12,
         description="신청·제출·발표·행사 등 의미별 일정",
     )
     audiences: list[NoticeAudienceSchema] = Field(
         default_factory=list,
+        max_length=12,
         description="학과·학년·재적상태·기타 자격조건",
     )
     application: NoticeApplicationSchema = Field(

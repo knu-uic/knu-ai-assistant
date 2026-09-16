@@ -33,6 +33,15 @@ def cleanup_interrupted_crawl() -> int:
             value = client.get(key)
             if value:
                 job_ids.add(value.decode() if isinstance(value, bytes) else str(value))
+        # A hard kill can happen after ARQ persists the unique queued job but
+        # before poll_notices writes active/pending. Recover those UUID-suffixed
+        # manager jobs as well so a new worker cannot silently restart one.
+        for value in client.zrange("arq:queue", 0, -1):
+            job_id = value.decode() if isinstance(value, bytes) else str(value)
+            if job_id == MANUAL_NOTICE_JOB_PREFIX or job_id.startswith(
+                f"{MANUAL_NOTICE_JOB_PREFIX}-"
+            ):
+                job_ids.add(job_id)
 
         raw_progress = client.get(NOTICE_CRAWL_PROGRESS_KEY)
         if raw_progress:
