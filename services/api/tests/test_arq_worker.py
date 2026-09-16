@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from workers.arq_worker import (
     NoticeCrawlStopped,
     WorkerSettings,
@@ -39,6 +41,30 @@ def test_crawl_progress_tracks_source_page_notice_and_attachment():
     assert attachment["status"] == "complete"
     assert attachment["size"] == 2048
     assert progress["status"] == "processing"
+    assert progress["discovered"] == 1
+    assert progress["processed"] == 1
+    assert progress["saved"] == 1
+
+    # Re-listing the same page during resume must not inflate global totals.
+    _merge_crawl_progress(progress, {
+        "event": "notice_status",
+        "source_code": "cse",
+        "page": None,
+        "url": "https://example.test/1",
+        "title": "장학 안내",
+        "status": "refining",
+        "stage": "LLM 정제·임베딩 중",
+    })
+    _merge_crawl_progress(progress, updates[1])
+    _merge_crawl_progress(progress, {
+        "event": "page_status",
+        "source_code": "cse",
+        "page": 1,
+        "status": "processing",
+        "discovered_increment": 1,
+    })
+    assert progress["discovered"] == 1
+    assert not progress["sources"]["cse"]["pages"]["None"]["notices"]
 
 
 def test_worker_has_notice_polling_cron():
@@ -62,6 +88,40 @@ def test_manual_notice_poll_is_registered():
     registered = next(item for item in WorkerSettings.functions if getattr(item, "name", "") == "poll_notices")
     assert registered.coroutine is poll_notices
     assert registered.timeout_s == 21600
+
+
+def test_interruptible_ingest_terminates_child_as_soon_as_stop_is_requested(monkeypatch):
+    terminated = []
+
+    class Process:
+        pid = 4321
+        returncode = None
+
+        def poll(self):
+            return None
+
+    class Redis:
+        def exists(self, key):
+            return key == "notice-crawl:stop"
+
+        def lpop(self, _key):
+            return None
+
+        def delete(self, _key):
+            pass
+
+    process = Process()
+    monkeypatch.setattr(arq_worker.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(
+        arq_worker,
+        "_terminate_crawl_process",
+        lambda value: terminated.append(value),
+    )
+
+    with pytest.raises(NoticeCrawlStopped):
+        arq_worker._run_ingest_interruptible({}, Redis(), lambda _value: None, lambda _value: None)
+
+    assert terminated == [process]
 
 
 def test_notice_crawl_stop_is_a_clean_result(monkeypatch):
@@ -88,9 +148,10 @@ def test_notice_crawl_stop_is_a_clean_result(monkeypatch):
 
     monkeypatch.setattr(arq_worker.redis_sync, "from_url", lambda _url: SyncRedis())
     monkeypatch.setattr(arq_worker, "save_crawl_progress", lambda _value: None)
-    monkeypatch.setitem(__import__("sys").modules, "pipelines.ingest", type("Ingest", (), {
-        "run_ingest": staticmethod(lambda _request, on_progress: on_progress({"phase": "source"}))
-    }))
+    def run_ingest(*_args):
+        raise NoticeCrawlStopped
+
+    monkeypatch.setattr(arq_worker, "_run_ingest_interruptible", run_ingest)
 
     result = asyncio.run(poll_notices({"redis": AsyncRedis(), "job_id": "manual"}, {}))
 
@@ -125,16 +186,15 @@ def test_notice_crawl_pause_resumes_without_losing_progress(monkeypatch):
         def close(self):
             pass
 
-    def run_ingest(_request, on_progress):
-        on_progress({"phase": "details", "processed_increment": 1})
+    def run_ingest(_request, _redis, publish_progress, write_progress):
+        write_progress({"status": "paused", "phase": "paused"})
+        write_progress({"status": "running", "phase": "details"})
+        publish_progress({"phase": "details", "processed_increment": 1})
         return {"inserted": 1}
 
     monkeypatch.setattr(arq_worker.redis_sync, "from_url", lambda _url: SyncRedis())
     monkeypatch.setattr(arq_worker, "save_crawl_progress", lambda _value: None)
-    monkeypatch.setattr(arq_worker.time, "sleep", lambda _seconds: None)
-    monkeypatch.setitem(__import__("sys").modules, "pipelines.ingest", type("Ingest", (), {
-        "run_ingest": staticmethod(run_ingest)
-    }))
+    monkeypatch.setattr(arq_worker, "_run_ingest_interruptible", run_ingest)
 
     result = asyncio.run(poll_notices({"redis": AsyncRedis(), "job_id": "manual"}, {}))
 
@@ -206,9 +266,11 @@ def test_retry_keeps_the_persisted_notice_list(monkeypatch):
         "save_crawl_progress",
         lambda value: snapshots.append(copy.deepcopy(value)),
     )
-    monkeypatch.setitem(__import__("sys").modules, "pipelines.ingest", type("Ingest", (), {
-        "run_ingest": staticmethod(lambda _request, on_progress: {"inserted": 0})
-    }))
+    monkeypatch.setattr(
+        arq_worker,
+        "_run_ingest_interruptible",
+        lambda *_args: {"inserted": 0},
+    )
 
     asyncio.run(poll_notices({"redis": AsyncRedis(), "job_id": "resumed"}, request, True))
 

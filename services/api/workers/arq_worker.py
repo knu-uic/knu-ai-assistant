@@ -11,8 +11,13 @@
 """
 import asyncio
 import json
+import os
+import signal
+import subprocess
+import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 
 import redis as redis_sync
@@ -37,6 +42,128 @@ STEP_TTL_SECONDS = 600
 
 class NoticeCrawlStopped(Exception):
     """Raised inside the ingest thread when a user requests a clean stop."""
+
+
+def _set_crawl_process_paused(process: subprocess.Popen, paused: bool) -> None:
+    """Suspend/resume the isolated crawl process without losing its checkpoint."""
+    if process.poll() is not None or os.name == "nt":
+        return
+    os.killpg(process.pid, signal.SIGSTOP if paused else signal.SIGCONT)
+
+
+def _terminate_crawl_process(process: subprocess.Popen) -> None:
+    """Terminate the crawl and every browser/converter process in its session."""
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            process.terminate()
+        else:
+            # A paused process cannot handle SIGTERM until it is resumed.
+            os.killpg(process.pid, signal.SIGCONT)
+            os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=2)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        if process.poll() is None:
+            if os.name == "nt":
+                process.kill()
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=2)
+
+
+def _run_ingest_interruptible(
+    crawl_request: dict | None,
+    progress_redis,
+    publish_progress,
+    write_progress,
+) -> dict:
+    """Run ingestion out-of-process so a blocked local-model call is cancellable."""
+    event_key = f"notice-crawl:events:{uuid.uuid4().hex}"
+    command = [
+        sys.executable,
+        "-m",
+        "workers.crawl_subprocess",
+        event_key,
+        json.dumps(crawl_request or {}, ensure_ascii=False),
+    ]
+    creationflags = (
+        subprocess.CREATE_NEW_PROCESS_GROUP
+        if os.name == "nt"
+        else 0
+    )
+    process = subprocess.Popen(
+        command,
+        cwd=os.getcwd(),
+        start_new_session=os.name != "nt",
+        creationflags=creationflags,
+    )
+    result = None
+    child_error = None
+    paused = False
+    resume_phase = "details"
+
+    try:
+        while process.poll() is None:
+            if progress_redis.exists(NOTICE_CRAWL_STOP_KEY):
+                raise NoticeCrawlStopped
+
+            wants_pause = bool(progress_redis.exists(NOTICE_CRAWL_PAUSE_KEY))
+            if wants_pause and not paused:
+                _set_crawl_process_paused(process, True)
+                paused = True
+                write_progress({"status": "paused", "phase": "paused"})
+            elif paused and not wants_pause:
+                _set_crawl_process_paused(process, False)
+                paused = False
+                write_progress({"status": "running", "phase": resume_phase})
+
+            raw_event = progress_redis.lpop(event_key)
+            if raw_event:
+                event = json.loads(
+                    raw_event.decode() if isinstance(raw_event, bytes) else raw_event
+                )
+                kind = event.get("kind")
+                value = event.get("value")
+                if kind == "progress" and isinstance(value, dict):
+                    if value.get("phase"):
+                        resume_phase = value["phase"]
+                    publish_progress(value)
+                elif kind == "result":
+                    result = value
+                elif kind == "error":
+                    child_error = value
+            else:
+                time.sleep(0.1)
+
+        # Drain the final result/error written immediately before process exit.
+        while True:
+            raw_event = progress_redis.lpop(event_key)
+            if not raw_event:
+                break
+            event = json.loads(
+                raw_event.decode() if isinstance(raw_event, bytes) else raw_event
+            )
+            if event.get("kind") == "progress" and isinstance(event.get("value"), dict):
+                publish_progress(event["value"])
+            elif event.get("kind") == "result":
+                result = event.get("value")
+            elif event.get("kind") == "error":
+                child_error = event.get("value")
+
+        if child_error:
+            message = child_error.get("message") if isinstance(child_error, dict) else child_error
+            raise RuntimeError(f"crawl subprocess failed: {message}")
+        if process.returncode != 0:
+            raise RuntimeError(f"crawl subprocess exited with code {process.returncode}")
+        if result is None:
+            raise RuntimeError("crawl subprocess returned no result")
+        return result
+    finally:
+        if paused:
+            _set_crawl_process_paused(process, False)
+        _terminate_crawl_process(process)
+        progress_redis.delete(event_key)
 
 
 def _merge_crawl_progress(progress: dict, update: dict) -> None:
@@ -67,7 +194,15 @@ def _merge_crawl_progress(progress: dict, update: dict) -> None:
         page["status"] = "listed"
         page["total"] = len(update.get("notices") or [])
         for notice in update.get("notices") or []:
-            page["notices"].setdefault(notice["url"], {
+            url = notice["url"]
+            restored = None
+            # Older checkpoints may not have a page number. Once the page list
+            # is known, move that URL into its real page instead of counting it
+            # under both the restored "None" page and the listed page.
+            for other_key, other_page in source["pages"].items():
+                if other_key != str(page_number):
+                    restored = other_page.get("notices", {}).pop(url, None) or restored
+            page["notices"].setdefault(url, restored or {
                 "url": notice["url"],
                 "title": notice.get("title") or "제목 확인 중",
                 "status": "pending",
@@ -130,11 +265,12 @@ def _merge_crawl_progress(progress: dict, update: dict) -> None:
 
     if source is not None:
         page_values = list(source.get("pages", {}).values())
-        notice_values = [
-            notice
+        notices_by_url = {
+            str(notice.get("url") or f"{page.get('page')}:{index}"): notice
             for page in page_values
-            for notice in page.get("notices", {}).values()
-        ]
+            for index, notice in enumerate(page.get("notices", {}).values())
+        }
+        notice_values = list(notices_by_url.values())
         source["discovered"] = len(notice_values)
         source["processed"] = sum(
             notice.get("status") in {"complete", "failed", "skipped", "excluded"}
@@ -160,6 +296,16 @@ def _merge_crawl_progress(progress: dict, update: dict) -> None:
             progress[target] = int(progress.get(target, 0)) + int(value)
         elif key not in {"source_name"}:
             progress[key] = value
+
+    # Hierarchical source/page/notice state is authoritative. A resumed crawl
+    # emits the same page counters again, so retaining flat increments would
+    # turn one 18-item page into 25, 35, ... after repeated resumes.
+    if source_code and sources:
+        source_values = list(sources.values())
+        progress["discovered"] = sum(int(item.get("discovered", 0)) for item in source_values)
+        progress["processed"] = sum(int(item.get("processed", 0)) for item in source_values)
+        progress["saved"] = sum(int(item.get("saved", 0)) for item in source_values)
+        progress["failed"] = sum(int(item.get("failed", 0)) for item in source_values)
 
 
 def step_key(job_id: str) -> str:
@@ -378,28 +524,16 @@ async def poll_notices(
 
     def publish_progress(update: dict) -> None:
         write_progress(update)
-        if progress_redis.exists(NOTICE_CRAWL_STOP_KEY):
-            raise NoticeCrawlStopped
-        if not progress_redis.exists(NOTICE_CRAWL_PAUSE_KEY):
-            return
-
-        resume_phase = progress.get("phase", "details")
-        write_progress({"status": "paused", "phase": "paused"})
-        while progress_redis.exists(NOTICE_CRAWL_PAUSE_KEY):
-            if progress_redis.exists(NOTICE_CRAWL_STOP_KEY):
-                raise NoticeCrawlStopped
-            time.sleep(0.25)
-        write_progress({"status": "running", "phase": resume_phase})
 
     write_progress({})
 
     try:
-        # Import after the initial progress record so the UI never has to infer
-        # activity from the lock alone during a cold module load.
-        from pipelines.ingest import run_ingest
-
         result = await asyncio.to_thread(
-            run_ingest, crawl_request, on_progress=publish_progress
+            _run_ingest_interruptible,
+            crawl_request,
+            progress_redis,
+            publish_progress,
+            write_progress,
         )
         write_progress({
             "status": "complete",
