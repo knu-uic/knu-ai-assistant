@@ -116,3 +116,81 @@ def test_review_required_item_keeps_notice_and_original_assets_but_marks_review(
     assert result["review"] == 1
     assert result["inserted"] == 1
     assert inserted_assets == item["assets"]
+
+
+def test_paged_notice_is_raw_saved_before_llm_refinement(monkeypatch):
+    import embedding.rebuild as rebuild
+    import pipelines.ingest as ingest
+
+    item = {
+        "url": "https://example.test/immediate",
+        "title": "즉시 저장 공지",
+        "content": "본문",
+        "body_content": "본문",
+        "date": "2026-09-16",
+        "assets": [{"kind": "attachment", "source_url": "https://example.test/a.pdf"}],
+        "_crawl_page": 1,
+    }
+
+    class PagedCrawler:
+        SOURCE_CODE = "paged"
+        SOURCE_NAME = "페이지 공지"
+        KIND = "notice"
+        DEPARTMENT = "공통"
+        BASE_URL = "https://example.test"
+
+        def detect_total_pages(self):
+            return 1
+
+        def collect_pinned_urls(self):
+            return set()
+
+        def crawling(self, **kwargs):
+            kwargs["on_detail_ready"](item)
+            assert item["_raw_saved"] is True
+            yield item
+
+    class Doc:
+        title = item["title"]
+        content = item["content"]
+        url = item["url"]
+        category = "일반(기타)"
+        target = None
+        start_date = None
+        end_date = None
+        keywords = []
+        summary = "요약"
+        topics = []
+        series_key = None
+        periods = []
+        audiences = []
+        application = None
+        extraction_confidence = 0.9
+
+    inserts = []
+    asset_writes = []
+    progress = []
+    monkeypatch.setattr(ingest, "CRAWLERS", [PagedCrawler()])
+    monkeypatch.setattr(ingest, "init_db", lambda: None)
+    monkeypatch.setattr(ingest, "sync_pinned_urls", lambda _urls: None)
+    monkeypatch.setattr(ingest, "archive_documents", lambda **_kwargs: 0)
+    monkeypatch.setattr(ingest, "upsert_source", lambda **_kwargs: 5)
+    monkeypatch.setattr(ingest, "select_crawl_records", lambda _sid, records, **_kwargs: records)
+    monkeypatch.setattr(ingest, "insert_document", lambda **kwargs: inserts.append(kwargs) or 41)
+    monkeypatch.setattr(ingest, "insert_assets", lambda notice_id, assets: asset_writes.append((notice_id, assets)))
+    monkeypatch.setattr(ingest, "refine", lambda _values: [(Doc(), item["assets"], None)])
+    monkeypatch.setattr(ingest, "embed_document_chunks", lambda **_kwargs: [])
+    monkeypatch.setattr(ingest, "insert_chunks", lambda *_args: None)
+    monkeypatch.setattr(ingest, "mark_crawl_url_completed", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ingest, "clear_extraction_review", lambda _url: None)
+    monkeypatch.setattr(rebuild, "sync_stale_datasets", lambda: None)
+
+    result = ingest.run_ingest(on_progress=progress.append)
+
+    assert [call.get("extraction_version") for call in inserts] == ["raw-v1", None]
+    assert asset_writes == [(41, item["assets"])]
+    assert [event["status"] for event in progress if event.get("url") == item["url"]] == [
+        "stored", "refining", "complete",
+    ]
+    assert sum(event.get("saved_increment", 0) for event in progress) == 1
+    assert result["inserted"] == 1

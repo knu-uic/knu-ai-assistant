@@ -121,7 +121,8 @@ def _merge_crawl_progress(progress: dict, update: dict) -> None:
                 item.get("status") in terminal for item in notice_values
             )
             page["saved"] = sum(
-                item.get("status") == "complete" for item in notice_values
+                item.get("status") in {"stored", "refining", "complete"}
+                for item in notice_values
             )
             page["failed"] = sum(
                 item.get("status") == "failed" for item in notice_values
@@ -140,7 +141,8 @@ def _merge_crawl_progress(progress: dict, update: dict) -> None:
             for notice in notice_values
         )
         source["saved"] = sum(
-            notice.get("status") == "complete" for notice in notice_values
+            notice.get("status") in {"stored", "refining", "complete"}
+            for notice in notice_values
         )
         source["failed"] = sum(
             notice.get("status") == "failed" for notice in notice_values

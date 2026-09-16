@@ -133,6 +133,43 @@ def run_ingest(
         uses_url_registry = hasattr(mod, "detect_total_pages")
         crawl_kwargs = {}
         if uses_url_registry:
+            def persist_raw_notice(item: dict) -> None:
+                """Durably store a completed detail before slow LLM post-processing."""
+                raw_extra = dict(item.get("extra") or {})
+                raw_extra["ingest_status"] = "refining"
+                document_id = insert_document(
+                    source_id=source_id,
+                    url=item["url"],
+                    title=item.get("title") or "제목을 찾을 수 없음",
+                    content=item.get("content") or item.get("body_content") or "",
+                    body_content=item.get("body_content"),
+                    category="일반(기타)",
+                    summary=None,
+                    topics=[],
+                    extraction_confidence=0.0,
+                    extraction_version="raw-v1",
+                    extra=raw_extra,
+                    posted_at=_parse_posted_date(item.get("date")),
+                    is_pinned=bool(item.get("is_pinned")),
+                )
+                insert_assets(document_id, item.get("assets") or [])
+                item["_document_id"] = document_id
+                item["_raw_saved"] = True
+                if on_progress:
+                    on_progress({
+                        "event": "notice_status",
+                        "source_code": mod.SOURCE_CODE,
+                        "page": item.get("_crawl_page"),
+                        "url": item["url"],
+                        "title": item.get("title"),
+                        "status": "stored",
+                        "stage": "원본 저장 완료 · 정제 대기",
+                        "document_id": document_id,
+                        "saved_increment": 1,
+                        "current_url": item["url"],
+                        "current_title": item.get("title"),
+                    })
+
             page_scope = CrawlPageScope(
                 mode=options.mode,
                 start_page=options.start_page,
@@ -148,6 +185,7 @@ def run_ingest(
                     refresh_outdated_extraction=options.refresh_outdated_extraction,
                 ),
                 "on_detail_failure": mark_crawl_url_failed,
+                "on_detail_ready": persist_raw_notice,
                 "on_progress": on_progress,
             }
 
@@ -166,8 +204,9 @@ def run_ingest(
                     "page": item.get("_crawl_page"),
                     "url": item["url"],
                     "title": item.get("title"),
-                    "status": "saving",
-                    "stage": "정제·저장 중",
+                    "status": "refining",
+                    "stage": "LLM 정제·임베딩 중",
+                    "document_id": item.get("_document_id"),
                 })
 
             replace_by_source = bool(item.get("replace_by_source"))
@@ -249,7 +288,8 @@ def run_ingest(
                 posted_at=posted_at,
                 is_pinned=bool(item.get("is_pinned")),
             )
-            insert_assets(document_id, assets)
+            if not item.get("_raw_saved"):
+                insert_assets(document_id, assets)
             if not item.get("review_required"):
                 clear_extraction_review(doc.url)
 
@@ -288,7 +328,7 @@ def run_ingest(
                 mark_crawl_url_completed(item["url"], posted_at=posted_at)
             inserted_count += 1
             if on_progress:
-                on_progress({
+                progress_update = {
                     "event": "notice_status",
                     "phase": "saved",
                     "source_code": mod.SOURCE_CODE,
@@ -298,10 +338,12 @@ def run_ingest(
                     "status": "complete",
                     "stage": "저장 완료",
                     "document_id": document_id,
-                    "saved_increment": 1,
                     "current_url": item["url"],
                     "current_title": doc.title,
-                })
+                }
+                if not item.get("_raw_saved"):
+                    progress_update["saved_increment"] = 1
+                on_progress(progress_update)
 
         print(
             f"2. 크롤링/적재 완료: 수집 {crawled_count}개, "

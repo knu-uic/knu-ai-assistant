@@ -21,7 +21,7 @@ from config import (
 )
 from db import get_document_content, search_chunks
 from embedding.embed import embed_query
-from model import get_llm
+from model import get_llm, local_inference_slot
 from retrieval.context_packing import _format_broad_context, pack_contexts
 from retrieval.prompts import (
     ANSWERER_SYSTEM,
@@ -80,9 +80,10 @@ class ChatState(TypedDict, total=False):
 
 def router_node(state: ChatState) -> dict:
     model = get_llm().with_structured_output(RouteDecision)
-    decision = model.invoke(
-        [SystemMessage(content=ROUTER_SYSTEM), HumanMessage(content=state["question"])]
-    )
+    with local_inference_slot():
+        decision = model.invoke(
+            [SystemMessage(content=ROUTER_SYSTEM), HumanMessage(content=state["question"])]
+        )
     return {
         "query_mode": decision.query_mode,  # type: ignore[union-attr]
         "categories": list(decision.categories),  # type: ignore[union-attr]
@@ -369,18 +370,19 @@ def answerer_node(state: ChatState) -> dict:
         state.get("evidence_chunks") or [],
     )
     today = date.today().isoformat()
-    resp = get_llm().invoke(
-        [
-            SystemMessage(content=ANSWERER_SYSTEM),
-            HumanMessage(
-                content=(
-                    f"# 오늘 날짜\n{today}\n\n"
-                    f"# 사용자 질문\n{state['question']}\n\n"
-                    f"# 컨텍스트\n{context_text}"
-                )
-            ),
-        ]
-    )
+    with local_inference_slot():
+        resp = get_llm().invoke(
+            [
+                SystemMessage(content=ANSWERER_SYSTEM),
+                HumanMessage(
+                    content=(
+                        f"# 오늘 날짜\n{today}\n\n"
+                        f"# 사용자 질문\n{state['question']}\n\n"
+                        f"# 컨텍스트\n{context_text}"
+                    )
+                ),
+            ]
+        )
     answer = resp.content if hasattr(resp, "content") else str(resp)
     return {"answer": answer}
 
@@ -392,18 +394,19 @@ def broad_answerer_node(state: ChatState) -> dict:
 
     context_text = _format_broad_context(contexts, budget=6000)
     today = date.today().isoformat()
-    resp = get_llm().invoke(
-        [
-            SystemMessage(content=BROAD_ANSWERER_SYSTEM),
-            HumanMessage(
-                content=(
-                    f"# 오늘 날짜\n{today}\n\n"
-                    f"# 사용자 질문\n{state['question']}\n\n"
-                    f"# 컨텍스트\n{context_text}"
-                )
-            ),
-        ]
-    )
+    with local_inference_slot():
+        resp = get_llm().invoke(
+            [
+                SystemMessage(content=BROAD_ANSWERER_SYSTEM),
+                HumanMessage(
+                    content=(
+                        f"# 오늘 날짜\n{today}\n\n"
+                        f"# 사용자 질문\n{state['question']}\n\n"
+                        f"# 컨텍스트\n{context_text}"
+                    )
+                ),
+            ]
+        )
     answer = resp.content if hasattr(resp, "content") else str(resp)
     return {"answer": answer}
 
@@ -416,18 +419,19 @@ def verifier_node(state: ChatState) -> dict:
     )
     today = date.today().isoformat()
 
-    result = get_llm().with_structured_output(VerificationResult).invoke(
-        [
-            SystemMessage(content=VERIFIER_SYSTEM),
-            HumanMessage(
-                content=(
-                    f"# 오늘 날짜\n{today}\n\n"
-                    f"# 답변\n{state.get('answer', '')}\n\n"
-                    f"# 컨텍스트\n{context_text}"
-                )
-            ),
-        ]
-    )
+    with local_inference_slot():
+        result = get_llm().with_structured_output(VerificationResult).invoke(
+            [
+                SystemMessage(content=VERIFIER_SYSTEM),
+                HumanMessage(
+                    content=(
+                        f"# 오늘 날짜\n{today}\n\n"
+                        f"# 답변\n{state.get('answer', '')}\n\n"
+                        f"# 컨텍스트\n{context_text}"
+                    )
+                ),
+            ]
+        )
     return {
         "grounded": result.grounded,  # type: ignore[union-attr]
         "fidelity": result.fidelity,  # type: ignore[union-attr]
@@ -437,12 +441,13 @@ def verifier_node(state: ChatState) -> dict:
 
 def smalltalk_node(state: ChatState) -> dict:
     # 검색 없이 바로 답하는 가벼운 응답(인사·잡담·감사·자기소개).
-    resp = get_llm().invoke(
-        [
-            SystemMessage(content=SMALLTALK_SYSTEM),
-            HumanMessage(content=state["question"]),
-        ]
-    )
+    with local_inference_slot():
+        resp = get_llm().invoke(
+            [
+                SystemMessage(content=SMALLTALK_SYSTEM),
+                HumanMessage(content=state["question"]),
+            ]
+        )
     return {"answer": resp.content, "contexts": [], "evidence_chunks": []}
 
 

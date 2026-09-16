@@ -653,6 +653,7 @@ class BoardNoticeCrawler:
         scope: CrawlPageScope | None = None,
         select_records: Callable[[list[dict]], list[dict]] | None = None,
         on_detail_failure: Callable[[str, str], None] | None = None,
+        on_detail_ready: Callable[[dict], None] | None = None,
         on_progress: Callable[[dict], None] | None = None,
     ) -> Iterator[dict]:
         scope = scope or CrawlPageScope()
@@ -806,6 +807,7 @@ class BoardNoticeCrawler:
                                 is_pinned=record.get("is_pinned", False),
                                 page_num=page_num,
                                 list_title=record.get("title"),
+                                on_detail_ready=on_detail_ready,
                                 on_progress=on_progress,
                             ): record["url"]
                             for idx, record in enumerate(new_records, 1)
@@ -900,11 +902,12 @@ class BoardNoticeCrawler:
         is_pinned: bool = False,
         page_num: int | None = None,
         list_title: str | None = None,
+        on_detail_ready: Callable[[dict], None] | None = None,
         on_progress: Callable[[dict], None] | None = None,
     ) -> dict | None:
         """Collect one post over retrying HTTP; Chromium is lazy and shared."""
         try:
-            return self._crawl_detail_internal(
+            result = self._crawl_detail_internal(
                 browser_context,
                 post_url,
                 idx,
@@ -914,6 +917,9 @@ class BoardNoticeCrawler:
                 list_title=list_title,
                 on_progress=on_progress,
             )
+            if on_detail_ready:
+                on_detail_ready(result)
+            return result
         except Exception as error:
             if on_progress:
                 on_progress({

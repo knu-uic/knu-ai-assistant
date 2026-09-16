@@ -14,7 +14,7 @@ import datetime
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from model import get_llm
+from model import get_llm, local_inference_slot
 from parsers.pdf_parser import parse_pdf
 from langchain_core.messages import HumanMessage
 
@@ -77,7 +77,8 @@ def _page_to_year(page_num: int, page_md: str) -> dict | None:
 
     llm = get_llm()
     msg = HumanMessage(content=prompt)
-    response = llm.invoke([msg])
+    with local_inference_slot():
+        response = llm.invoke([msg])
     content = response.content.strip()
     
     if _is_no_table(content):

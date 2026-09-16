@@ -1,6 +1,7 @@
 import re
 from typing import Any
-from model import get_embeddings
+from api.runtime_settings import load_settings
+from model import get_embeddings, local_inference_slot
 
 
 # context window 기반 동적 chunk 크기.
@@ -132,7 +133,9 @@ def embed_chunks(content: str) -> list[tuple[int, str, list[float]]]:
     if not chunks:
         return []
     embedder = get_embeddings()
-    vectors = embedder.embed_documents(chunks)
+    provider = str(load_settings().get("embedding", {}).get("provider") or "")
+    with local_inference_slot(provider):
+        vectors = embedder.embed_documents(chunks)
 
     return [
         (i, c, v)
@@ -228,7 +231,9 @@ def embed_document_chunks(
         else:
             enriched_chunks = chunks
 
-        vectors = embedder.embed_documents(enriched_chunks)
+        provider = str(load_settings().get("embedding", {}).get("provider") or "")
+        with local_inference_slot(provider):
+            vectors = embedder.embed_documents(enriched_chunks)
 
         for chunk_text_value, vector in zip(enriched_chunks, vectors):
             results.append(
@@ -248,6 +253,8 @@ def embed_document_chunks(
 
 def embed_query(query: str) -> list[float]:
     """검색 쿼리 임베딩."""
-    return get_embeddings().embed_query(
-        (query or "").strip()
-    )
+    settings = load_settings().get("embedding", {})
+    with local_inference_slot(str(settings.get("provider") or "")):
+        return get_embeddings(settings).embed_query(
+            (query or "").strip()
+        )

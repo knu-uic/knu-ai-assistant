@@ -463,6 +463,24 @@ def test_completed_detail_yields_while_slow_sibling_is_still_running(monkeypatch
     assert list(results) == [{"url": "https://example.test/notice/slow"}]
 
 
+def test_completed_detail_is_persisted_before_it_is_returned(monkeypatch):
+    crawler = BoardNoticeCrawler(_config())
+    item = {"url": "https://example.test/notice/ready", "title": "저장할 공지"}
+    calls = []
+    monkeypatch.setattr(crawler, "_crawl_detail_internal", lambda *_args, **_kwargs: item)
+
+    result = crawler._crawl_post_parallel(
+        _BrowserContext(),
+        item["url"],
+        1,
+        1,
+        on_detail_ready=lambda value: calls.append(("stored", value)),
+    )
+
+    assert result is item
+    assert calls == [("stored", item)]
+
+
 def test_known_and_new_successes_can_meet_page_threshold(monkeypatch):
     crawler = BoardNoticeCrawler(_config(min_success_ratio=0.5, min_success_count=3))
     crawler._browser_context_factory = _BrowserContext

@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Any, List, Tuple, cast
 import httpx
 from langchain_core.messages import SystemMessage, HumanMessage
-from model import get_llm
+from model import get_llm, local_inference_slot
 from schema import MetadataSchema, RefinementSchema
 from api.runtime_settings import load_settings
 from dotenv import load_dotenv
@@ -24,7 +24,7 @@ _RETRYABLE_EXC = (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectErr
 _MAX_ATTEMPTS = 4
 _BACKOFF_BASE = 2.0  # 2s, 4s, 8s
 # Gemini Tier 1 RPM 1000 — 동시성 10이면 RPM 600 정도라 안전 마진.
-_BATCH_CONCURRENCY = 10
+_BATCH_CONCURRENCY = 1
 
 
 def _structured_output_kwargs() -> dict[str, str]:
@@ -391,11 +391,12 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
             for _, item in needs_llm
         ]
         # return_exceptions=True: 한 항목 실패해도 batch 전체가 죽지 않고 자리에 예외 객체가 들어옴.
-        batch_out = model.batch(
-            cast(Any, prompts),
-            config={"max_concurrency": _BATCH_CONCURRENCY},
-            return_exceptions=True,
-        )
+        with local_inference_slot():
+            batch_out = model.batch(
+                cast(Any, prompts),
+                config={"max_concurrency": _BATCH_CONCURRENCY},
+                return_exceptions=True,
+            )
         for (idx, llm_item), out in zip(needs_llm, batch_out):
             original_item = crawled_data[idx]
             if isinstance(out, BaseException):
@@ -431,7 +432,8 @@ def _invoke_with_retry(model, system_msg: SystemMessage, item: dict) -> Refineme
     user_msg = HumanMessage(content=_user_prompt(item))
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            return cast(RefinementSchema, model.invoke([system_msg, user_msg]))
+            with local_inference_slot():
+                return cast(RefinementSchema, model.invoke([system_msg, user_msg]))
         except _RETRYABLE_EXC as e:
             if attempt == _MAX_ATTEMPTS:
                 print(f"  ⚠️ refine 실패 [{item.get('url')}] — {type(e).__name__}: {e}")

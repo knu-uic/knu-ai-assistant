@@ -240,7 +240,8 @@
 .status-dot.processing,
 .status-dot.listed { background: #3988d1; box-shadow: 0 0 0 3px #3988d119; }
 .status-dot.ready { background: #d49a36; }
-.status-dot.saving { background: #8467c7; box-shadow: 0 0 0 3px #8467c719; }
+.status-dot.stored { background: #35a36c; }
+.status-dot.refining { background: #8467c7; box-shadow: 0 0 0 3px #8467c719; }
 .status-dot.complete,
 .status-dot.skipped { background: #35a36c; }
 .status-dot.excluded { background: #9ca8a1; }

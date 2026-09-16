@@ -1,6 +1,11 @@
 import base64
+from contextlib import contextmanager
+import fcntl
 import os
 from functools import lru_cache
+from pathlib import Path
+import tempfile
+import threading
 
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
@@ -24,6 +29,27 @@ from api.runtime_settings import load_settings
 from api.codex_oauth import codex_response
 
 load_dotenv()
+
+_LOCAL_INFERENCE_THREAD_LOCK = threading.RLock()
+_LOCAL_INFERENCE_LOCK_PATH = Path(tempfile.gettempdir()) / "knu-local-inference.lock"
+
+
+@contextmanager
+def local_inference_slot(provider: str | None = None):
+    """Serialize local Ollama/LM Studio inference across worker and API processes."""
+    active_provider = str(
+        provider or load_settings().get("vlm", {}).get("provider") or ""
+    ).lower()
+    if active_provider not in {"ollama", "lmstudio", "local"}:
+        yield
+        return
+    with _LOCAL_INFERENCE_THREAD_LOCK:
+        with _LOCAL_INFERENCE_LOCK_PATH.open("a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 # 임베딩 벡터 차원 수(pgvector schema와 반드시 동일해야 하며, embedding model 변경 시 함께 수정)
 _embedding_dim_raw = os.getenv("EMBEDDING_DIM")
@@ -134,7 +160,7 @@ def _vlm_client(provider: str, model: str, base_url: str, api_key: str):
             api_key=api_key or "local",
             temperature=0,
             max_tokens=_env_int("LOCAL_LLM_MAX_TOKENS", 2048),
-            timeout=_env_int("LOCAL_LLM_TIMEOUT_SECONDS", 180),
+            timeout=None,
         )
     return ChatOpenAI(model=model, api_key=api_key, temperature=0)
 
@@ -157,9 +183,10 @@ def image_to_text(image_bytes: bytes, mime: str, prompt: str, model: str = LLM_M
         {"type": "text", "text": prompt},
         _vlm_image_block(data_url, settings["provider"]),
     ])
-    response = _vlm_client(
-        settings["provider"], active_model, settings["base_url"], settings["api_key"]
-    ).invoke([msg])
+    with local_inference_slot(settings["provider"]):
+        response = _vlm_client(
+            settings["provider"], active_model, settings["base_url"], settings["api_key"]
+        ).invoke([msg])
     return response.content if isinstance(response.content, str) else str(response.content)
 
 
@@ -211,7 +238,7 @@ def get_llm():
             # one malformed response can occupy LM Studio until its full
             # context window is exhausted and stall the entire ingest worker.
             max_tokens=_env_int("LOCAL_LLM_MAX_TOKENS", 2048),
-            timeout=_env_int("LOCAL_LLM_TIMEOUT_SECONDS", 180),
+            timeout=None,
         )
 
     raise ValueError(f"지원하지 않는 provider: {provider}")
