@@ -3,6 +3,7 @@ import asyncio
 from workers.arq_worker import (
     NoticeCrawlStopped,
     WorkerSettings,
+    _merge_crawl_progress,
     counseling_prepare,
     counseling_submit,
     keep_portal_session,
@@ -11,6 +12,33 @@ from workers.arq_worker import (
     scheduled_poll_notices,
 )
 from workers import arq_worker
+
+
+def test_crawl_progress_tracks_source_page_notice_and_attachment():
+    progress = {"status": "processing", "sources": {}}
+    updates = [
+        {"event": "pages_planned", "source_code": "cse", "source_name": "컴퓨터공학과", "pages": [1]},
+        {"event": "page_list", "source_code": "cse", "page": 1, "notices": [{"url": "https://example.test/1", "title": "장학 안내"}]},
+        {"event": "notice_status", "source_code": "cse", "page": 1, "url": "https://example.test/1", "status": "processing", "stage": "첨부파일 처리 중", "attachments": [{"name": "guide.pdf", "status": "pending", "stage": "대기"}]},
+        {"event": "attachment_status", "source_code": "cse", "page": 1, "url": "https://example.test/1", "attachment_name": "guide.pdf", "status": "complete", "stage": "완료", "size": 2048},
+        {"event": "notice_status", "source_code": "cse", "page": 1, "url": "https://example.test/1", "status": "complete", "stage": "저장 완료", "document_id": 17},
+    ]
+
+    for update in updates:
+        _merge_crawl_progress(progress, update)
+
+    source = progress["sources"]["cse"]
+    page = source["pages"]["1"]
+    notice = page["notices"]["https://example.test/1"]
+    attachment = notice["attachments"]["guide.pdf"]
+    assert source["discovered"] == 1
+    assert source["processed"] == 1
+    assert source["saved"] == 1
+    assert page["processed"] == 1
+    assert notice["document_id"] == 17
+    assert attachment["status"] == "complete"
+    assert attachment["size"] == 2048
+    assert progress["status"] == "processing"
 
 
 def test_worker_has_notice_polling_cron():

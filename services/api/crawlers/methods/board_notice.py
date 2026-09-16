@@ -523,6 +523,7 @@ class BoardNoticeCrawler:
 
             records.append({
                 "url": self._abs(href),
+                "title": anchor.get_text(" ", strip=True) or "제목 확인 중",
                 "is_pinned": is_pinned,
                 "posted_at": (
                     date_node.get_text(" ", strip=True)
@@ -589,6 +590,7 @@ class BoardNoticeCrawler:
         self,
         scope: CrawlPageScope,
         recent_cutoff: date,
+        on_progress: Callable[[dict], None] | None = None,
     ) -> list[tuple[int, list[dict]]]:
         """상세 처리 전에 목록 URL을 먼저 수집한다.
 
@@ -597,10 +599,33 @@ class BoardNoticeCrawler:
         """
         pages = list(self._page_numbers(scope))
         batches: list[tuple[int, list[dict]]] = []
+        if on_progress:
+            on_progress({
+                "event": "pages_planned",
+                "phase": "listing",
+                "source_code": self.SOURCE_CODE,
+                "source_name": self.SOURCE_NAME,
+                "pages": pages,
+            })
+
+        def report_page(page_num: int, records: list[dict]) -> None:
+            if on_progress:
+                on_progress({
+                    "event": "page_list",
+                    "phase": "listing",
+                    "source_code": self.SOURCE_CODE,
+                    "page": page_num,
+                    "notices": [
+                        {"url": record["url"], "title": record.get("title")}
+                        for record in records
+                    ],
+                })
+
         if scope.mode == "recent":
             for page_num in pages:
                 records = self._collect_post_records(None, page_num)
                 batches.append((page_num, records))
+                report_page(page_num, records)
                 ordinary = [record for record in records if not record.get("is_pinned")]
                 if ordinary and not any(
                     self._record_is_recent(record, recent_cutoff)
@@ -616,6 +641,7 @@ class BoardNoticeCrawler:
         with ThreadPoolExecutor(max_workers=2) as executor:
             for index, batch in enumerate(executor.map(collect, pages), 1):
                 batches.append(batch)
+                report_page(*batch)
                 if index % 100 == 0:
                     print(f"     ↳ 목록 URL 확인 {index}/{len(pages)}페이지")
         return batches
@@ -642,7 +668,7 @@ class BoardNoticeCrawler:
         browser_context = self._browser_context_factory()
         try:
             recent_cutoff = date.today() - timedelta(days=max(0, scope.recent_days))
-            page_batches = self._collect_page_batches(scope, recent_cutoff)
+            page_batches = self._collect_page_batches(scope, recent_cutoff, on_progress)
             selected_url_set: set[str] | None = None
             if select_records:
                 all_records: dict[str, dict] = {}
@@ -670,13 +696,40 @@ class BoardNoticeCrawler:
                         if record.get("is_pinned")
                         or self._record_is_recent(record, recent_cutoff)
                     ]
+                    if on_progress:
+                        processing_urls = {record["url"] for record in processing_records}
+                        for record in post_records:
+                            if record["url"] not in processing_urls:
+                                on_progress({
+                                    "event": "notice_status",
+                                    "source_code": self.SOURCE_CODE,
+                                    "page": page_num,
+                                    "url": record["url"],
+                                    "title": record.get("title"),
+                                    "status": "excluded",
+                                    "stage": "최근 수집 범위 제외",
+                                })
 
                 if self.config.dedupe_urls:
+                    candidate_records = processing_records
                     new_records = [
-                        record for record in processing_records
+                        record for record in candidate_records
                         if record["url"] not in seen_urls
                     ]
                     seen_urls.update(record["url"] for record in new_records)
+                    if on_progress:
+                        new_urls = {record["url"] for record in new_records}
+                        for record in candidate_records:
+                            if record["url"] not in new_urls:
+                                on_progress({
+                                    "event": "notice_status",
+                                    "source_code": self.SOURCE_CODE,
+                                    "page": page_num,
+                                    "url": record["url"],
+                                    "title": record.get("title"),
+                                    "status": "excluded",
+                                    "stage": "중복 URL 제외",
+                                })
                 else:
                     new_records = processing_records
 
@@ -689,16 +742,29 @@ class BoardNoticeCrawler:
 
                 known_count = 0
                 if selected_url_set is not None:
+                    candidate_records = new_records
                     selected_records = [
-                        record for record in new_records
+                        record for record in candidate_records
                         if record["url"] in selected_url_set
                     ]
                     known_count = sum(
-                        1 for record in new_records
+                        1 for record in candidate_records
                         if record["url"] not in selected_url_set
                     )
                     new_records = selected_records
                     self.last_run_stats["known"] += known_count
+                    if on_progress:
+                        for record in candidate_records:
+                            if record["url"] not in selected_url_set:
+                                on_progress({
+                                    "event": "notice_status",
+                                    "source_code": self.SOURCE_CODE,
+                                    "page": page_num,
+                                    "url": record["url"],
+                                    "title": record.get("title"),
+                                    "status": "skipped",
+                                    "stage": "이미 저장됨",
+                                })
                     print(
                         f"     ↳ DB URL 대조: {known_count}건 상세 생략, "
                         f"{len(new_records)}건 상세 처리"
@@ -722,9 +788,11 @@ class BoardNoticeCrawler:
                 if new_records:
                     if on_progress:
                         on_progress({
+                            "event": "page_status",
                             "phase": "details",
                             "source_code": self.SOURCE_CODE,
                             "page": page_num,
+                            "status": "processing",
                             "discovered_increment": len(new_records),
                         })
                     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -736,6 +804,9 @@ class BoardNoticeCrawler:
                                 idx,
                                 len(new_records),
                                 is_pinned=record.get("is_pinned", False),
+                                page_num=page_num,
+                                list_title=record.get("title"),
+                                on_progress=on_progress,
                             ): record["url"]
                             for idx, record in enumerate(new_records, 1)
                         }
@@ -772,9 +843,14 @@ class BoardNoticeCrawler:
                                 )
                                 if on_progress:
                                     on_progress({
+                                        "event": "notice_status",
                                         "phase": "details",
                                         "source_code": self.SOURCE_CODE,
                                         "page": page_num,
+                                        "url": url,
+                                        "status": "failed",
+                                        "stage": "상세 처리 실패",
+                                        "error": failure,
                                         "processed_increment": 1,
                                         "failed_increment": 1,
                                         "current_url": url,
@@ -783,6 +859,15 @@ class BoardNoticeCrawler:
                 failed = len(new_records) - succeeded
                 self.last_run_stats["succeeded"] += succeeded
                 self.last_run_stats["failed"] += failed
+                if on_progress:
+                    on_progress({
+                        "event": "page_status",
+                        "source_code": self.SOURCE_CODE,
+                        "page": page_num,
+                        "status": "complete" if failed == 0 else "complete_with_errors",
+                        "processed": len(new_records),
+                        "failed": failed,
+                    })
                 required = min(
                     discovered,
                     max(
@@ -813,6 +898,9 @@ class BoardNoticeCrawler:
         idx: int,
         total: int,
         is_pinned: bool = False,
+        page_num: int | None = None,
+        list_title: str | None = None,
+        on_progress: Callable[[dict], None] | None = None,
     ) -> dict | None:
         """Collect one post over retrying HTTP; Chromium is lazy and shared."""
         try:
@@ -822,8 +910,22 @@ class BoardNoticeCrawler:
                 idx,
                 total,
                 is_pinned=is_pinned,
+                page_num=page_num,
+                list_title=list_title,
+                on_progress=on_progress,
             )
         except Exception as error:
+            if on_progress:
+                on_progress({
+                    "event": "notice_status",
+                    "source_code": self.SOURCE_CODE,
+                    "page": page_num,
+                    "url": post_url,
+                    "title": list_title,
+                    "status": "failed",
+                    "stage": "상세 처리 실패",
+                    "error": f"{type(error).__name__}: {error}",
+                })
             print(
                 f"  ⚠️ [{idx}/{total}] {post_url} 수집 중 예외 발생 (스킵함): "
                 f"{type(error).__name__}: {error}"
@@ -851,7 +953,22 @@ class BoardNoticeCrawler:
         idx: int,
         total: int,
         is_pinned: bool = False,
+        page_num: int | None = None,
+        list_title: str | None = None,
+        on_progress: Callable[[dict], None] | None = None,
     ) -> dict:
+        def report(**values) -> None:
+            if on_progress:
+                on_progress({
+                    "event": "notice_status",
+                    "source_code": self.SOURCE_CODE,
+                    "page": page_num,
+                    "url": post_url,
+                    "title": values.pop("title", None) or list_title,
+                    **values,
+                })
+
+        report(status="processing", stage="상세 페이지 다운로드 중")
         print(f"[{idx}/{total}] {post_url} 접속 중...")
         html = self._fetch_html_text(post_url)
         soup = BeautifulSoup(html, "html.parser")
@@ -861,6 +978,7 @@ class BoardNoticeCrawler:
             soup,
             self.config.title_selector,
         ) or "제목을 찾을 수 없음"
+        report(title=title, status="processing", stage="본문 분석 중")
 
         date = self._text_from_selector(
             soup,
@@ -958,8 +1076,30 @@ class BoardNoticeCrawler:
         extraction_quality: list[dict] = []
         # xlsx_relevant(title, body_text) >> 만약 제목이나 본문에 '공고', '모집', '채용' 같은 단어가 있으면, 첨부된 엑셀 파일도 텍스트로 변환해서 내용에 포함할지 여부 판단하고 싶으면 이 함수를 활용할 수 있습니다. 
        
-        for att in self._collect_attachments(soup):
+        attachments = self._collect_attachments(soup)
+        report(
+            title=title,
+            status="processing",
+            stage=(f"첨부파일 {len(attachments)}개 처리 중" if attachments else "저장 준비 중"),
+            attachments=[
+                {"name": att["filename"], "status": "pending", "stage": "대기"}
+                for att in attachments
+            ],
+        )
+        for att in attachments:
             print(f"  - 첨부 처리: {att['filename']}")
+
+            if on_progress:
+                on_progress({
+                    "event": "attachment_status",
+                    "source_code": self.SOURCE_CODE,
+                    "page": page_num,
+                    "url": post_url,
+                    "title": title,
+                    "attachment_name": att["filename"],
+                    "status": "processing",
+                    "stage": "다운로드·추출 중",
+                })
 
             txt, meta = attachment_to_text(
                 {**att, "preview_url": None},
@@ -970,6 +1110,20 @@ class BoardNoticeCrawler:
                 review_reasons.append(
                     str(meta.get("review_reason") or "attachment_review_required")
                 )
+            if on_progress:
+                attachment_failed = bool(meta.get("review_required"))
+                on_progress({
+                    "event": "attachment_status",
+                    "source_code": self.SOURCE_CODE,
+                    "page": page_num,
+                    "url": post_url,
+                    "title": title,
+                    "attachment_name": att["filename"],
+                    "status": "failed" if attachment_failed else "complete",
+                    "stage": "검토 필요" if attachment_failed else "완료",
+                    "error": meta.get("review_reason") if attachment_failed else None,
+                    "size": len(meta.get("raw_bytes") or b""),
+                })
             if isinstance(meta.get("quality"), dict):
                 extraction_quality.append(meta["quality"])
 
@@ -1057,6 +1211,7 @@ class BoardNoticeCrawler:
         print(title)
         print(date)
         print(content[:300] + ("..." if len(content) > 300 else ""))
+        report(title=title, status="processing", stage="저장 대기")
 
         return {
             "title": title,
@@ -1069,6 +1224,7 @@ class BoardNoticeCrawler:
             "attachment_contents": attachment_contents,
 
             "url": post_url,
+            "_crawl_page": page_num,
             "assets": assets,
             "is_pinned": is_pinned,
             "review_required": bool(review_reasons),

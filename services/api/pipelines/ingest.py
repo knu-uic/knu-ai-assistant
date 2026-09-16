@@ -107,9 +107,11 @@ def run_ingest(
     for mod in selected_crawlers:
         if on_progress:
             on_progress({
+                "event": "source_status",
                 "phase": "source",
                 "source_code": mod.SOURCE_CODE,
                 "source_name": mod.SOURCE_NAME,
+                "status": "processing",
             })
         source_id = upsert_source(
             code=mod.SOURCE_CODE,
@@ -157,6 +159,17 @@ def run_ingest(
         for item in iterator:
             crawled_count += 1
 
+            if on_progress:
+                on_progress({
+                    "event": "notice_status",
+                    "source_code": mod.SOURCE_CODE,
+                    "page": item.get("_crawl_page"),
+                    "url": item["url"],
+                    "title": item.get("title"),
+                    "status": "processing",
+                    "stage": "정제·저장 중",
+                })
+
             replace_by_source = bool(item.get("replace_by_source"))
 
             if replace_by_source:
@@ -190,6 +203,17 @@ def run_ingest(
                 if uses_url_registry:
                     mark_crawl_url_failed(item["url"], "refine returned no result")
                 print(f"   ↳ refine 실패로 스킵: {item['url']}")
+                if on_progress:
+                    on_progress({
+                        "event": "notice_status",
+                        "source_code": mod.SOURCE_CODE,
+                        "page": item.get("_crawl_page"),
+                        "url": item["url"],
+                        "title": item.get("title"),
+                        "status": "failed",
+                        "stage": "정제 실패",
+                        "error": "refine returned no result",
+                    })
                 continue
 
             doc, assets, extra = refined_data[0]
@@ -265,8 +289,15 @@ def run_ingest(
             inserted_count += 1
             if on_progress:
                 on_progress({
+                    "event": "notice_status",
                     "phase": "saved",
                     "source_code": mod.SOURCE_CODE,
+                    "page": item.get("_crawl_page"),
+                    "url": item["url"],
+                    "title": doc.title,
+                    "status": "complete",
+                    "stage": "저장 완료",
+                    "document_id": document_id,
                     "saved_increment": 1,
                     "current_url": item["url"],
                     "current_title": doc.title,
@@ -292,6 +323,14 @@ def run_ingest(
         total["skipped"] += skipped_count
         total["dropped"] += dropped_count
         total["review"] += review_count
+        if on_progress:
+            on_progress({
+                "event": "source_status",
+                "phase": "source",
+                "source_code": mod.SOURCE_CODE,
+                "source_name": mod.SOURCE_NAME,
+                "status": "complete",
+            })
 
     if total["inserted"]:
         # Keep retained embedding datasets current after the active model has

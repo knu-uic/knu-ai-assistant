@@ -418,7 +418,7 @@ def test_successful_page_results_stream_before_minimum_success_check(monkeypatch
     monkeypatch.setattr(
         crawler,
         "_crawl_post_parallel",
-        lambda browser_context, url, idx, total, is_pinned=False: (
+        lambda browser_context, url, idx, total, is_pinned=False, **_kwargs: (
             {"url": url} if idx == 1 else None
         ),
     )
@@ -446,7 +446,7 @@ def test_completed_detail_yields_while_slow_sibling_is_still_running(monkeypatch
 
     monkeypatch.setattr(crawler, "_collect_post_records", lambda page, number: records)
 
-    def crawl_detail(_context, url, idx, total, is_pinned=False):
+    def crawl_detail(_context, url, idx, total, is_pinned=False, **_kwargs):
         if url.endswith("/slow"):
             slow_started.set()
             assert release_slow.wait(timeout=5)
@@ -474,7 +474,7 @@ def test_known_and_new_successes_can_meet_page_threshold(monkeypatch):
     monkeypatch.setattr(
         crawler,
         "_crawl_post_parallel",
-        lambda browser_context, url, idx, total, is_pinned=False: {"url": url},
+        lambda browser_context, url, idx, total, is_pinned=False, **_kwargs: {"url": url},
     )
 
     items = list(
@@ -559,6 +559,7 @@ def test_recent_scope_stops_at_first_page_older_than_cutoff(monkeypatch):
     crawler = BoardNoticeCrawler(_config(pages=100))
     crawler._browser_context_factory = _BrowserContext
     visited = []
+    progress = []
     today = date.today().isoformat()
 
     def records(_page, page_number):
@@ -579,6 +580,7 @@ def test_recent_scope_stops_at_first_page_older_than_cutoff(monkeypatch):
 
     items = list(crawler.crawling(
         scope=CrawlPageScope(mode="recent", recent_days=7),
+        on_progress=progress.append,
     ))
 
     assert visited == [1, 2, 3]
@@ -586,3 +588,13 @@ def test_recent_scope_stops_at_first_page_older_than_cutoff(monkeypatch):
         "https://example.test/notice/1",
         "https://example.test/notice/2",
     ]
+    excluded = [event for event in progress if event.get("status") == "excluded"]
+    assert excluded == [{
+        "event": "notice_status",
+        "source_code": "test_notice",
+        "page": 3,
+        "url": "https://example.test/notice/3",
+        "title": None,
+        "status": "excluded",
+        "stage": "최근 수집 범위 제외",
+    }]

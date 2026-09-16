@@ -11,6 +11,7 @@
 """
 import asyncio
 import json
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -36,6 +37,127 @@ NOTICE_CRAWL_PROGRESS_TTL_SECONDS = 86400
 
 class NoticeCrawlStopped(Exception):
     """Raised inside the ingest thread when a user requests a clean stop."""
+
+
+def _merge_crawl_progress(progress: dict, update: dict) -> None:
+    """Merge a flat counter or hierarchical crawl event into one UI snapshot."""
+    event = update.get("event")
+    source_code = str(update.get("source_code") or "")
+    sources = progress.setdefault("sources", {})
+    source = None
+    if source_code:
+        source = sources.setdefault(source_code, {
+            "code": source_code,
+            "name": update.get("source_name") or source_code,
+            "status": "pending",
+            "pages": {},
+        })
+        if update.get("source_name"):
+            source["name"] = update["source_name"]
+
+    if event == "pages_planned" and source is not None:
+        source["status"] = "listing"
+        source["total_pages"] = len(update.get("pages") or [])
+    elif event == "page_list" and source is not None:
+        page_number = update.get("page")
+        page = source["pages"].setdefault(str(page_number), {
+            "page": page_number,
+            "notices": {},
+        })
+        page["status"] = "listed"
+        page["total"] = len(update.get("notices") or [])
+        for notice in update.get("notices") or []:
+            page["notices"].setdefault(notice["url"], {
+                "url": notice["url"],
+                "title": notice.get("title") or "제목 확인 중",
+                "status": "pending",
+                "stage": "대기",
+                "attachments": {},
+            })
+    elif event in {"source_status", "page_status", "notice_status", "attachment_status"} and source is not None:
+        if event == "source_status":
+            for key in ("status", "processed", "saved", "failed"):
+                if key in update:
+                    source[key] = update[key]
+            source = None
+    if event in {"page_status", "notice_status", "attachment_status"} and source is not None:
+        page_number = update.get("page")
+        page = source["pages"].setdefault(str(page_number), {
+            "page": page_number,
+            "status": "pending",
+            "notices": {},
+        })
+        if event == "page_status":
+            for key in ("status", "processed", "saved", "failed"):
+                if key in update:
+                    page[key] = update[key]
+        else:
+            url = str(update.get("url") or "")
+            notice = page["notices"].setdefault(url, {
+                "url": url,
+                "title": update.get("title") or "제목 확인 중",
+                "attachments": {},
+            })
+            for key in ("title", "status", "stage", "error", "document_id"):
+                if key in update and update[key] is not None:
+                    notice[key] = update[key]
+            if event == "notice_status" and "attachments" in update:
+                for attachment in update.get("attachments") or []:
+                    notice["attachments"].setdefault(attachment["name"], {
+                        "name": attachment["name"],
+                        "status": attachment.get("status", "pending"),
+                        "stage": attachment.get("stage", "대기"),
+                    })
+            elif event == "attachment_status":
+                name = str(update.get("attachment_name") or "첨부파일")
+                attachment = notice["attachments"].setdefault(name, {"name": name})
+                for key in ("status", "stage", "error", "size"):
+                    if key in update and update[key] is not None:
+                        attachment[key] = update[key]
+
+            notice_values = list(page["notices"].values())
+            terminal = {"complete", "failed", "skipped", "excluded"}
+            page["processed"] = sum(
+                item.get("status") in terminal for item in notice_values
+            )
+            page["saved"] = sum(
+                item.get("status") == "complete" for item in notice_values
+            )
+            page["failed"] = sum(
+                item.get("status") == "failed" for item in notice_values
+            )
+
+    if source is not None:
+        page_values = list(source.get("pages", {}).values())
+        notice_values = [
+            notice
+            for page in page_values
+            for notice in page.get("notices", {}).values()
+        ]
+        source["discovered"] = len(notice_values)
+        source["processed"] = sum(
+            notice.get("status") in {"complete", "failed", "skipped", "excluded"}
+            for notice in notice_values
+        )
+        source["saved"] = sum(
+            notice.get("status") == "complete" for notice in notice_values
+        )
+        source["failed"] = sum(
+            notice.get("status") == "failed" for notice in notice_values
+        )
+
+    structural_keys = {"event", "pages", "notices", "page", "url", "title",
+                       "attachments", "attachment_name", "document_id", "size"}
+    if event:
+        structural_keys.update({"status", "stage", "error"})
+    for key, value in update.items():
+        if key in structural_keys:
+            continue
+        if key.endswith("_increment"):
+            target = key.removesuffix("_increment")
+            progress[target] = int(progress.get(target, 0)) + int(value)
+        elif key not in {"source_name"}:
+            progress[key] = value
 
 
 def step_key(job_id: str) -> str:
@@ -219,22 +341,20 @@ async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
         "processed": 0,
         "saved": 0,
         "failed": 0,
+        "sources": {},
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
+    progress_lock = threading.RLock()
 
     def write_progress(update: dict) -> None:
-        for key, value in update.items():
-            if key.endswith("_increment"):
-                target = key.removesuffix("_increment")
-                progress[target] = int(progress.get(target, 0)) + int(value)
-            else:
-                progress[key] = value
-        progress["updated_at"] = datetime.now(timezone.utc).isoformat()
-        progress_redis.set(
-            NOTICE_CRAWL_PROGRESS_KEY,
-            json.dumps(progress, ensure_ascii=False),
-            ex=NOTICE_CRAWL_PROGRESS_TTL_SECONDS,
-        )
+        with progress_lock:
+            _merge_crawl_progress(progress, update)
+            progress["updated_at"] = datetime.now(timezone.utc).isoformat()
+            progress_redis.set(
+                NOTICE_CRAWL_PROGRESS_KEY,
+                json.dumps(progress, ensure_ascii=False),
+                ex=NOTICE_CRAWL_PROGRESS_TTL_SECONDS,
+            )
 
     def publish_progress(update: dict) -> None:
         write_progress(update)
