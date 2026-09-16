@@ -1211,7 +1211,7 @@ class BoardNoticeCrawler:
         print(title)
         print(date)
         print(content[:300] + ("..." if len(content) > 300 else ""))
-        report(title=title, status="processing", stage="저장 대기")
+        report(title=title, status="ready", stage="저장 대기")
 
         return {
             "title": title,

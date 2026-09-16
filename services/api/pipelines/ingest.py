@@ -166,7 +166,7 @@ def run_ingest(
                     "page": item.get("_crawl_page"),
                     "url": item["url"],
                     "title": item.get("title"),
-                    "status": "processing",
+                    "status": "saving",
                     "stage": "정제·저장 중",
                 })
 
