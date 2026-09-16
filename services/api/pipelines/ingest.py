@@ -2,6 +2,7 @@ import sitecustomize  # noqa: F401  # project-level pycache routing
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from itertools import chain
 from typing import Callable
 
 from crawlers import CRAWLERS
@@ -17,6 +18,9 @@ from db import (
     insert_chunks,
     document_is_current,
     select_crawl_records,
+    save_crawl_checkpoint,
+    load_crawl_checkpoints,
+    mark_crawl_url_stage,
     mark_crawl_url_completed,
     mark_crawl_url_failed,
     upsert_extraction_review,
@@ -132,29 +136,13 @@ def run_ingest(
 
         uses_url_registry = hasattr(mod, "detect_total_pages")
         crawl_kwargs = {}
+        resumed_items: list[dict] = []
         if uses_url_registry:
-            def persist_raw_notice(item: dict) -> None:
-                """Durably store a completed detail before slow LLM post-processing."""
-                raw_extra = dict(item.get("extra") or {})
-                raw_extra["ingest_status"] = "refining"
-                document_id = insert_document(
-                    source_id=source_id,
-                    url=item["url"],
-                    title=item.get("title") or "제목을 찾을 수 없음",
-                    content=item.get("content") or item.get("body_content") or "",
-                    body_content=item.get("body_content"),
-                    category="일반(기타)",
-                    summary=None,
-                    topics=[],
-                    extraction_confidence=0.0,
-                    extraction_version="raw-v1",
-                    extra=raw_extra,
-                    posted_at=_parse_posted_date(item.get("date")),
-                    is_pinned=bool(item.get("is_pinned")),
-                )
-                insert_assets(document_id, item.get("assets") or [])
-                item["_document_id"] = document_id
-                item["_raw_saved"] = True
+            resumed_items = load_crawl_checkpoints(source_id)
+
+            def persist_collected_notice(item: dict) -> None:
+                """Checkpoint one completed detail before slow local inference."""
+                save_crawl_checkpoint(source_id, item)
                 if on_progress:
                     on_progress({
                         "event": "notice_status",
@@ -162,10 +150,8 @@ def run_ingest(
                         "page": item.get("_crawl_page"),
                         "url": item["url"],
                         "title": item.get("title"),
-                        "status": "stored",
-                        "stage": "원본 저장 완료 · 정제 대기",
-                        "document_id": document_id,
-                        "saved_increment": 1,
+                        "status": "ready",
+                        "stage": "LLM 정제 대기",
                         "current_url": item["url"],
                         "current_title": item.get("title"),
                     })
@@ -185,17 +171,21 @@ def run_ingest(
                     refresh_outdated_extraction=options.refresh_outdated_extraction,
                 ),
                 "on_detail_failure": mark_crawl_url_failed,
-                "on_detail_ready": persist_raw_notice,
+                "on_detail_ready": persist_collected_notice,
                 "on_progress": on_progress,
             }
 
-        iterator = (
+        crawled_iterator = (
             mod.crawling(**crawl_kwargs)
             if uses_url_registry
             else mod.crawling(should_skip=document_is_current)
         )
+        iterator = chain(resumed_items, crawled_iterator)
         for item in iterator:
             crawled_count += 1
+
+            if uses_url_registry:
+                mark_crawl_url_stage(item["url"], "refining", "LLM 정제·임베딩 중")
 
             if on_progress:
                 on_progress({
@@ -206,7 +196,6 @@ def run_ingest(
                     "title": item.get("title"),
                     "status": "refining",
                     "stage": "LLM 정제·임베딩 중",
-                    "document_id": item.get("_document_id"),
                 })
 
             replace_by_source = bool(item.get("replace_by_source"))
@@ -267,32 +256,6 @@ def run_ingest(
             print(f'요약: {doc.summary}')
             print(f'assets: {len(assets)}건')
 
-            document_id = insert_document(
-                source_id=source_id,
-                url=doc.url,
-                title=doc.title,
-                content=doc.content,
-
-                # 신규 구조
-                body_content=item.get("body_content"),
-
-                category=doc.category,
-                summary=doc.summary,
-                topics=doc.topics,
-                series_key=doc.series_key,
-                periods=doc.periods,
-                audiences=doc.audiences,
-                application=doc.application,
-                extraction_confidence=doc.extraction_confidence,
-                extra=extra,
-                posted_at=posted_at,
-                is_pinned=bool(item.get("is_pinned")),
-            )
-            if not item.get("_raw_saved"):
-                insert_assets(document_id, assets)
-            if not item.get("review_required"):
-                clear_extraction_review(doc.url)
-
             base_body_content = (
                 item.get("body_content")
                 or doc.content
@@ -323,7 +286,28 @@ def run_ingest(
                 ),
             )
 
+            document_id = insert_document(
+                source_id=source_id,
+                url=doc.url,
+                title=doc.title,
+                content=doc.content,
+                body_content=item.get("body_content"),
+                category=doc.category,
+                summary=doc.summary,
+                topics=doc.topics,
+                series_key=doc.series_key,
+                periods=doc.periods,
+                audiences=doc.audiences,
+                application=doc.application,
+                extraction_confidence=doc.extraction_confidence,
+                extra=extra,
+                posted_at=posted_at,
+                is_pinned=bool(item.get("is_pinned")),
+            )
+            insert_assets(document_id, assets)
             insert_chunks(document_id, chunks)
+            if not item.get("review_required"):
+                clear_extraction_review(doc.url)
             if uses_url_registry:
                 mark_crawl_url_completed(item["url"], posted_at=posted_at)
             inserted_count += 1
@@ -341,8 +325,7 @@ def run_ingest(
                     "current_url": item["url"],
                     "current_title": doc.title,
                 }
-                if not item.get("_raw_saved"):
-                    progress_update["saved_increment"] = 1
+                progress_update["saved_increment"] = 1
                 on_progress(progress_update)
 
         print(

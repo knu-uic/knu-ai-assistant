@@ -41,6 +41,7 @@ from embedding.rebuild import (
 )
 from model import get_embeddings
 from db.pool import pool
+from db.crawl_progress import load_crawl_progress
 from db.documents import CURRENT_NOTICE_EXTRACTION_VERSION, NOTICE_CATEGORIES
 from interfaces.mcp.server import get_public_tool_catalog
 from workers.crawl_control import (
@@ -637,9 +638,7 @@ async def codex_models() -> dict:
         raise HTTPException(status_code=502, detail=f"Codex 모델 조회 실패: {exc}") from exc
 
 
-@router.post("/crawl/run", dependencies=[Admin])
-async def run_crawl(req: CrawlRunRequest | None = None) -> dict:
-    request = req or CrawlRunRequest()
+async def _enqueue_manual_crawl(request: CrawlRunRequest) -> dict:
     if rebuild_status()["state"] == "running":
         raise HTTPException(
             status_code=409,
@@ -666,6 +665,30 @@ async def run_crawl(req: CrawlRunRequest | None = None) -> dict:
         await redis.delete(NOTICE_CRAWL_PENDING_KEY)
         raise HTTPException(status_code=409, detail="이미 크롤링이 실행 중입니다.")
     return {"ok": True, "job_id": job.job_id, "request": request.model_dump()}
+
+
+@router.post("/crawl/run", dependencies=[Admin])
+async def run_crawl(req: CrawlRunRequest | None = None) -> dict:
+    return await _enqueue_manual_crawl(req or CrawlRunRequest())
+
+
+@router.post("/crawl/retry", dependencies=[Admin])
+async def retry_crawl() -> dict:
+    """Re-enqueue the last interrupted list using its original crawl scope."""
+    redis = await get_arq_pool()
+    if await redis.exists(NOTICE_CRAWL_ACTIVE_KEY):
+        raise HTTPException(status_code=409, detail="이미 크롤링이 실행 중입니다.")
+    progress = await anyio.to_thread.run_sync(load_crawl_progress)
+    if progress.get("status") not in {"interrupted", "failed", "stopped"}:
+        raise HTTPException(status_code=409, detail="이어갈 수집 목록이 없습니다.")
+    request_data = progress.get("request") or load_settings().get("crawl_request") or {}
+    try:
+        request = CrawlRunRequest.model_validate(request_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="이전 수집 범위를 복원할 수 없습니다.") from exc
+    result = await _enqueue_manual_crawl(request)
+    result["resumed_from"] = progress.get("job_id")
+    return result
 
 
 async def _active_crawl_redis():
@@ -717,12 +740,14 @@ async def crawl_status() -> dict:
     paused = bool(await redis.exists(NOTICE_CRAWL_PAUSE_KEY))
     stop_requested = bool(await redis.exists(NOTICE_CRAWL_STOP_KEY))
     progress = {}
-    raw_progress = await redis.get(NOTICE_CRAWL_PROGRESS_KEY)
-    if raw_progress:
-        try:
-            progress = json.loads(raw_progress)
-        except (TypeError, ValueError):
-            progress = {}
+    progress = await anyio.to_thread.run_sync(load_crawl_progress)
+    if not progress:
+        raw_progress = await redis.get(NOTICE_CRAWL_PROGRESS_KEY)
+        if raw_progress:
+            try:
+                progress = json.loads(raw_progress)
+            except (TypeError, ValueError):
+                progress = {}
     return {
         "active": active,
         "paused": paused,

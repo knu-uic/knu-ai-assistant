@@ -673,8 +673,9 @@ class BoardNoticeCrawler:
             selected_url_set: set[str] | None = None
             if select_records:
                 all_records: dict[str, dict] = {}
-                for _page_num, records in page_batches:
+                for record_page_num, records in page_batches:
                     for record in records:
+                        record["_crawl_page"] = record_page_num
                         if (
                             scope.mode != "recent"
                             or record.get("is_pinned")

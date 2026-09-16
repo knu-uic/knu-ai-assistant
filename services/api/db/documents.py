@@ -159,7 +159,7 @@ def select_crawl_records(
     if not records:
         return []
 
-    from datetime import date, datetime, timedelta
+    from datetime import date, datetime
 
     def parse_date(raw) -> date | None:
         value = str(raw or "").strip().replace(".", "-").replace("/", "-").rstrip("-")
@@ -172,21 +172,28 @@ def select_crawl_records(
     urls = list(unique)
     posted_dates = [parse_date(unique[url].get("posted_at")) for url in urls]
     pinned = [bool(unique[url].get("is_pinned")) for url in urls]
+    titles = [str(unique[url].get("title") or "제목 확인 중") for url in urls]
+    pages = [unique[url].get("_crawl_page") for url in urls]
 
     with sync_pool.connection() as conn:
         conn.execute(
             """
-            INSERT INTO crawl_url_state (url, source_id, status, posted_at, is_pinned)
-            SELECT value.url, %s, 'discovered', value.posted_at, value.is_pinned
-            FROM unnest(%s::varchar[], %s::date[], %s::boolean[])
-                 AS value(url, posted_at, is_pinned)
+            INSERT INTO crawl_url_state
+                (url, source_id, status, posted_at, is_pinned, title, page_number, stage)
+            SELECT value.url, %s, 'discovered', value.posted_at, value.is_pinned,
+                   value.title, value.page_number, '목록 등록'
+            FROM unnest(%s::varchar[], %s::date[], %s::boolean[], %s::text[], %s::int[])
+                 AS value(url, posted_at, is_pinned, title, page_number)
             ON CONFLICT (url) DO UPDATE SET
                 source_id = EXCLUDED.source_id,
                 posted_at = COALESCE(EXCLUDED.posted_at, crawl_url_state.posted_at),
                 is_pinned = EXCLUDED.is_pinned,
-                last_seen_at = now()
+                title = EXCLUDED.title,
+                page_number = EXCLUDED.page_number,
+                last_seen_at = now(),
+                updated_at = now()
             """,
-            (source_id, urls, posted_dates, pinned),
+            (source_id, urls, posted_dates, pinned, titles, pages),
         )
         rows = conn.execute(
             """
@@ -204,19 +211,11 @@ def select_crawl_records(
             }
             for row in rows
         }
-        cutoff = date.today() - timedelta(days=max(0, recent_days))
         selected = [
             unique[url]
             for url in urls
             if (
-                states[url]["status"] != "completed"
-                or (
-                    states[url]["extraction_version"] == CURRENT_NOTICE_EXTRACTION_VERSION
-                    and (
-                        states[url]["posted_at"] is None
-                        or states[url]["posted_at"] >= cutoff
-                    )
-                )
+                states[url]["status"] in {"discovered", "collecting", "failed"}
                 or (
                     refresh_outdated_extraction
                     and states[url]["extraction_version"] != CURRENT_NOTICE_EXTRACTION_VERSION
@@ -227,13 +226,74 @@ def select_crawl_records(
             conn.execute(
                 """
                 UPDATE crawl_url_state
-                SET last_attempt_at = now(), attempt_count = attempt_count + 1
+                SET status = 'collecting', stage = '본문·첨부 수집 중',
+                    last_attempt_at = now(), attempt_count = attempt_count + 1,
+                    updated_at = now()
                 WHERE url = ANY(%s)
                 """,
                 ([record["url"] for record in selected],),
             )
         conn.commit()
     return selected
+
+
+def save_crawl_checkpoint(source_id: int, item: dict) -> None:
+    """Persist one fully collected notice so refinement can resume after a crash."""
+    with sync_pool.connection() as conn:
+        conn.execute(
+            """
+            UPDATE crawl_url_state
+            SET source_id = %s,
+                status = 'collected',
+                title = %s,
+                page_number = %s,
+                stage = 'LLM 정제 대기',
+                checkpoint = %s,
+                last_error = NULL,
+                updated_at = now()
+            WHERE url = %s
+            """,
+            (
+                source_id,
+                item.get("title") or "제목 확인 중",
+                item.get("_crawl_page"),
+                json.dumps(item, ensure_ascii=False, default=str),
+                item["url"],
+            ),
+        )
+        conn.commit()
+
+
+def load_crawl_checkpoints(source_id: int) -> list[dict]:
+    """Return collected/refining items that were not committed as final notices."""
+    with sync_pool.connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT checkpoint
+            FROM crawl_url_state
+            WHERE source_id = %s
+              AND status IN ('collected', 'refining')
+              AND checkpoint IS NOT NULL
+            ORDER BY page_number NULLS LAST, last_attempt_at NULLS LAST, url
+            """,
+            (source_id,),
+        ).fetchall()
+    return [dict(row[0]) for row in rows if isinstance(row[0], dict)]
+
+
+def mark_crawl_url_stage(url: str, status: str, stage: str) -> None:
+    if status not in {"collecting", "collected", "refining"}:
+        raise ValueError(f"Unsupported crawl checkpoint status: {status}")
+    with sync_pool.connection() as conn:
+        conn.execute(
+            """
+            UPDATE crawl_url_state
+            SET status = %s, stage = %s, updated_at = now()
+            WHERE url = %s
+            """,
+            (status, stage, url),
+        )
+        conn.commit()
 
 
 def mark_crawl_url_completed(url: str, *, posted_at: date | None = None) -> None:
@@ -245,7 +305,10 @@ def mark_crawl_url_completed(url: str, *, posted_at: date | None = None) -> None
                 posted_at = COALESCE(%s, posted_at),
                 extraction_version = %s,
                 completed_at = now(),
-                last_error = NULL
+                last_error = NULL,
+                stage = '완료',
+                checkpoint = NULL,
+                updated_at = now()
             WHERE url = %s
             """,
             (posted_at, CURRENT_NOTICE_EXTRACTION_VERSION, url),
@@ -258,7 +321,8 @@ def mark_crawl_url_failed(url: str, error: str) -> None:
         conn.execute(
             """
             UPDATE crawl_url_state
-            SET status = 'failed', last_error = %s, last_attempt_at = now()
+            SET status = 'failed', stage = '실패', last_error = %s,
+                last_attempt_at = now(), updated_at = now()
             WHERE url = %s
             """,
             (error[:4000], url),

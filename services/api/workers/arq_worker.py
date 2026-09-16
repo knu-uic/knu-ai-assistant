@@ -22,6 +22,7 @@ from arq.worker import func
 
 from config import PORTAL_SYNC_TIMEOUT_SECONDS, REDIS_URL
 from api.runtime_settings import load_settings
+from db.crawl_progress import save_crawl_progress
 from workers.crawl_control import (
     NOTICE_CRAWL_ACTIVE_KEY,
     NOTICE_CRAWL_PAUSE_KEY,
@@ -32,7 +33,6 @@ from workers.crawl_control import (
 
 STEP_KEY_PREFIX = "portal-sync:step:"
 STEP_TTL_SECONDS = 600
-NOTICE_CRAWL_PROGRESS_TTL_SECONDS = 86400
 
 
 class NoticeCrawlStopped(Exception):
@@ -339,6 +339,8 @@ async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
         "job_id": ctx.get("job_id", "crawler"),
         "status": "running",
         "phase": "starting",
+        "request": crawl_request or {},
+        "resumable": False,
         "discovered": 0,
         "processed": 0,
         "saved": 0,
@@ -352,10 +354,10 @@ async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
         with progress_lock:
             _merge_crawl_progress(progress, update)
             progress["updated_at"] = datetime.now(timezone.utc).isoformat()
+            save_crawl_progress(progress)
             progress_redis.set(
                 NOTICE_CRAWL_PROGRESS_KEY,
                 json.dumps(progress, ensure_ascii=False),
-                ex=NOTICE_CRAWL_PROGRESS_TTL_SECONDS,
             )
 
     def publish_progress(update: dict) -> None:
@@ -383,7 +385,12 @@ async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
         result = await asyncio.to_thread(
             run_ingest, crawl_request, on_progress=publish_progress
         )
-        write_progress({"status": "complete", "phase": "complete", "result": result})
+        write_progress({
+            "status": "complete",
+            "phase": "complete",
+            "resumable": False,
+            "result": result,
+        })
         print(f"📥 공지 폴링 결과: {result}")
         return result
     except NoticeCrawlStopped:
@@ -393,13 +400,19 @@ async def poll_notices(ctx: dict, crawl_request: dict | None = None) -> dict:
             "saved": progress.get("saved", 0),
             "failed": progress.get("failed", 0),
         }
-        write_progress({"status": "stopped", "phase": "stopped", "result": result})
+        write_progress({
+            "status": "stopped",
+            "phase": "stopped",
+            "resumable": True,
+            "result": result,
+        })
         print(f"⏹️ 공지 수집 중지: {result}")
         return result
     except BaseException as exc:
         write_progress({
             "status": "stopped" if isinstance(exc, asyncio.CancelledError) else "failed",
             "phase": "stopped" if isinstance(exc, asyncio.CancelledError) else "failed",
+            "resumable": True,
             "error": "" if isinstance(exc, asyncio.CancelledError) else str(exc),
         })
         raise

@@ -118,7 +118,7 @@ def test_review_required_item_keeps_notice_and_original_assets_but_marks_review(
     assert inserted_assets == item["assets"]
 
 
-def test_paged_notice_is_raw_saved_before_llm_refinement(monkeypatch):
+def test_paged_notice_is_checkpointed_before_llm_refinement(monkeypatch):
     import embedding.rebuild as rebuild
     import pipelines.ingest as ingest
 
@@ -147,7 +147,7 @@ def test_paged_notice_is_raw_saved_before_llm_refinement(monkeypatch):
 
         def crawling(self, **kwargs):
             kwargs["on_detail_ready"](item)
-            assert item["_raw_saved"] is True
+            assert checkpoints == [(5, item)]
             yield item
 
     class Doc:
@@ -169,6 +169,8 @@ def test_paged_notice_is_raw_saved_before_llm_refinement(monkeypatch):
 
     inserts = []
     asset_writes = []
+    checkpoints = []
+    stages = []
     progress = []
     monkeypatch.setattr(ingest, "CRAWLERS", [PagedCrawler()])
     monkeypatch.setattr(ingest, "init_db", lambda: None)
@@ -176,6 +178,17 @@ def test_paged_notice_is_raw_saved_before_llm_refinement(monkeypatch):
     monkeypatch.setattr(ingest, "archive_documents", lambda **_kwargs: 0)
     monkeypatch.setattr(ingest, "upsert_source", lambda **_kwargs: 5)
     monkeypatch.setattr(ingest, "select_crawl_records", lambda _sid, records, **_kwargs: records)
+    monkeypatch.setattr(ingest, "load_crawl_checkpoints", lambda _sid: [])
+    monkeypatch.setattr(
+        ingest,
+        "save_crawl_checkpoint",
+        lambda source_id, value: checkpoints.append((source_id, value)),
+    )
+    monkeypatch.setattr(
+        ingest,
+        "mark_crawl_url_stage",
+        lambda url, status, stage: stages.append((url, status, stage)),
+    )
     monkeypatch.setattr(ingest, "insert_document", lambda **kwargs: inserts.append(kwargs) or 41)
     monkeypatch.setattr(ingest, "insert_assets", lambda notice_id, assets: asset_writes.append((notice_id, assets)))
     monkeypatch.setattr(ingest, "refine", lambda _values: [(Doc(), item["assets"], None)])
@@ -187,10 +200,86 @@ def test_paged_notice_is_raw_saved_before_llm_refinement(monkeypatch):
 
     result = ingest.run_ingest(on_progress=progress.append)
 
-    assert [call.get("extraction_version") for call in inserts] == ["raw-v1", None]
+    assert len(inserts) == 1
+    assert checkpoints == [(5, item)]
+    assert stages == [(item["url"], "refining", "LLM 정제·임베딩 중")]
     assert asset_writes == [(41, item["assets"])]
     assert [event["status"] for event in progress if event.get("url") == item["url"]] == [
-        "stored", "refining", "complete",
+        "ready", "refining", "complete",
     ]
     assert sum(event.get("saved_increment", 0) for event in progress) == 1
     assert result["inserted"] == 1
+
+
+def test_paged_notice_resumes_from_checkpoint_without_downloading_again(monkeypatch):
+    import embedding.rebuild as rebuild
+    import pipelines.ingest as ingest
+
+    item = {
+        "url": "https://example.test/resume",
+        "title": "중단 후 재개 공지",
+        "content": "본문",
+        "body_content": "본문",
+        "date": "2026-09-16",
+        "assets": [{"kind": "attachment", "source_url": "https://example.test/a.pdf"}],
+        "_crawl_page": 1,
+    }
+
+    class PagedCrawler:
+        SOURCE_CODE = "paged"
+        SOURCE_NAME = "페이지 공지"
+        KIND = "notice"
+        DEPARTMENT = "공통"
+        BASE_URL = "https://example.test"
+
+        def detect_total_pages(self):
+            return 1
+
+        def collect_pinned_urls(self):
+            return set()
+
+        def crawling(self, **_kwargs):
+            return iter(())
+
+    class Doc:
+        title = item["title"]
+        content = item["content"]
+        url = item["url"]
+        category = "일반(기타)"
+        target = None
+        start_date = None
+        end_date = None
+        keywords = []
+        summary = "요약"
+        topics = []
+        series_key = None
+        periods = []
+        audiences = []
+        application = None
+        extraction_confidence = 0.9
+
+    completed = []
+    monkeypatch.setattr(ingest, "CRAWLERS", [PagedCrawler()])
+    monkeypatch.setattr(ingest, "init_db", lambda: None)
+    monkeypatch.setattr(ingest, "sync_pinned_urls", lambda _urls: None)
+    monkeypatch.setattr(ingest, "archive_documents", lambda **_kwargs: 0)
+    monkeypatch.setattr(ingest, "upsert_source", lambda **_kwargs: 5)
+    monkeypatch.setattr(ingest, "load_crawl_checkpoints", lambda _sid: [item])
+    monkeypatch.setattr(ingest, "mark_crawl_url_stage", lambda *_args: None)
+    monkeypatch.setattr(ingest, "refine", lambda _values: [(Doc(), item["assets"], None)])
+    monkeypatch.setattr(ingest, "embed_document_chunks", lambda **_kwargs: [])
+    monkeypatch.setattr(ingest, "insert_document", lambda **_kwargs: 42)
+    monkeypatch.setattr(ingest, "insert_assets", lambda *_args: None)
+    monkeypatch.setattr(ingest, "insert_chunks", lambda *_args: None)
+    monkeypatch.setattr(
+        ingest,
+        "mark_crawl_url_completed",
+        lambda url, **_kwargs: completed.append(url),
+    )
+    monkeypatch.setattr(ingest, "clear_extraction_review", lambda _url: None)
+    monkeypatch.setattr(rebuild, "sync_stale_datasets", lambda: None)
+
+    result = ingest.run_ingest()
+
+    assert result["inserted"] == 1
+    assert completed == [item["url"]]

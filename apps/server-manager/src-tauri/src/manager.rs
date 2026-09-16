@@ -269,7 +269,7 @@ fn cleanup_interrupted_crawl(state: &ManagerState) {
         Ok(output) if output.status.success() => push_log(
             &state.logs,
             format!(
-                "[manager] cleared {} interrupted crawl state entries",
+                "[manager] recovered interrupted crawl and cleared {} transient entries",
                 String::from_utf8_lossy(&output.stdout).trim()
             ),
         ),

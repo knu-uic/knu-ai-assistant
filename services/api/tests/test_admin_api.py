@@ -145,6 +145,11 @@ def test_crawl_status_reports_url_registry_counts(monkeypatch):
 
     monkeypatch.setattr(admin, "pool", Pool())
     monkeypatch.setattr(admin, "get_arq_pool", get_pool)
+    monkeypatch.setattr(
+        admin,
+        "load_crawl_progress",
+        lambda: {"status": "running", "processed": 7, "saved": 5},
+    )
 
     result = asyncio.run(admin.crawl_status())
 

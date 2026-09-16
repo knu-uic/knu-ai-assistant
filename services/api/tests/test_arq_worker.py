@@ -87,6 +87,7 @@ def test_notice_crawl_stop_is_a_clean_result(monkeypatch):
             pass
 
     monkeypatch.setattr(arq_worker.redis_sync, "from_url", lambda _url: SyncRedis())
+    monkeypatch.setattr(arq_worker, "save_crawl_progress", lambda _value: None)
     monkeypatch.setitem(__import__("sys").modules, "pipelines.ingest", type("Ingest", (), {
         "run_ingest": staticmethod(lambda _request, on_progress: on_progress({"phase": "source"}))
     }))
@@ -129,6 +130,7 @@ def test_notice_crawl_pause_resumes_without_losing_progress(monkeypatch):
         return {"inserted": 1}
 
     monkeypatch.setattr(arq_worker.redis_sync, "from_url", lambda _url: SyncRedis())
+    monkeypatch.setattr(arq_worker, "save_crawl_progress", lambda _value: None)
     monkeypatch.setattr(arq_worker.time, "sleep", lambda _seconds: None)
     monkeypatch.setitem(__import__("sys").modules, "pipelines.ingest", type("Ingest", (), {
         "run_ingest": staticmethod(run_ingest)
