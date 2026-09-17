@@ -5,7 +5,20 @@
   align-items: start;
 }
 
-.crawl-settings { max-width: 920px; }
+.crawl-settings-stack {
+  display: grid;
+  gap: 16px;
+  max-width: 920px;
+}
+
+.crawl-settings { max-width: none; }
+.crawl-current-panel { border-color: #bddac9; background: linear-gradient(135deg, #f8fcf9, #fff); }
+.crawl-card-heading h3 { margin: 5px 0 5px; }
+.crawl-card-heading p { margin: 0; }
+.crawl-current-panel .crawl-state { margin-top: 16px; }
+.crawl-current-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.new-crawl-panel { border-color: #d8e0db; }
+.new-crawl-panel .crawl-heading h3 { margin: 5px 0; }
 .crawl-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
 .crawl-heading h3, .crawl-heading p { margin-top: 0; }
 .crawl-settings fieldset { display: grid; gap: 16px; margin: 0; padding: 0; border: 0; }
