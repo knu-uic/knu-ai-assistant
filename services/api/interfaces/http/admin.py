@@ -1,6 +1,7 @@
 """로컬 KNU Server Manager 전용 관리자 API."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 from datetime import date
@@ -953,6 +954,25 @@ async def asset_content(asset_id: int) -> FileResponse:
     if not path.is_file():
         raise HTTPException(status_code=404, detail="자산 파일이 디스크에 없습니다.")
     return FileResponse(path, media_type=mime_type, filename=str(row[2] or path.name))
+
+
+@router.get("/assets/{asset_id}/preview", dependencies=[Admin])
+async def asset_preview(asset_id: int) -> dict:
+    """Return a manager-only image preview without cross-origin image loading."""
+    async with pool.connection() as conn:
+        row = await (await conn.execute(
+            "SELECT storage_path,mime_type FROM notice_asset WHERE id=%s", (asset_id,)
+        )).fetchone()
+    if not row or not row[0]:
+        raise HTTPException(status_code=404, detail="저장된 자산 파일을 찾을 수 없습니다.")
+    mime_type = str(row[1] or "")
+    if not mime_type.startswith("image/"):
+        raise HTTPException(status_code=415, detail="미리보기를 지원하는 이미지 자산이 아닙니다.")
+    path = resolve_asset_path(str(row[0]))
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="자산 파일이 디스크에 없습니다.")
+    encoded = base64.b64encode(await anyio.Path(path).read_bytes()).decode("ascii")
+    return {"data_url": f"data:{mime_type};base64,{encoded}"}
 
 
 @router.get("/accounts", dependencies=[Admin])
