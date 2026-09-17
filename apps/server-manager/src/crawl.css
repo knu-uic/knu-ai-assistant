@@ -469,9 +469,47 @@
 .notice-resize-handle {
   position: absolute;
   z-index: 3;
+  touch-action: none;
+}
+
+.notice-resize-handle.n,
+.notice-resize-handle.s {
+  right: 14px;
+  left: 14px;
+  height: 10px;
+  cursor: ns-resize;
+}
+
+.notice-resize-handle.n {
+  top: -4px;
+}
+
+.notice-resize-handle.s {
+  bottom: -4px;
+}
+
+.notice-resize-handle.e,
+.notice-resize-handle.w {
+  top: 14px;
+  bottom: 14px;
+  width: 10px;
+  cursor: ew-resize;
+}
+
+.notice-resize-handle.e {
+  right: -4px;
+}
+
+.notice-resize-handle.w {
+  left: -4px;
+}
+
+.notice-resize-handle.nw,
+.notice-resize-handle.ne,
+.notice-resize-handle.sw,
+.notice-resize-handle.se {
   width: 18px;
   height: 18px;
-  touch-action: none;
 }
 
 .notice-resize-handle.nw {
