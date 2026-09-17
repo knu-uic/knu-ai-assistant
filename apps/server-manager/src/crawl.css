@@ -447,12 +447,23 @@
 }
 
 .notice-dialog {
-  width: min(860px, calc(100vw - 80px));
-  max-width: 860px;
-  height: min(760px, calc(100vh - 80px));
-  max-height: calc(100vh - 80px);
+  position: fixed;
+  z-index: 30;
+  top: 96px;
+  right: 30px;
+  bottom: auto;
+  left: auto;
+  width: min(660px, calc(100vw - 100px));
+  min-width: 420px;
+  max-width: calc(100vw - 20px);
+  height: min(680px, calc(100vh - 120px));
+  min-height: 300px;
+  max-height: calc(100vh - 20px);
+  margin: 0;
   padding: 0;
   overflow: hidden;
+  resize: both;
+  box-shadow: 0 18px 60px #0c171145;
 }
 
 .notice-dialog-head {
@@ -463,10 +474,28 @@
   padding: 16px 20px;
   border-bottom: 1px solid #e1e8e3;
   background: #f8faf9;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
-.notice-dialog-head > strong {
+.notice-dialog.dragging .notice-dialog-head {
+  cursor: grabbing;
+}
+
+.notice-dialog-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.notice-dialog-head strong {
   font-size: 14px;
+}
+
+.notice-dialog-head small {
+  color: #7a877f;
+  font-size: 10px;
+  font-weight: 500;
 }
 
 .notice-dialog-head button {
