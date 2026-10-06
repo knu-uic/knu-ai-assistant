@@ -1,4 +1,5 @@
 import base64
+import json
 from contextlib import contextmanager
 import fcntl
 import os
@@ -8,13 +9,13 @@ import tempfile
 import threading
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from pydantic import BaseModel, ValidationError
 from config import (
     CONTEXT_WINDOW_CHARS,
     REFINE_FULL_CONTENT_LIMIT,
-    RERANKER_MAX_LENGTH,
     ATTACHMENT_NAME_RESERVE_RATIO,
     VLM_PROVIDER,
     LLM_MODEL,
@@ -23,7 +24,6 @@ from config import (
     OPENAI_API_KEY,
     EMBEDDING_PROVIDER,
     EMBEDDING_MODEL,
-    RERANKER_MODEL,
 )
 from api.runtime_settings import load_settings
 from api.codex_oauth import codex_response
@@ -127,15 +127,20 @@ def get_attachment_name_reserve() -> int:
     return max(0, int(get_answer_context_char_budget() * ratio))
 
 
-@lru_cache(maxsize=1)
-def _get_reranker():
+@lru_cache(maxsize=2)
+def _get_reranker(model_name: str, max_length: int):
     # import을 lazy 하게: 다른 코드 경로(예: 크롤러)는 torch를 안 쓰는데
     # 모듈 top-level import면 매번 ~수 초 페널티가 붙는다.
     from sentence_transformers import CrossEncoder
     return CrossEncoder(
-        RERANKER_MODEL,
-        max_length=RERANKER_MAX_LENGTH,
+        model_name,
+        max_length=max_length,
+        local_files_only=True,
     )
+
+
+def clear_reranker_cache() -> None:
+    _get_reranker.cache_clear()
 
 
 # ── VLM 이미지 → 텍스트 유틸 ────────────────────────────────────
@@ -204,16 +209,83 @@ def image_to_text(image_bytes: bytes, mime: str, prompt: str, model: str = LLM_M
 def get_llm():
     settings = _active_vlm()
     provider = settings["provider"]
-    model = settings["model"] or LLM_MODEL
-    api_key = settings["api_key"]
     if provider == "openai-codex":
         # Codex 선택은 OCR/VLM 이미지 추출에만 적용하고, 공지 구조화와
         # RAG 답변은 기존 서버 LLM 설정을 유지한다.
         provider = {"local": "lmstudio", "openai-api": "openai", "gemini": "google"}.get(
             (VLM_PROVIDER or "local").lower(), (VLM_PROVIDER or "local").lower()
         )
-        model = LLM_MODEL
-        api_key = GOOGLE_API_KEY if provider == "google" else OPENAI_API_KEY
+        settings = {
+            **settings,
+            "provider": provider,
+            "model": LLM_MODEL,
+            "api_key": GOOGLE_API_KEY if provider == "google" else OPENAI_API_KEY,
+        }
+    return _text_llm(settings)
+
+
+def get_refine_llm():
+    """Use the independently configured notice-refinement model."""
+    settings = load_settings()["refine"]
+    if settings["provider"] == "openai-codex":
+        return _CodexRefineClient(settings["model"])
+    return _text_llm(settings)
+
+
+class RefineOutputError(ValueError):
+    """A model response could not be validated as notice metadata."""
+
+
+class _CodexRefineClient:
+    def __init__(self, model: str):
+        self.model = model
+
+    def with_structured_output(self, schema: type[BaseModel], **_kwargs):
+        return _CodexStructuredRefine(self.model, schema)
+
+
+class _CodexStructuredRefine:
+    def __init__(self, model: str, schema: type[BaseModel]):
+        self.model = model
+        self.schema = schema
+
+    def invoke(self, messages: list) -> BaseModel:
+        system_text = "\n\n".join(
+            str(message.content) for message in messages if isinstance(message, SystemMessage)
+        )
+        prompt = "\n\n".join(
+            str(message.content) for message in messages if not isinstance(message, SystemMessage)
+        )
+        instructions = (
+            f"{system_text}\n\n"
+            "Return exactly one JSON object matching the following schema. "
+            "Do not include markdown fences or explanatory text.\n"
+            f"{json.dumps(self.schema.model_json_schema(), ensure_ascii=False)}"
+        )
+        raw = codex_response(prompt, model=self.model, instructions=instructions).strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].removesuffix("```").strip()
+        try:
+            return self.schema.model_validate_json(raw)
+        except (ValidationError, ValueError) as exc:
+            raise RefineOutputError("Codex response did not match the notice schema") from exc
+
+    def batch(self, prompts: list, *, config=None, return_exceptions: bool = False) -> list:
+        results = []
+        for messages in prompts:
+            try:
+                results.append(self.invoke(messages))
+            except Exception as exc:
+                if not return_exceptions:
+                    raise
+                results.append(exc)
+        return results
+
+
+def _text_llm(settings: dict):
+    provider = settings["provider"]
+    model = settings["model"] or LLM_MODEL
+    api_key = settings["api_key"]
     if provider == "google":
         return ChatGoogleGenerativeAI(
             model=model,

@@ -1,4 +1,4 @@
-"""DB row tuple → API schema 매핑. 날짜는 ISO 문자열, target/keywords는 list[str]로 정규화."""
+"""DB row tuple → API schema 매핑. 날짜는 ISO 문자열, target은 list[str]로 정규화."""
 import math
 from datetime import date, datetime
 
@@ -55,13 +55,13 @@ def _deadline(end_date) -> tuple[str | None, str | None]:
 
 def notice_from_list_row(row) -> NoticeItem:
     (url, title, content, posted_at, start_date, end_date, category,
-     target, keywords, _code, source_name, _kind, department, *rest) = row
+     target, _topics, _code, source_name, _kind, department, *rest) = row
     summary = rest[0] if rest else None
     deadline_label, deadline_tone = _deadline(end_date)
     return NoticeItem(
         url=url, title=title, content=content, summary=summary,
         posted_at=_iso(posted_at), start_date=_iso(start_date), end_date=_iso(end_date),
-        category=category, target=_strlist(target), keywords=_strlist(keywords),
+        category=category, target=_strlist(target),
         source_name=source_name, department=department,
         deadline_label=deadline_label, deadline_tone=deadline_tone,
     )
@@ -69,7 +69,7 @@ def notice_from_list_row(row) -> NoticeItem:
 
 def result_from_search_row(row) -> SearchResult:
     (url, title, snippet, score, posted_at, start_date, end_date, category,
-     _target, _keywords, _code, _name, _kind, _dept, *rest) = row
+     _target, _topics, _code, _name, _kind, _dept, *rest) = row
     summary = rest[0] if rest else None
     figures = row[17] if len(row) > 17 else []
     return SearchResult(

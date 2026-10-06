@@ -67,7 +67,7 @@ def reset_db():
     """개발용 공지 데이터 초기화. 사용자·학적·LMS 데이터는 보존한다."""
     init_db()
     with psycopg.connect(DB_URL) as conn:
-        conn.execute("TRUNCATE TABLE notice RESTART IDENTITY CASCADE")
+        conn.execute("TRUNCATE TABLE content RESTART IDENTITY CASCADE")
         for table in _LEGACY_NOTICE_TABLES:
             conn.execute(
                 sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(table))
@@ -85,11 +85,13 @@ def init_db():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS embedding_dataset (
-                id BIGSERIAL PRIMARY KEY,
+                embedding_dataset_id BIGSERIAL PRIMARY KEY,
                 provider VARCHAR(40) NOT NULL,
                 model VARCHAR(255) NOT NULL,
                 dimension INT NOT NULL CHECK (dimension > 0 AND dimension <= 4096),
                 base_url VARCHAR(1000) NOT NULL DEFAULT '',
+                chunk_size INT NOT NULL DEFAULT 280,
+                chunk_overlap INT NOT NULL DEFAULT 80,
                 status VARCHAR(20) NOT NULL DEFAULT 'ready',
                 completed_notices INT NOT NULL DEFAULT 0,
                 total_notices INT NOT NULL DEFAULT 0,
@@ -99,31 +101,35 @@ def init_db():
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                 completed_at TIMESTAMPTZ,
                 last_synced_at TIMESTAMPTZ,
-                UNIQUE(provider, model, dimension, base_url)
+                UNIQUE(provider, model, dimension, base_url, chunk_size, chunk_overlap)
             )
             """
         )
         dataset_id = conn.execute(
             """
-            INSERT INTO embedding_dataset(provider, model, dimension, base_url)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT(provider, model, dimension, base_url) DO UPDATE
+            INSERT INTO embedding_dataset(
+                provider, model, dimension, base_url, chunk_size, chunk_overlap
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT(provider, model, dimension, base_url, chunk_size, chunk_overlap) DO UPDATE
             SET updated_at = embedding_dataset.updated_at
-            RETURNING id
+            RETURNING embedding_dataset_id
             """,
             (
                 "ollama",
                 os.getenv("EMBEDDING_MODEL") or "bge-m3:latest",
                 EMBEDDING_DIM,
                 "http://127.0.0.1:11434/v1",
+                280,
+                80,
             ),
         ).fetchone()[0]
         conn.execute(
             sql.SQL(
                 """
-                CREATE TABLE IF NOT EXISTS notice_chunk (
-                    id BIGSERIAL PRIMARY KEY,
-                    notice_id BIGINT NOT NULL REFERENCES notice(id) ON DELETE CASCADE,
+                CREATE TABLE IF NOT EXISTS content_chunk (
+                    chunk_id BIGSERIAL PRIMARY KEY,
+                    content_id BIGINT NOT NULL REFERENCES content(content_id) ON DELETE CASCADE,
                     chunk_idx INT NOT NULL,
                     content TEXT NOT NULL,
                     chunk_type VARCHAR(20) NOT NULL DEFAULT 'body',
@@ -133,10 +139,10 @@ def init_db():
                     embedding_model VARCHAR(255) NOT NULL DEFAULT 'bge-m3:latest',
                     embedding_dimension INT NOT NULL DEFAULT {embedding_dim},
                     embedding_dataset_id BIGINT NOT NULL
-                        REFERENCES embedding_dataset(id) ON DELETE CASCADE
+                        REFERENCES embedding_dataset(embedding_dataset_id) ON DELETE CASCADE
                         DEFAULT {dataset_id},
                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    UNIQUE(embedding_dataset_id, notice_id, chunk_idx)
+                    UNIQUE(embedding_dataset_id, content_id, chunk_idx)
                 )
                 """
             ).format(
@@ -145,14 +151,14 @@ def init_db():
             )
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_notice_chunk_notice ON notice_chunk(notice_id)"
+            "CREATE INDEX IF NOT EXISTS idx_content_chunk_content ON content_chunk(content_id)"
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_notice_chunk_dataset_notice "
-            "ON notice_chunk(embedding_dataset_id, notice_id)"
+            "CREATE INDEX IF NOT EXISTS idx_content_chunk_dataset_content "
+            "ON content_chunk(embedding_dataset_id, content_id)"
         )
         conn.commit()
-    print("✅ 통합 notice v2 스키마 준비 완료")
+    print("✅ 정규화 content v4 스키마 준비 완료")
 
 
 __all__ = [

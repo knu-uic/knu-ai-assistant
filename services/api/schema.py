@@ -20,7 +20,6 @@ NoticeAudienceKind = Literal[
     "eligibility",
 ]
 
-TopicText = Annotated[str, Field(max_length=160)]
 DocumentNameText = Annotated[str, Field(max_length=300)]
 EvidenceText = Annotated[str, Field(max_length=800)]
 
@@ -86,16 +85,6 @@ class RefinementSchema(BaseModel):
         )
     )
     category: NoticeCategory = Field(description="글의 대표 대분류 카테고리")
-    topics: list[TopicText] = Field(
-        min_length=1,
-        max_length=5,
-        description="본문의 핵심 주제·제도·활동을 나타내는 복수 topic 1~5개"
-    )
-    series_key: str | None = Field(
-        default=None,
-        max_length=120,
-        description="매년 반복되는 같은 계열 공지를 묶는 영문 kebab-case 식별자",
-    )
     periods: list[NoticePeriodSchema] = Field(
         default_factory=list,
         max_length=12,
@@ -110,11 +99,6 @@ class RefinementSchema(BaseModel):
         default_factory=NoticeApplicationSchema,
         description="신청 방법·제출서류·문의처·혜택",
     )
-    extraction_confidence: float = Field(
-        ge=0,
-        le=1,
-        description="전체 구조화 결과의 신뢰도",
-    )
 
 
 class MetadataSchema(BaseModel):
@@ -124,17 +108,13 @@ class MetadataSchema(BaseModel):
     content: str = Field(description="게시판 글 본문 원본")
     summary: str
     category: NoticeCategory
-    topics: list[str] = Field(default_factory=list)
-    series_key: str | None = None
     periods: list[NoticePeriodSchema] = Field(default_factory=list)
     audiences: list[NoticeAudienceSchema] = Field(default_factory=list)
     application: NoticeApplicationSchema = Field(default_factory=NoticeApplicationSchema)
-    extraction_confidence: float | None = Field(default=None, ge=0, le=1)
 
     # v2 저장 전환 동안 기존 조회 계약을 유지하기 위해 구조화 필드에서 계산한다.
     target: list[str] = Field(default_factory=lambda: ["전체"])
     start_date: str | None = None
     end_date: str | None = None
-    keywords: list[str] = Field(default_factory=list)
 
     url: str = Field(description="게시글 URL")

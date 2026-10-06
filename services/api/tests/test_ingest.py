@@ -179,6 +179,8 @@ def test_paged_notice_is_checkpointed_before_llm_refinement(monkeypatch):
     monkeypatch.setattr(ingest, "upsert_source", lambda **_kwargs: 5)
     monkeypatch.setattr(ingest, "select_crawl_records", lambda _sid, records, **_kwargs: records)
     monkeypatch.setattr(ingest, "load_crawl_checkpoints", lambda _sid: [])
+    monkeypatch.setattr(ingest, "load_crawl_detail_checkpoints", lambda _sid: {})
+    monkeypatch.setattr(ingest, "save_crawl_attachment_checkpoint", lambda *_args: None)
     monkeypatch.setattr(
         ingest,
         "save_crawl_checkpoint",
@@ -202,10 +204,14 @@ def test_paged_notice_is_checkpointed_before_llm_refinement(monkeypatch):
 
     assert len(inserts) == 1
     assert checkpoints == [(5, item)]
-    assert stages == [(item["url"], "refining", "LLM 정제·임베딩 중")]
+    assert stages == [
+        (item["url"], "refining", "LLM 정제 중 · 카테고리·대상·일정·요약 분석"),
+        (item["url"], "refining", "임베딩 생성 중"),
+        (item["url"], "refining", "DB 저장 중"),
+    ]
     assert asset_writes == [(41, item["assets"])]
     assert [event["status"] for event in progress if event.get("url") == item["url"]] == [
-        "ready", "refining", "complete",
+        "ready", "refining", "refining", "refining", "complete",
     ]
     assert sum(event.get("saved_increment", 0) for event in progress) == 1
     assert result["inserted"] == 1
@@ -265,6 +271,8 @@ def test_paged_notice_resumes_from_checkpoint_without_downloading_again(monkeypa
     monkeypatch.setattr(ingest, "archive_documents", lambda **_kwargs: 0)
     monkeypatch.setattr(ingest, "upsert_source", lambda **_kwargs: 5)
     monkeypatch.setattr(ingest, "load_crawl_checkpoints", lambda _sid: [item])
+    monkeypatch.setattr(ingest, "load_crawl_detail_checkpoints", lambda _sid: {})
+    monkeypatch.setattr(ingest, "save_crawl_attachment_checkpoint", lambda *_args: None)
     monkeypatch.setattr(ingest, "mark_crawl_url_stage", lambda *_args: None)
     monkeypatch.setattr(ingest, "refine", lambda _values: [(Doc(), item["assets"], None)])
     monkeypatch.setattr(ingest, "embed_document_chunks", lambda **_kwargs: [])

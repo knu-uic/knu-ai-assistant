@@ -6,49 +6,54 @@ from db.pool import sync_pool
 from psycopg import sql
 
 
-def dataset_key(value: dict) -> tuple[str, str, int, str]:
+def dataset_key(value: dict) -> tuple[str, str, int, str, int, int]:
     return (
         str(value["provider"]),
         str(value["model"]),
         int(value["dimension"]),
         str(value.get("base_url") or "").rstrip("/"),
+        int(value.get("chunk_size", 280)),
+        int(value.get("chunk_overlap", 80)),
     )
 
 
 def ensure_dataset(value: dict, *, status: str = "stale") -> int:
-    provider, model, dimension, base_url = dataset_key(value)
+    provider, model, dimension, base_url, chunk_size, chunk_overlap = dataset_key(value)
     with sync_pool.connection() as conn:
         row = conn.execute(
             """
-            INSERT INTO embedding_dataset(provider, model, dimension, base_url, status)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT(provider, model, dimension, base_url) DO UPDATE
+            INSERT INTO embedding_dataset(
+                provider, model, dimension, base_url, chunk_size, chunk_overlap, status
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT(provider, model, dimension, base_url, chunk_size, chunk_overlap) DO UPDATE
             SET updated_at = now()
-            RETURNING id
+            RETURNING embedding_dataset_id
             """,
-            (provider, model, dimension, base_url, status),
+            (provider, model, dimension, base_url, chunk_size, chunk_overlap, status),
         ).fetchone()
         conn.commit()
     return int(row[0])
 
 
 def find_dataset(value: dict) -> dict | None:
-    provider, model, dimension, base_url = dataset_key(value)
+    provider, model, dimension, base_url, chunk_size, chunk_overlap = dataset_key(value)
     with sync_pool.connection() as conn:
         row = conn.execute(
             """
-            SELECT id, provider, model, dimension, base_url, status,
+            SELECT embedding_dataset_id, provider, model, dimension, base_url, chunk_size, chunk_overlap, status,
                    completed_notices, total_notices, total_chunks, error,
                    completed_at, last_synced_at
             FROM embedding_dataset
             WHERE provider=%s AND model=%s AND dimension=%s AND base_url=%s
+              AND chunk_size=%s AND chunk_overlap=%s
             """,
-            (provider, model, dimension, base_url),
+            (provider, model, dimension, base_url, chunk_size, chunk_overlap),
         ).fetchone()
     if not row:
         return None
     keys = (
-        "id", "provider", "model", "dimension", "base_url", "status",
+        "id", "provider", "model", "dimension", "base_url", "chunk_size", "chunk_overlap", "status",
         "completed_notices", "total_notices", "total_chunks", "error",
         "completed_at", "last_synced_at",
     )
@@ -59,17 +64,17 @@ def get_dataset(dataset_id: int) -> dict | None:
     with sync_pool.connection() as conn:
         row = conn.execute(
             """
-            SELECT id, provider, model, dimension, base_url, status,
+            SELECT embedding_dataset_id, provider, model, dimension, base_url, chunk_size, chunk_overlap, status,
                    completed_notices, total_notices, total_chunks, error,
                    completed_at, last_synced_at
-            FROM embedding_dataset WHERE id=%s
+            FROM embedding_dataset WHERE embedding_dataset_id=%s
             """,
             (dataset_id,),
         ).fetchone()
     if not row:
         return None
     keys = (
-        "id", "provider", "model", "dimension", "base_url", "status",
+        "id", "provider", "model", "dimension", "base_url", "chunk_size", "chunk_overlap", "status",
         "completed_notices", "total_notices", "total_chunks", "error",
         "completed_at", "last_synced_at",
     )
@@ -95,6 +100,8 @@ def activate_dataset(dataset_id: int, *, api_key: str = "") -> dict:
         "model": dataset["model"],
         "dimension": dataset["dimension"],
         "base_url": dataset["base_url"],
+        "chunk_size": dataset["chunk_size"],
+        "chunk_overlap": dataset["chunk_overlap"],
         "api_key": api_key or (
             previous.get("api_key", "")
             if previous.get("provider") == dataset["provider"] else ""
@@ -110,22 +117,23 @@ def list_datasets() -> list[dict]:
     with sync_pool.connection() as conn:
         rows = conn.execute(
             """
-            SELECT ed.id, ed.provider, ed.model, ed.dimension, ed.base_url,
+            SELECT ed.embedding_dataset_id, ed.provider, ed.model, ed.dimension, ed.base_url,
+                   ed.chunk_size, ed.chunk_overlap,
                    ed.status, ed.completed_notices, ed.total_notices,
-                   count(nc.id)::int AS actual_chunks,
+                   count(nc.chunk_id)::int AS actual_chunks,
                    (COALESCE(sum(pg_column_size(nc)), 0)::bigint
                     + COALESCE(pg_relation_size(to_regclass(
-                        'idx_notice_chunk_dataset_' || ed.id || '_hnsw'
+                        'idx_notice_chunk_dataset_' || ed.embedding_dataset_id || '_hnsw'
                       )), 0))::bigint AS bytes,
                    ed.error, ed.created_at, ed.completed_at, ed.last_synced_at
             FROM embedding_dataset ed
-            LEFT JOIN notice_chunk nc ON nc.embedding_dataset_id=ed.id
-            GROUP BY ed.id
-            ORDER BY ed.created_at, ed.id
+            LEFT JOIN content_chunk nc ON nc.embedding_dataset_id=ed.embedding_dataset_id
+            GROUP BY ed.embedding_dataset_id
+            ORDER BY ed.created_at, ed.embedding_dataset_id
             """
         ).fetchall()
     keys = (
-        "id", "provider", "model", "dimension", "base_url", "status",
+        "id", "provider", "model", "dimension", "base_url", "chunk_size", "chunk_overlap", "status",
         "completed_notices", "total_notices", "total_chunks", "bytes",
         "error", "created_at", "completed_at", "last_synced_at",
     )
@@ -146,7 +154,7 @@ def mark_other_datasets_stale(active_id: int) -> None:
             """
             UPDATE embedding_dataset
             SET status='stale', updated_at=now()
-            WHERE id<>%s AND status='ready'
+            WHERE embedding_dataset_id<>%s AND status='ready'
             """,
             (active_id,),
         )
@@ -158,14 +166,14 @@ def delete_dataset(dataset_id: int) -> int:
         raise ValueError("현재 사용 중인 임베딩 데이터셋은 삭제할 수 없습니다.")
     with sync_pool.connection() as conn:
         row = conn.execute(
-            "SELECT status FROM embedding_dataset WHERE id=%s", (dataset_id,)
+            "SELECT status FROM embedding_dataset WHERE embedding_dataset_id=%s", (dataset_id,)
         ).fetchone()
         if not row:
             raise ValueError("임베딩 데이터셋을 찾을 수 없습니다.")
         if row[0] == "building":
             raise ValueError("생성 중인 데이터셋은 삭제할 수 없습니다.")
         count = conn.execute(
-            "SELECT count(*) FROM notice_chunk WHERE embedding_dataset_id=%s",
+            "SELECT count(*) FROM content_chunk WHERE embedding_dataset_id=%s",
             (dataset_id,),
         ).fetchone()[0]
         conn.execute(
@@ -173,7 +181,7 @@ def delete_dataset(dataset_id: int) -> int:
                 sql.Identifier(f"idx_notice_chunk_dataset_{dataset_id}_hnsw")
             )
         )
-        conn.execute("DELETE FROM embedding_dataset WHERE id=%s", (dataset_id,))
+        conn.execute("DELETE FROM embedding_dataset WHERE embedding_dataset_id=%s", (dataset_id,))
         conn.commit()
     return int(count)
 
@@ -185,7 +193,7 @@ def ensure_search_index(dataset_id: int, dimension: int) -> str:
     with sync_pool.connection() as conn:
         conn.execute(
             sql.SQL(
-                "CREATE INDEX IF NOT EXISTS {} ON notice_chunk USING hnsw "
+                "CREATE INDEX IF NOT EXISTS {} ON content_chunk USING hnsw "
                 "((embedding::vector({})) vector_cosine_ops) "
                 "WHERE embedding_dataset_id = {}"
             ).format(

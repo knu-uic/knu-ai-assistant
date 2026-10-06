@@ -35,7 +35,6 @@ class StaticPageConfig:
     title_selector: str
     content_selector: str
     category: str = "기타"
-    keywords: tuple[str, ...] = ()
 
 
 def _clean_text(value: str) -> str:
@@ -244,7 +243,6 @@ class StaticPageCrawler:
                 "start_date": None,
                 "end_date": None,
                 "category": self.config.category,
-                "keywords": list(self.config.keywords),
                 "url": self.config.page_url,
             },
         }]

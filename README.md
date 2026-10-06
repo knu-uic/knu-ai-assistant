@@ -6,7 +6,7 @@
 
 ![React](https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
-![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C)
+![MCP](https://img.shields.io/badge/MCP-Tool%20Calling-1C3C3C)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL%20%2B%20pgvector-4169E1?logo=postgresql&logoColor=white)
 
 ![KNU PICK Web 홈 화면](docs/images/knu-pick-web.png)
@@ -26,6 +26,7 @@ KNU PICK 웹이 기본 사용자 화면이며, FastAPI 서버가 공지 수집, 
 - 공주대 포털 로그인과 학적, 시간표, 학점, 성적 정보 동기화
 - LMS 과목, 과제, 공지와 미완료 학습 항목 동기화
 - 개인화된 공지·학사 정보를 제공하는 KNU PICK 웹
+- 학생별 개인 LLM 계정·모델 선택과 KNU MCP 도구 호출 기반 웹 대화
 - 외부 AI 클라이언트를 위한 MCP 도구와 Codmes 네이티브 플러그인
 
 ## 처리 흐름
@@ -40,7 +41,7 @@ KNU PICK 웹이 기본 사용자 화면이며, FastAPI 서버가 공지 수집, 
 |---|---|
 | Web | React 18, Vite 5 |
 | API | FastAPI, Uvicorn, JWT, SSE |
-| AI / RAG | LangGraph, LangChain, BGE reranker, LLM·Embedding provider 추상화 |
+| AI / RAG | KNU MCP 도구 호출, LangChain, BGE reranker, LLM·Embedding provider 추상화 |
 | Data | PostgreSQL 16, pgvector, HNSW, Redis |
 | Background | ARQ Worker |
 | Crawling / Sync | Playwright, BeautifulSoup, OCR, 문서 포맷별 extractor |
@@ -52,7 +53,6 @@ apps/web/                    KNU PICK React/Vite 웹
 apps/server-manager/         로컬 KNU API·worker를 관리하는 Tauri 데스크톱 앱
 services/api/                FastAPI, 데이터 수집·검색, 포털/LMS 동기화, MCP
 docs/                        KNUIS·로그인 조사 문서
-tools/knuis-debugger/        KNUIS 통신을 확인하는 개발 도구
 ```
 
 웹과 외부 연동 클라이언트는 `services/api`의 공통 도메인과 저장소를 사용합니다.

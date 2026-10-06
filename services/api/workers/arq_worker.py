@@ -193,6 +193,13 @@ def _merge_crawl_progress(progress: dict, update: dict) -> None:
         })
         page["status"] = "listed"
         page["total"] = len(update.get("notices") or [])
+        existing_orders = [
+            int(notice.get("queue_order"))
+            for existing_page in source["pages"].values()
+            for notice in existing_page.get("notices", {}).values()
+            if str(notice.get("queue_order") or "").isdigit()
+        ]
+        next_queue_order = max(existing_orders, default=0)
         for notice in update.get("notices") or []:
             url = notice["url"]
             restored = None
@@ -202,13 +209,19 @@ def _merge_crawl_progress(progress: dict, update: dict) -> None:
             for other_key, other_page in source["pages"].items():
                 if other_key != str(page_number):
                     restored = other_page.get("notices", {}).pop(url, None) or restored
-            page["notices"].setdefault(url, restored or {
+            item = page["notices"].setdefault(url, restored or {
                 "url": notice["url"],
                 "title": notice.get("title") or "제목 확인 중",
                 "status": "pending",
                 "stage": "대기",
                 "attachments": {},
             })
+            # The queue number is assigned once, when the URL first appears in
+            # the run.  Re-listing during resume must preserve it so the UI can
+            # show the same planned order before and after a restart.
+            if not str(item.get("queue_order") or "").isdigit():
+                next_queue_order += 1
+                item["queue_order"] = next_queue_order
     elif event in {"source_status", "page_status", "notice_status", "attachment_status"} and source is not None:
         if event == "source_status":
             for key in ("status", "processed", "saved", "failed"):
@@ -246,7 +259,7 @@ def _merge_crawl_progress(progress: dict, update: dict) -> None:
             elif event == "attachment_status":
                 name = str(update.get("attachment_name") or "첨부파일")
                 attachment = notice["attachments"].setdefault(name, {"name": name})
-                for key in ("status", "stage", "error", "size"):
+                for key in ("status", "stage", "error", "size", "substeps"):
                     if key in update and update[key] is not None:
                         attachment[key] = update[key]
 
@@ -285,7 +298,7 @@ def _merge_crawl_progress(progress: dict, update: dict) -> None:
         )
 
     structural_keys = {"event", "pages", "notices", "page", "url", "title",
-                       "attachments", "attachment_name", "document_id", "size"}
+                       "attachments", "attachment_name", "document_id", "size", "substeps"}
     if event:
         structural_keys.update({"status", "stage", "error"})
     for key, value in update.items():
@@ -313,9 +326,8 @@ def step_key(job_id: str) -> str:
 
 
 async def portal_sync(ctx: dict, username: str, student_id: str, enc_password: str) -> dict:
-    """포털 동기화 1회. 성공 시 accounts.student_id 연결까지 수행한다."""
+    """포털 계정의 학적 데이터를 한 번 동기화한다."""
     from api.crypto import decrypt_secret
-    from db.accounts import link_student_id
     from sync.knuis_sync import run_portal_sync
 
     job_id = ctx.get("job_id", "")
@@ -333,8 +345,6 @@ async def portal_sync(ctx: dict, username: str, student_id: str, enc_password: s
     finally:
         del password  # 사용 즉시 참조 제거 (영속화 없음)
 
-    if result.get("success"):
-        await asyncio.to_thread(link_student_id, username, student_id)
     r.close()
     return result
 

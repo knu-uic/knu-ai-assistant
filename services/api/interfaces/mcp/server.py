@@ -22,11 +22,10 @@ from api.deps import decode_access_token, portal_student_id
 from api.jobs import get_arq_pool
 from api.ratelimit import allow_rate_limited_request
 from config import MCP_AUTH_TOKEN, RATE_LIMIT_MCP
-from db.accounts import get_account
-from db.documents import get_document_content, list_notices_for_scan
+from db.documents import get_document_content, get_notice_application_urls, list_content_for_scan
 from db.lms import get_lms_courses, get_lms_tasks
 from db.users import get_user
-from retrieval.graph import retrieve_mcp_evidence
+from retrieval.evidence import retrieve_mcp_evidence
 
 
 _DETAIL_CONTENT_LIMIT = 12000
@@ -92,9 +91,6 @@ def _student_id_for_principal(principal: str | None) -> str | None:
     if not principal or principal == "internal-service":
         return None
     student_id = portal_student_id(principal)
-    if student_id is None:
-        account = get_account(principal)
-        student_id = account.get("student_id") if account else None
     return str(student_id) if student_id else None
 
 
@@ -223,25 +219,27 @@ def _build_evidence_package(retrieval: dict) -> dict:
         raw_body = str(context.get("body_content") or context.get("snippet") or "")
         body = raw_body[:body_remaining]
         body_remaining -= len(body)
-        documents.append(
-            {
-                "url": context.get("url") or "",
-                "title": context.get("title") or "",
-                "category": context.get("category"),
-                "source_name": context.get("source_name"),
-                "source_department": context.get("source_department"),
-                "posted_at": _date_text(context.get("posted_at")),
-                "start_date": _date_text(context.get("start_date")),
-                "end_date": _date_text(context.get("end_date")),
-                "summary": context.get("summary"),
-                "body_content": body or None,
-                "attachment_names": [
-                    str(name) for name in (context.get("attachment_names") or [])
-                ],
-                "related_images": context.get("related_images") or [],
-                "truncated": len(body) < len(raw_body),
-            }
-        )
+        document = {
+            "url": context.get("url") or "",
+            "title": context.get("title") or "",
+            "category": context.get("category"),
+            "source_name": context.get("source_name"),
+            "source_kind": context.get("source_kind"),
+            "source_department": context.get("source_department"),
+            "posted_at": _date_text(context.get("posted_at")),
+            "start_date": _date_text(context.get("start_date")),
+            "end_date": _date_text(context.get("end_date")),
+            "summary": context.get("summary"),
+            "body_content": body or None,
+            "attachment_names": [
+                str(name) for name in (context.get("attachment_names") or [])
+            ],
+            "related_images": context.get("related_images") or [],
+            "truncated": len(body) < len(raw_body),
+        }
+        if "application_url" in context:
+            document["application_url"] = context["application_url"]
+        documents.append(document)
 
     evidence_rows = retrieval.get("evidence_chunks") or []
     if query_mode == "broad":
@@ -266,6 +264,7 @@ def _build_evidence_package(retrieval: dict) -> dict:
                 "title": evidence.get("title") or "",
                 "category": evidence.get("category"),
                 "source_name": evidence.get("source_name"),
+                "source_kind": evidence.get("source_kind"),
                 "source_department": evidence.get("source_department"),
                 "content": content,
                 "vector_score": _finite_score(evidence.get("vector_score")),
@@ -287,6 +286,7 @@ def _build_evidence_package(retrieval: dict) -> dict:
         "time_scope": retrieval.get("time_scope") or "current",
         "year": retrieval.get("year"),
         "notice_ids": list(retrieval.get("notice_ids") or []),
+        "source_kind": retrieval.get("source_kind"),
         "personalization": retrieval.get("personalization") or {},
         "routing_fallback": bool(retrieval.get("routing_fallback")),
         "documents": documents,
@@ -340,11 +340,16 @@ class _McpAuthenticationMiddleware:
 mcp = FastMCP(
     "KNU Notice Evidence",
     instructions=(
-        "Use tool discovery groups knu.notices, knu.lms, knu.portal, and knu.account. "
+        "Use tool discovery groups knu.notice, knu.academic, knu.lms, knu.portal, and knu.account. "
         "Use knu_list_notices for counts, lists, filters, current/open status, and sorting. "
         "Omit department for a school-wide or personalized request; it only accepts a supported specific department. "
         "Use knu_search_notice_details for a specific notice's dates, requirements, procedures, "
         "or attachment evidence. Combine them for comparison questions. "
+        "Set include_application_url=true only when the user asks where or how to apply, "
+        "or an application link is necessary to answer. Never present a notice source URL as an application link. "
+        "If application_url is null, do not invent an application link. "
+        "Use knu_list_academic_documents and knu_search_academic_details for stable academic guides "
+        "such as curricula and the university scholarship guide; these are not dated notices. "
         "Use portal tools for the signed-in student's grades, timetable, graduation data, and profile. "
         "Use LMS tools for the signed-in student's courses and tasks. "
         "Use this exact staged flow for counseling requests. First ask for the advisor name and whether the user wants online or visit counseling; do not call a counseling tool until both are known. "
@@ -357,7 +362,8 @@ mcp = FastMCP(
 
 _GROUP_DESCRIPTIONS = {
     "knu": "공주대학교 공지, LMS, 포털 학적정보와 계정 데이터를 조회합니다.",
-    "knu.notices": "학교·학과 공지의 목록, 본문, 첨부 근거와 관련 그림을 검색합니다.",
+    "knu.notice": "학교·학과의 실제 게시 공지 목록, 본문, 첨부 근거와 관련 그림을 검색합니다.",
+    "knu.academic": "교과과정표·장학안내 같은 상시 학사정보 문서를 검색합니다.",
     "knu.lms": "로그인한 학생의 LMS 과목과 학습활동을 조회합니다.",
     "knu.portal": "로그인한 학생의 학적, 시간표, 성적과 졸업 데이터를 조회합니다.",
     "knu.account": "KNU 계정의 학적정보와 동기화 상태를 조회합니다.",
@@ -387,7 +393,7 @@ def _read_only_tool(name: str, group: str) -> dict[str, Any]:
     }
 
 
-@mcp.tool(**_read_only_tool("knu_list_notices", "knu.notices"))
+@mcp.tool(**_read_only_tool("knu_list_notices", "knu.notice"))
 async def knu_list_notices(
     category: Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"] | None = None,
     status: Literal["any", "open", "upcoming", "closed"] = "any",
@@ -400,7 +406,7 @@ async def knu_list_notices(
     """공주대학교 공지의 목록·개수·마감 상태를 필터로 조회합니다. 절차, 본문, 첨부 근거나 그림에는 사용하지 않습니다. List or count only."""
     user_scope = await _personalization(department, grade)
     result = await anyio.to_thread.run_sync(
-        list_notices_for_scan,
+        list_content_for_scan,
         category,
         status,
         date.today(),
@@ -411,37 +417,15 @@ async def knu_list_notices(
         topic,
         "posted_at",
         0,
+        30,
+        "notice",
     )
     result["personalization"] = user_scope
     return result
 
 
-@mcp.tool(**_read_only_tool("knu_search_notice_details", "knu.notices"))
-async def knu_search_notice_details(
-    query: Annotated[str, Field(description="찾으려는 구체적인 사실, 방법 또는 절차")],
-    department: DepartmentFilter = None,
-    category: Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"] | None = None,
-    time_scope: Literal["current", "historical", "all"] = "current",
-    year: YearFilter = None,
-    notice_ids: Annotated[
-        list[int] | None,
-        Field(description="목록 조회 결과에서 선택한 공지 ID"),
-    ] = None,
-) -> ToolResult:
-    """특정 공지의 방법·절차·본문·첨부 근거와 관련 그림을 임베딩 및 reranking으로 상세 검색합니다. 반환된 안전한 그림 참조만 답변에 사용할 수 있습니다."""
-    user_scope = await _personalization(department)
-    retrieval = await anyio.to_thread.run_sync(
-        retrieve_mcp_evidence,
-        query,
-        user_scope["department"],
-        category,
-        time_scope,
-        year,
-        notice_ids,
-    )
-    retrieval["personalization"] = user_scope
+def _evidence_tool_result(retrieval: dict) -> ToolResult:
     package = _build_evidence_package(retrieval)
-
     evidence_by_url = {
         evidence["url"]: evidence for evidence in package["evidence_chunks"]
     }
@@ -452,46 +436,136 @@ async def knu_search_notice_details(
             {
                 "url": document["url"],
                 "title": document["title"],
-                "snippet": (
-                    evidence["content"]
-                    if evidence
-                    else document["summary"] or document["body_content"]
-                ),
+                "snippet": evidence["content"] if evidence else document["summary"] or document["body_content"],
                 "score": (
                     evidence["rerank_score"]
                     if evidence and evidence["rerank_score"] is not None
-                    else (
-                        evidence["vector_score"]
-                        if evidence and evidence["vector_score"] is not None
-                        else 0.0
-                    )
+                    else (evidence["vector_score"] if evidence and evidence["vector_score"] is not None else 0.0)
                 ),
                 "posted_at": document["posted_at"],
                 "start_date": document["start_date"],
                 "end_date": document["end_date"],
                 "category": document["category"],
                 "source_name": document["source_name"],
+                "source_kind": document["source_kind"],
                 "source_department": document["source_department"],
                 "summary": document["summary"],
+                **({"application_url": document["application_url"]} if "application_url" in document else {}),
             }
         )
+    return ToolResult(content=legacy, structured_content=package)
 
-    return ToolResult(
-        content=legacy,
-        structured_content=package,
+
+@mcp.tool(**_read_only_tool("knu_search_notice_details", "knu.notice"))
+async def knu_search_notice_details(
+    query: Annotated[str, Field(description="찾으려는 구체적인 공지의 사실, 방법 또는 절차")],
+    department: DepartmentFilter = None,
+    category: Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"] | None = None,
+    time_scope: Literal["current", "historical", "all"] = "current",
+    year: YearFilter = None,
+    notice_ids: Annotated[list[int] | None, Field(description="목록 조회 결과에서 선택한 공지 ID")] = None,
+    include_application_url: Annotated[
+        bool,
+        Field(description="신청 방법·신청 링크를 묻거나 답변에 신청 링크가 꼭 필요할 때만 true. 그 외에는 false"),
+    ] = False,
+) -> ToolResult:
+    """게시 공지의 방법·절차·본문·첨부 근거와 관련 그림을 임베딩 및 reranking으로 상세 검색합니다. 상시 학사정보 문서는 제외합니다."""
+    user_scope = await _personalization(department)
+    retrieval = await anyio.to_thread.run_sync(
+        retrieve_mcp_evidence,
+        query,
+        user_scope["department"],
+        category,
+        time_scope,
+        year,
+        notice_ids,
+        "notice",
     )
+    retrieval["personalization"] = user_scope
+    if include_application_url:
+        contexts = retrieval.get("contexts") or []
+        urls = [context.get("url") for context in contexts if context.get("url")]
+        links = await anyio.to_thread.run_sync(get_notice_application_urls, urls)
+        for context in contexts:
+            context["application_url"] = links.get(context.get("url"))
+    return _evidence_tool_result(retrieval)
 
 
-@mcp.tool(**_read_only_tool("knu_get_notice_detail", "knu.notices"))
+@mcp.tool(**_read_only_tool("knu_get_notice_detail", "knu.notice"))
 async def knu_get_notice_detail(
-    url: Annotated[str, Field(description="검색 결과에 포함된 공지 원문 URL")],
+    url: Annotated[str, Field(description="공지 검색 결과에 포함된 원문 URL")],
 ) -> dict:
-    """상세 검색 결과가 반환한 구체적인 공지 URL의 저장된 전체 본문을 조회합니다."""
-    content = await anyio.to_thread.run_sync(get_document_content, url)
+    """공지 검색 결과 URL의 저장된 전체 본문을 조회합니다. 학사정보 문서는 반환하지 않습니다."""
+    content = await anyio.to_thread.run_sync(get_document_content, url, None, "notice")
     content = content or ""
     return {
         "content": content[:_DETAIL_CONTENT_LIMIT],
         "url": url,
+        "source_kind": "notice",
+        "truncated": len(content) > _DETAIL_CONTENT_LIMIT,
+    }
+
+
+@mcp.tool(**_read_only_tool("knu_list_academic_documents", "knu.academic"))
+async def knu_list_academic_documents(
+    category: Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"] | None = None,
+    department: DepartmentFilter = None,
+    topic: Annotated[str | None, Field(description="찾을 상시 학사정보 주제어")] = None,
+) -> dict:
+    """교과과정표·장학안내 같은 상시 학사정보 문서 목록을 조회합니다. 게시 공지는 제외합니다."""
+    user_scope = await _personalization(department)
+    result = await anyio.to_thread.run_sync(
+        list_content_for_scan,
+        category,
+        "any",
+        date.today(),
+        "current",
+        user_scope["department"],
+        None,
+        None,
+        topic,
+        "posted_at",
+        0,
+        30,
+        "academic",
+    )
+    result["personalization"] = user_scope
+    return result
+
+
+@mcp.tool(**_read_only_tool("knu_search_academic_details", "knu.academic"))
+async def knu_search_academic_details(
+    query: Annotated[str, Field(description="찾으려는 교과과정·장학제도 등 상시 학사정보")],
+    department: DepartmentFilter = None,
+    category: Literal["장학", "수강", "취업(진로)", "행사(공모전)", "일반(기타)"] | None = None,
+) -> ToolResult:
+    """상시 학사정보 문서의 본문 근거를 임베딩 및 reranking으로 상세 검색합니다. 게시 공지는 제외합니다."""
+    user_scope = await _personalization(department)
+    retrieval = await anyio.to_thread.run_sync(
+        retrieve_mcp_evidence,
+        query,
+        user_scope["department"],
+        category,
+        "current",
+        None,
+        None,
+        "academic",
+    )
+    retrieval["personalization"] = user_scope
+    return _evidence_tool_result(retrieval)
+
+
+@mcp.tool(**_read_only_tool("knu_get_academic_detail", "knu.academic"))
+async def knu_get_academic_detail(
+    url: Annotated[str, Field(description="학사정보 검색 결과에 포함된 원문 URL")],
+) -> dict:
+    """학사정보 검색 결과 URL의 저장된 전체 본문을 조회합니다. 게시 공지는 반환하지 않습니다."""
+    content = await anyio.to_thread.run_sync(get_document_content, url, None, "academic")
+    content = content or ""
+    return {
+        "content": content[:_DETAIL_CONTENT_LIMIT],
+        "url": url,
+        "source_kind": "academic",
         "truncated": len(content) > _DETAIL_CONTENT_LIMIT,
     }
 

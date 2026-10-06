@@ -7,12 +7,12 @@ TODAY = date(2026, 6, 11)
 
 
 def _row(url, title, *, content="", end_date=None, category="academic",
-         target=None, keywords=None, department=None, summary=None):
+         target=None, department=None, summary=None):
     # get_documents SELECT 순서: url,title,content,posted_at,start_date,end_date,
-    # category,target,keywords,code,name,kind,department,summary
+    # category,target,legacy_topics_placeholder,code,name,kind,department,summary
     return (
         url, title, content, None, None, end_date,
-        category, target or [], keywords or [], "code", "name", "kind",
+        category, target or [], [], "code", "name", "kind",
         department, summary,
     )
 
@@ -23,10 +23,16 @@ def _fields(row):
 
 
 def test_interest_keyword_match_adds_10_each():
-    f = _fields(_row("u1", "장학금 신청 안내", keywords=["장학금"]))
+    f = _fields(_row("u1", "장학금 신청 안내"))
     score, matched = score_notice(f, ["장학금", "인턴"], None, None, TODAY)
     assert matched == ["장학금"]
     assert score == 10 + 1 * 0  # 키워드 1개 매칭 (target 없음)
+
+
+def test_interest_matches_content_even_when_summary_exists():
+    f = _fields(_row("u1", "공지", content="장학금 신청 안내", summary="지원 안내"))
+    score, matched = score_notice(f, ["장학금"], None, None, TODAY)
+    assert (score, matched) == (10, ["장학금"])
 
 
 def test_major_and_year_and_target_boost():
@@ -45,8 +51,8 @@ def test_deadline_boost_closer_is_higher():
 
 def test_build_home_ranks_and_filters_expired():
     rows = [
-        _row("hit", "인턴 채용 공고", keywords=["인턴"], target=["전체"]),
-        _row("expired", "지난 공지", keywords=["인턴"], end_date=TODAY - timedelta(days=1)),
+        _row("hit", "인턴 채용 공고", target=["전체"]),
+        _row("expired", "지난 인턴 공지", end_date=TODAY - timedelta(days=1)),
         _row("nomatch", "관련없는 공지"),
     ]
     out = build_home(rows, ["인턴"], None, None, today=TODAY)

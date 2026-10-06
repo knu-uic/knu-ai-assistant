@@ -222,7 +222,7 @@ def test_failed_hwp_originals_are_quarantined_without_opening_preview(monkeypatc
     monkeypatch.setattr(
         board_notice,
         "attachment_to_text",
-        lambda att, context, include_xlsx=False: (
+        lambda att, context, include_xlsx=False, **_kwargs: (
             f"[첨부: {att['filename']}]\n(처리 실패: test)",
             {
                 "kind": "attachment_hwp",
@@ -267,7 +267,7 @@ def test_successful_hwp_original_does_not_open_browser(monkeypatch):
     monkeypatch.setattr(
         board_notice,
         "attachment_to_text",
-        lambda att, context, include_xlsx=False: (
+        lambda att, context, include_xlsx=False, **_kwargs: (
             "[첨부: 요람.hwp]\n원본에서 추출한 전체 본문",
             {
                 "kind": "attachment_hwp",
@@ -508,15 +508,66 @@ def test_known_and_new_successes_can_meet_page_threshold(monkeypatch):
 
 
 def test_kongju_common_board_limits_parallelism_to_two():
-    from crawlers.sites.kongju import KONGJU_CRAWLERS
+    from crawlers.sites.notice.student_notice import STUDENT_NOTICE_CRAWLERS
 
-    assert KONGJU_CRAWLERS["main_notice"].config.max_workers == 2
+    assert STUDENT_NOTICE_CRAWLERS["main_notice"].config.max_workers == 2
 
 
 def test_kongju_common_board_uses_student_notice_display_name():
-    from crawlers.sites.kongju import KONGJU_CRAWLERS
+    from crawlers.sites.notice.student_notice import STUDENT_NOTICE_CRAWLERS
 
-    assert KONGJU_CRAWLERS["main_notice"].SOURCE_NAME == "공주대학교 학생 공지"
+    assert STUDENT_NOTICE_CRAWLERS["main_notice"].SOURCE_NAME == "공주대학교 학생 공지"
+
+
+def test_crawler_registry_separates_notice_and_academic_sources():
+    from crawlers.registry import ACADEMIC_CRAWLERS, CRAWLERS, NOTICE_CRAWLERS
+
+    assert [crawler.SOURCE_CODE for crawler in NOTICE_CRAWLERS] == [
+        "main_notice",
+        "cse_notice",
+        "software_notice",
+        "business_notice",
+    ]
+    assert [crawler.SOURCE_CODE for crawler in ACADEMIC_CRAWLERS] == [
+        "cse_curriculum",
+        "software_curriculum",
+        "business_curriculum",
+        "scholarship_info",
+    ]
+    assert all(crawler.KIND == "notice" for crawler in NOTICE_CRAWLERS)
+    assert all(crawler.KIND == "academic" for crawler in ACADEMIC_CRAWLERS)
+    assert CRAWLERS == [*NOTICE_CRAWLERS, *ACADEMIC_CRAWLERS]
+
+
+def test_software_department_notice_uses_verified_board_routes():
+    from crawlers.sites.notice.department.software import SOFTWARE_NOTICE_CRAWLERS
+
+    crawler = SOFTWARE_NOTICE_CRAWLERS["software_notice"]
+
+    assert crawler.SOURCE_NAME == "소프트웨어공학과 학과공지"
+    assert crawler.DEPARTMENT == "소프트웨어공학과"
+    assert crawler.config.list_url == "https://sw.kongju.ac.kr/ZD1180/11654/subview.do"
+    assert crawler.config.list_url_template == (
+        "https://sw.kongju.ac.kr/bbs/ZD1180/1423/artclList.do?page={page}"
+    )
+
+
+def test_software_curriculum_uses_verified_pdf_routes():
+    from crawlers.sites.academic.department.software import SOFTWARE_ACADEMIC_CRAWLERS
+
+    crawler = SOFTWARE_ACADEMIC_CRAWLERS["software_curriculum"]
+
+    assert crawler.SOURCE_NAME == "소프트웨어공학과 교과과정표"
+    assert crawler.DEPARTMENT == "소프트웨어공학과"
+    assert crawler.config.page_url == "https://sw.kongju.ac.kr/ZD1180/11630/subview.do"
+    assert crawler.config.pdf_url == (
+        "https://sw.kongju.ac.kr/documentViewer/ZD1180/257/1258/fileDown.do"
+    )
+    assert crawler.config.cache_path.suffix == ".pdf"
+    assert crawler.config.document_selector == "#viewerDocSelector option"
+    assert crawler.config.document_url_template.endswith(
+        "/ZD1180/257/{document_id}/fileDown.do"
+    )
 
 
 def test_full_scope_continues_after_page_whose_urls_are_all_known(monkeypatch):

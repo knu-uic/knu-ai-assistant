@@ -22,6 +22,7 @@ from extractors.structured_figures import (
 
 # --- 표준 라이브러리 ---
 import io           # 바이트 데이터를 "파일처럼" 다루기 위한 BytesIO 용도 (zipfile/이미지 버퍼가 파일객체를 요구함)
+import hashlib
 import json
 import zipfile      # HWPX 파일은 사실상 ZIP 컨테이너라서 직접 열어서 내부 XML을 꺼냄
 import os
@@ -29,6 +30,7 @@ import re
 import struct
 import zlib
 from pathlib import Path                       # 파일 확장자(.pdf, .hwpx 등) 추출용
+from typing import Callable
 from xml.etree import ElementTree as ET        # HWPX 내부 XML 파싱
 
 # --- 외부 라이브러리 ---
@@ -859,7 +861,13 @@ def inline_image_to_text(
     return search_text, data, mime, analysis
 
 
-def attachment_to_text(att: dict, context, include_xlsx: bool = False):
+def attachment_to_text(
+    att: dict,
+    context,
+    include_xlsx: bool = False,
+    progress_callback: Callable[[dict], None] | None = None,
+    resume_substeps: list[dict] | None = None,
+):
     """att = {'filename', 'download_url', 'preview_url' | None}.
 
     include_xlsx: 기본 False. True면 XLSX 본문도 추출해 임베딩 대상에 포함.
@@ -880,6 +888,54 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
     ext = Path(name.lower()).suffix       # .pdf / .hwpx / .jpg ... — 소문자 통일 후 확장자 추출
     label = f"[첨부: {name}]"             # 본문 앞에 붙일 라벨 (RAG 컨텍스트에서 출처 식별용)
     source_url = att["download_url"]
+    step_order = ["download", "document_structure"]
+    if ext in {".hwp", ".hwpx"}:
+        step_order.extend(["internal_images", "image_analysis"])
+    step_labels = {
+        "download": "파일 다운로드",
+        "document_structure": "본문·구조 추출",
+        "internal_images": "내부 이미지 추출",
+        "image_analysis": "이미지 VLM 분석",
+    }
+    steps = {key: {"key": key, "label": step_labels[key], "status": "pending"} for key in step_order}
+    for saved_step in resume_substeps or []:
+        key = str(saved_step.get("key") or "")
+        if key in steps:
+            steps[key].update(saved_step)
+
+    def report_step(key: str, status: str, **values) -> None:
+        if key not in steps:
+            return
+        steps[key].update({"status": status, **values})
+        if progress_callback:
+            progress_callback({"substeps": [dict(steps[name]) for name in step_order]})
+
+    def structured_progress(update: dict) -> None:
+        key = str(update.get("step") or "")
+        status = str(update.get("status") or "processing")
+        report_step(key, status, **{k: v for k, v in update.items() if k not in {"step", "status"}})
+
+    def download_source() -> bytes:
+        saved_path = str(steps["download"].get("cache_path") or "")
+        if saved_path:
+            path = Path(saved_path)
+            if path.is_file():
+                data = path.read_bytes()
+                report_step("download", "complete", size=len(data), cache_path=str(path), restored=True)
+                return data
+        report_step("download", "processing")
+        data = _download(source_url, context)
+        if data:
+            suffix = ext if ext and len(ext) <= 12 else ".bin"
+            cache_dir = _document_assets_root() / "downloads"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            path = cache_dir / f"{hashlib.sha256(source_url.encode('utf-8')).hexdigest()}{suffix}"
+            if not path.exists():
+                path.write_bytes(data)
+            report_step("download", "complete", size=len(data), cache_path=str(path))
+        else:
+            report_step("download", "failed")
+        return data
 
     if not source_url:
         body = "(첨부 다운로드 URL 없음)"
@@ -910,8 +966,9 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
         if ext == ".pdf":
             meta["kind"] = "attachment_pdf"
             meta["mime_type"] = "application/pdf"
-            data = _download(source_url, context)
+            data = download_source()
             meta["raw_bytes"] = data
+            report_step("document_structure", "processing")
             pdf_structure = analyze_pdf_structure(data)
             meta["pdf_structure"] = pdf_structure
             table_analysis = {}
@@ -967,17 +1024,20 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                 )
             except Exception as error:
                 meta["figure_extraction_error"] = f"{type(error).__name__}: {error}"
+            report_step("document_structure", "complete")
 
         # ───────── 분기 1.25: Word OpenXML ─────────
         elif ext == ".docx":
             meta["kind"] = "attachment_docx"
             meta["mime_type"] = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            data = _download(source_url, context)
+            data = download_source()
             meta["raw_bytes"] = data
+            report_step("document_structure", "processing")
             structured = extract_docx_figures(
                 data, "", _document_assets_root(), _figure_analyzer()
             )
             body = _attach_structured_figures(meta, structured)
+            report_step("document_structure", "complete")
 
         # ───────── 분기 1.5: PPT / PPTX ─────────
         elif ext in (".ppt", ".pptx"):
@@ -986,8 +1046,9 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation"
                 if ext == ".pptx" else "application/vnd.ms-powerpoint"
             )
-            data = _download(source_url, context)
+            data = download_source()
             meta["raw_bytes"] = data
+            report_step("document_structure", "processing")
             if ext == ".pptx":
                 body = pptx_to_text(data)
                 try:
@@ -1003,6 +1064,7 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                 body = "(구형 PPT는 정확한 구조 추출기가 없어 검토 대상으로 보존)"
                 meta["review_required"] = True
                 meta["review_reason"] = "unsupported_legacy_ppt"
+            report_step("document_structure", "complete")
 
         # ───────── 분기 2: 엑셀 ─────────
         elif ext in (".xlsx", ".xls"):
@@ -1014,8 +1076,9 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             if include_xlsx and ext == ".xlsx":
                 # 키워드 매칭(수강신청·교양·편성 등)이 걸린 공지 → 표 전체를 텍스트화해서 임베딩 대상에 포함.
                 try:
-                    data = _download(source_url, context)
+                    data = download_source()
                     meta["raw_bytes"] = data
+                    report_step("document_structure", "processing")
                     body = xlsx_to_text(data)
                     body = _attach_structured_figures(
                         meta,
@@ -1023,15 +1086,18 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                             data, body, _document_assets_root(), _figure_analyzer()
                         ),
                     )
+                    report_step("document_structure", "complete")
                 except Exception:
                     body = _office_preview_fallback(att, context)
                     if not body:
                         raise
             elif include_xlsx and ext == ".xls":
                 try:
-                    data = _download(source_url, context)
+                    data = download_source()
                     meta["raw_bytes"] = data
+                    report_step("document_structure", "processing")
                     body = xls_to_text(data)
+                    report_step("document_structure", "complete")
                 except Exception:
                     body = _office_preview_fallback(att, context)
                     if not body:
@@ -1047,13 +1113,14 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                 "application/vnd.hancom.hwpx" if ext == ".hwpx" else "application/x-hwp"
             )
             if ext == ".hwp":
-                file_data = _download(source_url, context)
+                file_data = download_source()
                 meta["raw_bytes"] = file_data
                 if not file_data:
                     body = "(원본 HWP 다운로드 실패)"
                     meta["review_required"] = True
                     meta["review_reason"] = "hwp_download_failed"
                 else:
+                    report_step("document_structure", "processing")
                     secondary_text = hwp_bytes_to_text(file_data, name)
                     structured = extract_hwp_structured(
                         file_data,
@@ -1061,6 +1128,7 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                         secondary_text=secondary_text,
                         assets_root=_document_assets_root(),
                         image_analyzer=_figure_analyzer(),
+                        progress_callback=structured_progress,
                     )
                     derived_assets = [
                         {
@@ -1104,12 +1172,16 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                         "derived_assets": derived_assets,
                         "figure_contents": structured.get("figure_contents") or [],
                     })
+                    for key in step_order:
+                        if steps[key]["status"] in {"pending", "processing"}:
+                            report_step(key, "complete")
             else:
-                file_data = _download(source_url, context)
+                file_data = download_source()
                 meta["raw_bytes"] = file_data
                 if not file_data:
                     body = "(원본 HWPX 다운로드 실패)"
                 else:
+                    report_step("document_structure", "processing")
                     body = hwpx_bytes_to_text(file_data)
                     if not body or not body.strip():
                         raise RuntimeError("HWPX 구조 XML에서 텍스트를 추출하지 못함")
@@ -1119,24 +1191,31 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
                             file_data, body, _document_assets_root(), _figure_analyzer()
                         ),
                     )
+                    for key in step_order:
+                        if steps[key]["status"] in {"pending", "processing"}:
+                            report_step(key, "complete")
 
         # ───────── 분기 4: 이미지 첨부 ─────────
         elif ext in _IMAGE_EXTS:
             meta["kind"] = "attachment_image"
             meta["mime_type"] = "image/png" if ext == ".png" else "image/jpeg"
-            data = _download(source_url, context)
+            data = download_source()
             meta["raw_bytes"] = data       # 멀티모달 임베딩/재처리를 위해 원본 바이트도 보존
+            report_step("document_structure", "processing")
             body = _image_to_text(data, meta["mime_type"]).strip()
+            report_step("document_structure", "complete")
 
         # ───────── 분기 5: ZIP ─────────
         elif ext == ".zip":
             meta["kind"] = "attachment_zip"
             meta["mime_type"] = "application/zip"
-            data = _download(source_url, context)
+            data = download_source()
             meta["raw_bytes"] = data
+            report_step("document_structure", "processing")
             body = _zip_bytes_to_text(data, source_url, context, include_xlsx)
             if not body:
                 body = "(ZIP 내부에서 처리 가능한 파일을 찾지 못했습니다.)"
+            report_step("document_structure", "complete")
 
         # ───────── 분기 6: 그 외 확장자 ─────────
         else:
@@ -1152,6 +1231,9 @@ def attachment_to_text(att: dict, context, include_xlsx: bool = False):
             meta["review_required"] = True
             meta["review_reason"] = f"structured_extraction_failed:{type(e).__name__}"
         meta["extracted_text"] = body
+        for key in step_order:
+            if steps[key]["status"] == "processing":
+                report_step(key, "failed", error=f"{type(e).__name__}: {e}")
         return f"{label}\n{body}", meta
 
     # 정상 분기(PDF / 엑셀 / HWPX 성공 / 이미지)의 공통 마무리:

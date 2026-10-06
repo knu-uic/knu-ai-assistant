@@ -90,7 +90,10 @@ KNU MCP는 다음 도구를 제공한다.
 
 각 `tools/list` 항목은 실제 JSON input schema와 읽기 전용 annotation을 제공한다.
 또한 선택적인 `com.codmes/tool` metadata로 안정적인 공개 이름과
-`knu.notices`, `knu.lms`, `knu.portal`, `knu.account` 계층 그룹을 제공한다.
+`knu.notice`, `knu.academic`, `knu.lms`, `knu.portal`, `knu.account` 계층 그룹을 제공한다.
+
+- `knu.notice`: `source.kind = 'notice'`인 실제 학교·학과 게시 공지
+- `knu.academic`: `source.kind = 'academic'`인 교과과정표·장학안내 등 상시 학사정보 문서
 Codmes가 아닌 표준 MCP client는 이 확장 metadata를 무시하고 같은 도구를 그대로
 사용할 수 있다. Codmes의 Surface 범위·credential·승인 정책은 KNU plugin이 계속
 소유하므로 MCP metadata가 client 보안 정책을 낮추지는 못한다.

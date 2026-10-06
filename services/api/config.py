@@ -259,29 +259,6 @@ MCP_AUTH_TOKEN = os.getenv("MCP_AUTH_TOKEN")
 RATE_LIMIT_MCP = os.getenv("RATE_LIMIT_MCP", "60/minute")
 
 # -----------------------------
-# mail (가입 인증)
-# -----------------------------
-
-MAIL_PROVIDER = (
-    os.getenv("MAIL_PROVIDER", "gmail")
-    .strip()
-    .lower()
-)
-
-GMAIL_USER = os.getenv("GMAIL_USER")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
-
-RESEND_API_KEY = os.getenv("RESEND_API_KEY")
-
-MAIL_FROM = os.getenv("MAIL_FROM") or GMAIL_USER
-
-SIGNUP_EMAIL_DOMAIN = (
-    os.getenv("SIGNUP_EMAIL_DOMAIN", "smail.kongju.ac.kr")
-    .strip()
-    .lower()
-)
-
-# -----------------------------
 # app version (APK 직배포 강제 업데이트)
 # -----------------------------
 
@@ -318,7 +295,6 @@ WEB_CORS_ORIGINS = [
     o.strip() for o in os.getenv("WEB_CORS_ORIGINS", "").split(",") if o.strip()
 ]
 
-RATE_LIMIT_SIGNUP_REQUEST = os.getenv("RATE_LIMIT_SIGNUP_REQUEST", "3/minute")
 RATE_LIMIT_AUTH = os.getenv("RATE_LIMIT_AUTH", "10/minute")
 RATE_LIMIT_CHAT = os.getenv("RATE_LIMIT_CHAT", "5/minute;150/day")
 RATE_LIMIT_READ = os.getenv("RATE_LIMIT_READ", "30/minute")

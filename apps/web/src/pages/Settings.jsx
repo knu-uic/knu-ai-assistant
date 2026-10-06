@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Icon } from "../icons.jsx";
-import { INTEREST_KEYWORD_POOL, MAX_INTERESTS } from "../api.js";
+import { INTEREST_KEYWORD_POOL, MAX_INTERESTS, llmAccounts } from "../api.js";
 import { useApp } from "../store.jsx";
 
 export function SettingsPage() {
@@ -18,6 +18,80 @@ export function SettingsPage() {
   const [interests, setInterests] = useState(profile?.interests || []);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
+  const [accounts, setAccounts] = useState([]);
+  const [llmError, setLlmError] = useState("");
+  const [llmBusy, setLlmBusy] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [geminiKey, setGeminiKey] = useState("");
+  const [login, setLogin] = useState(null);
+  const [models, setModels] = useState({});
+  const [selectedModels, setSelectedModels] = useState({});
+  async function reloadAccounts() {
+    const result = await llmAccounts.list();
+    setAccounts(result.items || []);
+  }
+  useEffect(() => { reloadAccounts().catch((e) => setLlmError(e.message)); }, []);
+  useEffect(() => {
+    if (!login?.id) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const status = await llmAccounts.pollCodexLogin(login.id);
+        if (cancelled) return;
+        if (status.status === "approved") {
+          setLogin(null);
+          await reloadAccounts();
+          setToast("Codex 계정이 연결됐어요. 사용할 모델을 선택해주세요.");
+        } else if (status.status === "expired") {
+          setLogin(null);
+          setLlmError("로그인 시간이 만료됐습니다. 다시 시도해주세요.");
+        }
+      } catch (e) {
+        if (!cancelled) { setLogin(null); setLlmError(e.message); }
+      }
+    }, Math.max(3000, (login.interval || 5) * 1000));
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [login?.id]);
+
+  async function connectApiKey() {
+    setLlmBusy(true); setLlmError("");
+    try { await llmAccounts.addOpenAIKey(apiKey); setApiKey(""); await reloadAccounts(); }
+    catch (e) { setLlmError(e.message); }
+    finally { setLlmBusy(false); }
+  }
+  async function connectGeminiKey() {
+    setLlmBusy(true); setLlmError("");
+    try { await llmAccounts.addGeminiKey(geminiKey); setGeminiKey(""); await reloadAccounts(); }
+    catch (e) { setLlmError(e.message); }
+    finally { setLlmBusy(false); }
+  }
+  async function connectCodex() {
+    setLlmBusy(true); setLlmError("");
+    try { setLogin(await llmAccounts.startCodexLogin()); }
+    catch (e) { setLlmError(e.message); }
+    finally { setLlmBusy(false); }
+  }
+  async function loadModels(id) {
+    setLlmError("");
+    try {
+      const result = await llmAccounts.models(id);
+      setModels((current) => ({ ...current, [id]: result.models || [] }));
+    } catch (e) { setLlmError(e.message); }
+  }
+  async function chooseModel(id) {
+    setLlmError("");
+    try {
+      const account = accounts.find((item) => item.id === id);
+      await llmAccounts.select(id, selectedModels[id] || account?.model);
+      await reloadAccounts();
+    }
+    catch (e) { setLlmError(e.message); }
+  }
+  async function removeLlmAccount(id) {
+    if (!window.confirm("이 개인 LLM 계정 연결을 해제할까요?")) return;
+    try { await llmAccounts.remove(id); await reloadAccounts(); }
+    catch (e) { setLlmError(e.message); }
+  }
   useEffect(() => { setInterests(profile?.interests || []); }, [profile]);
   const dirty = JSON.stringify(interests) !== JSON.stringify(profile?.interests || []);
 
@@ -107,6 +181,47 @@ export function SettingsPage() {
             {linking && <div className="linking-row"><span className="spinner"></span> {step || "연동 중이에요... (수십 초 소요)"}</div>}
           </>
         )}
+      </div>
+
+      <div className="card set-card">
+        <div className="set-h plain">대화용 개인 AI 계정</div>
+        <p className="caption">여기서 연결한 계정은 본인의 웹 대화에만 사용됩니다. 학교의 공지 수집·정제 계정과 별개입니다.</p>
+        {accounts.map((account) => (
+          <div key={account.id} className="link-badges" style={{ marginTop: 14, display: "block" }}>
+            <strong>{account.label}</strong> <span className="caption">({account.provider === "openai" ? "OpenAI API" : account.provider === "google" ? "Gemini API" : "Codex"})</span>
+            {account.active && account.model && <span className="badge-link" style={{ marginLeft: 8 }}>사용 중 · {account.model}</span>}
+            <div className="link-form" style={{ marginTop: 10 }}>
+              <button className="btn-save" onClick={() => loadModels(account.id)}>모델 목록</button>
+              {(models[account.id] || []).length > 0 && <>
+                <select className="field-input" value={selectedModels[account.id] || account.model || ""}
+                  onChange={(e) => setSelectedModels((current) => ({ ...current, [account.id]: e.target.value }))}>
+                  <option value="">모델 선택</option>
+                  {models[account.id].map((model) => <option key={model} value={model}>{model}</option>)}
+                </select>
+                <button className="btn-save" disabled={!selectedModels[account.id] && !account.model}
+                  onClick={() => chooseModel(account.id)}>대화 모델로 사용</button>
+              </>}
+              <button className="btn" onClick={() => removeLlmAccount(account.id)}>연결 해제</button>
+            </div>
+          </div>
+        ))}
+        <div className="link-form" style={{ marginTop: 18 }}>
+          <label className="field-label">OpenAI API 키 연결</label>
+          <input className="field-input" type="password" autoComplete="new-password" value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />
+          <button className="btn-save" disabled={!apiKey || llmBusy} onClick={connectApiKey}>API 키 저장</button>
+          <button className="btn-save" disabled={llmBusy || !!login} onClick={connectCodex}>Codex 계정으로 로그인</button>
+        </div>
+        <div className="link-form" style={{ marginTop: 12 }}>
+          <label className="field-label">Gemini API 키 연결</label>
+          <input className="field-input" type="password" autoComplete="new-password" value={geminiKey}
+            onChange={(e) => setGeminiKey(e.target.value)} placeholder="Gemini API 키" />
+          <button className="btn-save" disabled={!geminiKey || llmBusy} onClick={connectGeminiKey}>API 키 저장</button>
+        </div>
+        {login && <p className="caption" style={{ marginTop: 12 }}>
+          <a href={login.verification_url} target="_blank" rel="noreferrer">Codex 인증 페이지 열기</a>에서 코드 <strong>{login.user_code}</strong>를 입력하세요. 연결 상태를 확인하고 있습니다.
+        </p>}
+        {llmError && <div className="auth-err">{llmError}</div>}
       </div>
 
       {linked && (

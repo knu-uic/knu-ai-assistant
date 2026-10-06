@@ -8,6 +8,9 @@
 # 1) DB + Redis (API 서비스에서)
 cd services/api && docker compose up -d db redis
 
+# 1.5) 최초 설치·업데이트 후 DB 마이그레이션
+cd services/api && RUNTIME_ENV=local ../../.venv/bin/python -m db.migrate
+
 # 2) API 서버
 cd services/api && RUNTIME_ENV=local ../../.venv/bin/python -m uvicorn api.main:app --port 8000
 
@@ -34,15 +37,21 @@ npm run preview -- --host 127.0.0.1 --port 5173
 Codmes의 `/api/plugins/.../surface/` 아래에서 직접 여는 실행 방식으로는 사용하지
 않는다.
 
-## 가입 인증 코드
+## 인증
 
-`MAIL_PROVIDER=console`(기본)이면 인증 코드가 **API 서버 터미널 로그**에 출력된다:
+별도 회원가입 없이 공주대 포털 학번·비밀번호로 로그인한다. 포털 비밀번호는 서버 DB에 저장하지 않는다.
 
-```
-📧 [console mailer] you@smail.kongju.ac.kr 인증 코드: 123456
-```
+웹 대화 화면에서 **학교 제공 모델**과 **학생 본인의 모델** 중 하나를 명시적으로
+선택한다. 학교 모델은 서버매니저에서 별도로 켜는 Ollama/LM Studio 로컬 모델이나
+학교 공용 OpenAI/Gemini API 키를 사용할 수 있다. 공지 크롤링·정제 설정과는
+독립적이다. 개인 모델은 프로필 화면에서 연결한 Codex 계정 또는 본인의 OpenAI/Gemini
+API 키를 사용한다. KNU 서버는 개인
+자격증명을 학번별로 암호화해 보관하고 Codex 토큰이 만료되면 갱신한다. 선택한
+경로가 사용 불가하면 409 오류를 반환하며 다른 계정이나 모델로 자동 대체하지 않는다.
 
-실제 메일 발송은 `.env`에 `GMAIL_USER` + `GMAIL_APP_PASSWORD`(Gmail 앱 비밀번호) 또는 `MAIL_PROVIDER=resend` + 키.
+대화 API는 `POST /api/chat/stream`에 질문과 최근 대화 기록을 JSON으로 전송한다.
+모델은 KNU MCP의 읽기 도구를 선택해 호출한다. 상담 접수 같은 쓰기 도구는 웹의
+명시적 최종 승인 UI가 준비되기 전까지 제공하지 않는다.
 
 ## 빌드
 

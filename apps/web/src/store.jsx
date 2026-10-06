@@ -107,8 +107,8 @@ export function AppProvider({ children }) {
   }, [authed, refreshProfile]);
 
   const onAuthed = useCallback(() => setAuthed(true), []);
-  const logout = useCallback(() => {
-    api.auth.logout();
+  const logout = useCallback(async () => {
+    await api.auth.logout();
     setAuthed(false);
     setProfile(null);
     setNotices(null);

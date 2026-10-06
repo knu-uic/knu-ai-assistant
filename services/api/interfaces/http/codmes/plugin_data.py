@@ -10,7 +10,6 @@ import anyio
 from fastapi import APIRouter, Depends
 
 from api.deps import portal_student_id, require_user
-from db.accounts import get_account
 from db.users import get_user
 
 router = APIRouter()
@@ -25,10 +24,7 @@ def _text(value) -> str:
 
 
 async def _linked_student_id(username: str) -> str | None:
-    if student_id := portal_student_id(username):
-        return student_id
-    account = await anyio.to_thread.run_sync(partial(get_account, username))
-    return account.get("student_id") if account else None
+    return portal_student_id(username)
 
 
 def _graduation_rows(value: dict, path: tuple[str, ...] = ()) -> list[list[str]]:

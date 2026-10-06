@@ -1,22 +1,20 @@
-"""Chat transport schemas."""
+"""학생 개인 모델 대화 요청/응답 계약."""
 
-from typing import List, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
-from interfaces.http.schemas.search import RelatedImage
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str = Field(max_length=10000)
 
 
 class ChatRequest(BaseModel):
-    question: str
-    major: Optional[str] = None
+    question: str = Field(min_length=1, max_length=10000)
+    history: list[ChatMessage] = Field(default_factory=list, max_length=20)
+    source: Literal["school", "personal"] = "personal"
 
 
 class ChatResponse(BaseModel):
-    # api_service.dart ChatResult와 1:1 (flat 키). 없는 값은 null.
     answer: str
-    grounded: Optional[bool] = None
-    fidelity: Optional[float] = None
-    verifier_note: Optional[str] = None
-    categories: List[str] = Field(default_factory=list)
-    expanded_query: Optional[str] = None
-    related_images: List[RelatedImage] = Field(default_factory=list)

@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI
 from api.deps import require_user
 from interfaces.http.codmes import plugin_data
 from interfaces.http.shared import assets, auth, health, me, notices
-from interfaces.http.web import chat, lms, portal, search
+from interfaces.http.web import chat, llm_accounts, lms, portal, search
 from interfaces.http import admin
 
 
@@ -25,6 +25,7 @@ def register_http_routes(app: FastAPI) -> None:
 
     # Standalone React web application contracts.
     app.include_router(chat.router, prefix="/api", dependencies=[Depends(require_user)])
+    app.include_router(llm_accounts.router, prefix="/api", dependencies=[Depends(require_user)])
     app.include_router(search.router, prefix="/api", dependencies=[Depends(require_user)])
     app.include_router(portal.router, prefix="/api", dependencies=[Depends(require_user)])
     app.include_router(lms.router, prefix="/api", dependencies=[Depends(require_user)])

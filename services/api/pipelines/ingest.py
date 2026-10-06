@@ -20,6 +20,8 @@ from db import (
     select_crawl_records,
     save_crawl_checkpoint,
     load_crawl_checkpoints,
+    save_crawl_attachment_checkpoint,
+    load_crawl_detail_checkpoints,
     mark_crawl_url_stage,
     mark_crawl_url_completed,
     mark_crawl_url_failed,
@@ -139,6 +141,7 @@ def run_ingest(
         resumed_items: list[dict] = []
         if uses_url_registry:
             resumed_items = load_crawl_checkpoints(source_id)
+            detail_checkpoints = load_crawl_detail_checkpoints(source_id)
 
             def persist_collected_notice(item: dict) -> None:
                 """Checkpoint one completed detail before slow local inference."""
@@ -172,6 +175,8 @@ def run_ingest(
                 ),
                 "on_detail_failure": mark_crawl_url_failed,
                 "on_detail_ready": persist_collected_notice,
+                "detail_checkpoints": detail_checkpoints,
+                "on_attachment_checkpoint": save_crawl_attachment_checkpoint,
                 "on_progress": on_progress,
             }
 
@@ -185,7 +190,10 @@ def run_ingest(
             crawled_count += 1
 
             if uses_url_registry:
-                mark_crawl_url_stage(item["url"], "refining", "LLM 정제·임베딩 중")
+                mark_crawl_url_stage(
+                    item["url"], "refining",
+                    "LLM 정제 중 · 카테고리·대상·일정·요약 분석",
+                )
 
             if on_progress:
                 on_progress({
@@ -195,7 +203,7 @@ def run_ingest(
                     "url": item["url"],
                     "title": item.get("title"),
                     "status": "refining",
-                    "stage": "LLM 정제·임베딩 중",
+                    "stage": "LLM 정제 중 · 카테고리·대상·일정·요약 분석",
                 })
 
             replace_by_source = bool(item.get("replace_by_source"))
@@ -252,7 +260,6 @@ def run_ingest(
             print(f'접수 시작일: {doc.start_date}')
             print(f'접수 마감일: {doc.end_date}')
             print(f'url: {doc.url}')
-            print(f'keywords: {doc.keywords}')
             print(f'요약: {doc.summary}')
             print(f'assets: {len(assets)}건')
 
@@ -277,6 +284,19 @@ def run_ingest(
                         f"[본문 이미지 OCR]\n{value}" for value in legacy_inline_texts
                     )
 
+            if uses_url_registry:
+                mark_crawl_url_stage(item["url"], "refining", "임베딩 생성 중")
+            if on_progress:
+                on_progress({
+                    "event": "notice_status",
+                    "source_code": mod.SOURCE_CODE,
+                    "page": item.get("_crawl_page"),
+                    "url": item["url"],
+                    "title": doc.title,
+                    "status": "refining",
+                    "stage": "임베딩 생성 중",
+                })
+
             chunks = embed_document_chunks(
                 title=doc.title,
                 body_content=merged_body_content,
@@ -286,6 +306,20 @@ def run_ingest(
                 ),
             )
 
+            if uses_url_registry:
+                mark_crawl_url_stage(item["url"], "refining", "DB 저장 중")
+            if on_progress:
+                on_progress({
+                    "event": "notice_status",
+                    "phase": "saved",
+                    "source_code": mod.SOURCE_CODE,
+                    "page": item.get("_crawl_page"),
+                    "url": item["url"],
+                    "title": doc.title,
+                    "status": "refining",
+                    "stage": "DB 저장 중",
+                })
+
             document_id = insert_document(
                 source_id=source_id,
                 url=doc.url,
@@ -294,12 +328,9 @@ def run_ingest(
                 body_content=item.get("body_content"),
                 category=doc.category,
                 summary=doc.summary,
-                topics=doc.topics,
-                series_key=doc.series_key,
                 periods=doc.periods,
                 audiences=doc.audiences,
                 application=doc.application,
-                extraction_confidence=doc.extraction_confidence,
                 extra=extra,
                 posted_at=posted_at,
                 is_pinned=bool(item.get("is_pinned")),

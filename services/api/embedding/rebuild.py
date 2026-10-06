@@ -1,7 +1,6 @@
 """Blue-green builds for persistent, model-specific embedding datasets."""
 from __future__ import annotations
 
-from itertools import groupby
 from threading import Lock, Thread
 
 from db.pool import sync_pool
@@ -13,6 +12,7 @@ from embedding.datasets import (
     find_dataset,
     get_dataset,
 )
+from embedding.embed import prepare_document_chunks
 from model import get_embeddings
 
 
@@ -44,7 +44,7 @@ def _set_dataset(dataset_id: int, **values) -> None:
     assignments = [f"{key}=%s" for key in values]
     with sync_pool.connection() as conn:
         conn.execute(
-            f"UPDATE embedding_dataset SET {', '.join(assignments)}, updated_at=now() WHERE id=%s",
+            f"UPDATE embedding_dataset SET {', '.join(assignments)}, updated_at=now() WHERE embedding_dataset_id=%s",
             (*values.values(), dataset_id),
         )
         conn.commit()
@@ -92,6 +92,8 @@ def resume_dataset(dataset_id: int, *, api_key: str = "") -> dict:
         {
             "provider": dataset["provider"], "model": dataset["model"],
             "dimension": dataset["dimension"], "base_url": dataset["base_url"],
+            "chunk_size": dataset["chunk_size"],
+            "chunk_overlap": dataset["chunk_overlap"],
             "api_key": api_key,
         },
         force=True,
@@ -104,7 +106,7 @@ def recover_interrupted_builds() -> None:
     with sync_pool.connection() as conn:
         dataset_ids = [
             int(row[0]) for row in conn.execute(
-                "SELECT id FROM embedding_dataset WHERE status='building'"
+                "SELECT embedding_dataset_id FROM embedding_dataset WHERE status='building'"
             ).fetchall()
         ]
     for dataset_id in dataset_ids:
@@ -122,7 +124,7 @@ def recover_interrupted_builds() -> None:
                     SET status='failed',
                         error='서버가 재시작되어 작업이 중단되었습니다. 동기화를 눌러 이어서 생성하세요.',
                         updated_at=now()
-                    WHERE id=%s AND status='building'
+                    WHERE embedding_dataset_id=%s AND status='building'
                     """,
                     (dataset_id,),
                 )
@@ -141,10 +143,10 @@ def sync_stale_datasets() -> None:
     with sync_pool.connection() as conn:
         rows = conn.execute(
             """
-            SELECT id, provider, model, dimension, base_url
+            SELECT embedding_dataset_id, provider, model, dimension, base_url, chunk_size, chunk_overlap
             FROM embedding_dataset
             WHERE status='stale'
-            ORDER BY id
+            ORDER BY embedding_dataset_id
             """
         ).fetchall()
     active = active_dataset_id()
@@ -154,7 +156,8 @@ def sync_stale_datasets() -> None:
             continue
         target = {
             "provider": row[1], "model": row[2], "dimension": row[3],
-            "base_url": row[4], "api_key": "",
+            "base_url": row[4], "chunk_size": row[5],
+            "chunk_overlap": row[6], "api_key": "",
         }
         _set_status(
             state="running", completed=0, total=0, dataset_id=dataset_id,
@@ -200,50 +203,60 @@ def _run_rebuild_body(
     activate_when_ready: bool,
 ) -> None:
     try:
-        source_dataset_id = active_dataset_id()
         with sync_pool.connection() as conn:
-            rows = conn.execute(
+            notices = conn.execute(
                 """
-                SELECT notice_id, chunk_idx, content, chunk_type, attachment_name
-                FROM notice_chunk
-                WHERE embedding_dataset_id=%s
-                ORDER BY notice_id, chunk_idx
-                """,
-                (source_dataset_id,),
+                SELECT content_id, title, COALESCE(body_content, content, '')
+                FROM content
+                ORDER BY content_id
+                """
             ).fetchall()
-
-        grouped = [
-            (notice_id, list(items))
-            for notice_id, items in groupby(rows, key=lambda row: row[0])
-        ]
-        _set_status(total=len(grouped), dataset_id=dataset_id)
+        _set_status(total=len(notices), dataset_id=dataset_id)
         _set_dataset(
-            dataset_id, status="building", total_notices=len(grouped),
+            dataset_id, status="building", total_notices=len(notices),
             completed_notices=0, error=None,
         )
         embedder = get_embeddings(target)
 
-        for completed, (notice_id, chunks) in enumerate(grouped, start=1):
-            texts = [row[2] for row in chunks]
-            vectors = embedder.embed_documents(texts)
+        for completed, (notice_id, title, body_content) in enumerate(notices, start=1):
+            with sync_pool.connection() as conn:
+                asset_rows = conn.execute(
+                    """
+                    SELECT kind, filename, extracted_text, extra
+                    FROM content_asset
+                    WHERE content_id=%s AND COALESCE(extracted_text, '') <> ''
+                    ORDER BY order_idx, asset_id
+                    """,
+                    (notice_id,),
+                ).fetchall()
+            attachment_contents = _stored_attachment_contents(asset_rows)
+            chunks = prepare_document_chunks(
+                title,
+                body_content,
+                attachment_contents,
+                chunk_size=int(target.get("chunk_size", 280)),
+                chunk_overlap=int(target.get("chunk_overlap", 80)),
+            )
+            texts = [row[1] for row in chunks]
+            vectors = embedder.embed_documents(texts) if texts else []
             if any(len(vector) != int(target["dimension"]) for vector in vectors):
                 raise RuntimeError("선택한 출력 차원과 실제 임베딩 차원이 다릅니다.")
             with sync_pool.connection() as conn:
                 conn.execute(
-                    "DELETE FROM notice_chunk WHERE notice_id=%s AND embedding_dataset_id=%s",
+                    "DELETE FROM content_chunk WHERE content_id=%s AND embedding_dataset_id=%s",
                     (notice_id, dataset_id),
                 )
                 for row, vector in zip(chunks, vectors):
                     conn.execute(
                         """
-                        INSERT INTO notice_chunk
-                            (notice_id, chunk_idx, content, chunk_type,
+                        INSERT INTO content_chunk
+                            (content_id, chunk_idx, content, chunk_type,
                              attachment_name, embedding, embedding_provider,
                              embedding_model, embedding_dimension, embedding_dataset_id)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
-                            notice_id, row[1], row[2], row[3], row[4], vector,
+                            notice_id, row[0], row[1], row[2], row[3], vector,
                             target["provider"], target["model"], target["dimension"],
                             dataset_id,
                         ),
@@ -252,9 +265,9 @@ def _run_rebuild_body(
                     """
                     UPDATE embedding_dataset
                     SET completed_notices=%s,
-                        total_chunks=(SELECT count(*) FROM notice_chunk WHERE embedding_dataset_id=%s),
+                        total_chunks=(SELECT count(*) FROM content_chunk WHERE embedding_dataset_id=%s),
                         updated_at=now()
-                    WHERE id=%s
+                    WHERE embedding_dataset_id=%s
                     """,
                     (completed, dataset_id, dataset_id),
                 )
@@ -263,7 +276,7 @@ def _run_rebuild_body(
 
         with sync_pool.connection() as conn:
             total_chunks = conn.execute(
-                "SELECT count(*) FROM notice_chunk WHERE embedding_dataset_id=%s",
+                "SELECT count(*) FROM content_chunk WHERE embedding_dataset_id=%s",
                 (dataset_id,),
             ).fetchone()[0]
             conn.execute(
@@ -272,19 +285,54 @@ def _run_rebuild_body(
                 SET status='ready', completed_notices=%s, total_notices=%s,
                     total_chunks=%s, error=NULL, completed_at=now(),
                     last_synced_at=now(), updated_at=now()
-                WHERE id=%s
+                WHERE embedding_dataset_id=%s
                 """,
-                (len(grouped), len(grouped), total_chunks, dataset_id),
+                (len(notices), len(notices), total_chunks, dataset_id),
             )
             conn.commit()
         ensure_search_index(dataset_id, int(target["dimension"]))
         if activate_when_ready:
             activate_dataset(dataset_id, api_key=target.get("api_key", ""))
         _set_status(
-            state="complete", completed=len(grouped), total=len(grouped),
+            state="complete", completed=len(notices), total=len(notices),
             dataset_id=dataset_id,
         )
     except Exception as exc:
         if dataset_id is not None:
             _set_dataset(dataset_id, status="failed", error=str(exc))
         _set_status(state="failed", error=str(exc), dataset_id=dataset_id)
+
+
+def _stored_attachment_contents(rows: list[tuple]) -> list[dict]:
+    """Recreate the searchable attachment inputs persisted during crawling."""
+    audit_kinds = {
+        "attachment_hwp_structure", "attachment_hwp_markdown",
+        "attachment_hwp_validation", "attachment_hwp_binary",
+    }
+    figure_kinds = {"attachment_hwp_image", "attachment_document_image"}
+    result: list[dict] = []
+    for kind, filename, extracted_text, extra in rows:
+        text = str(extracted_text or "").strip()
+        if not text or kind in audit_kinds:
+            continue
+        metadata = extra if isinstance(extra, dict) else {}
+        if kind == "inline_image":
+            result.append({
+                "name": f"__body__ · {filename or '본문 그림'}",
+                "text": text,
+                "type": "body_figure",
+            })
+        elif kind in figure_kinds:
+            parent = str(metadata.get("parentAttachment") or filename or "첨부 그림")
+            result.append({
+                "name": f"{parent} · {filename or '그림'}",
+                "text": text,
+                "type": "attachment_figure",
+            })
+        else:
+            result.append({
+                "name": filename or "첨부파일",
+                "text": text,
+                "type": kind or "attachment",
+            })
+    return result

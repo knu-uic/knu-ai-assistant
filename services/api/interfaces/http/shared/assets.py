@@ -13,8 +13,8 @@ async def notice_asset_content(asset_id: int) -> FileResponse:
     async with pool.connection() as conn:
         row = await (await conn.execute(
             """SELECT storage_path,mime_type,filename
-               FROM notice_asset
-               WHERE id=%s AND kind IN ('attachment_hwp_image','attachment_document_image','inline_image')""",
+               FROM content_asset
+               WHERE asset_id=%s AND kind IN ('attachment_hwp_image','attachment_document_image','inline_image')""",
             (asset_id,),
         )).fetchone()
     if not row or not row[0]:

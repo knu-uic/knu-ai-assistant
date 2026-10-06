@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+import db.crawl_progress as crawl_progress
 
 from workers.arq_worker import (
     NoticeCrawlStopped,
@@ -22,7 +23,7 @@ def test_crawl_progress_tracks_source_page_notice_and_attachment():
         {"event": "pages_planned", "source_code": "cse", "source_name": "컴퓨터공학과", "pages": [1]},
         {"event": "page_list", "source_code": "cse", "page": 1, "notices": [{"url": "https://example.test/1", "title": "장학 안내"}]},
         {"event": "notice_status", "source_code": "cse", "page": 1, "url": "https://example.test/1", "status": "processing", "stage": "첨부파일 처리 중", "attachments": [{"name": "guide.pdf", "status": "pending", "stage": "대기"}]},
-        {"event": "attachment_status", "source_code": "cse", "page": 1, "url": "https://example.test/1", "attachment_name": "guide.pdf", "status": "complete", "stage": "완료", "size": 2048},
+        {"event": "attachment_status", "source_code": "cse", "page": 1, "url": "https://example.test/1", "attachment_name": "guide.pdf", "status": "complete", "stage": "완료", "size": 2048, "substeps": [{"key": "download", "label": "파일 다운로드", "status": "complete"}]},
         {"event": "notice_status", "source_code": "cse", "page": 1, "url": "https://example.test/1", "status": "complete", "stage": "저장 완료", "document_id": 17},
     ]
 
@@ -40,6 +41,8 @@ def test_crawl_progress_tracks_source_page_notice_and_attachment():
     assert notice["document_id"] == 17
     assert attachment["status"] == "complete"
     assert attachment["size"] == 2048
+    assert attachment["substeps"][0]["key"] == "download"
+    assert notice["queue_order"] == 1
     assert progress["status"] == "processing"
     assert progress["discovered"] == 1
     assert progress["processed"] == 1
@@ -53,7 +56,7 @@ def test_crawl_progress_tracks_source_page_notice_and_attachment():
         "url": "https://example.test/1",
         "title": "장학 안내",
         "status": "refining",
-        "stage": "LLM 정제·임베딩 중",
+        "stage": "LLM 정제 중",
     })
     _merge_crawl_progress(progress, updates[1])
     _merge_crawl_progress(progress, {
@@ -65,6 +68,70 @@ def test_crawl_progress_tracks_source_page_notice_and_attachment():
     })
     assert progress["discovered"] == 1
     assert not progress["sources"]["cse"]["pages"]["None"]["notices"]
+    assert progress["sources"]["cse"]["pages"]["1"]["notices"]["https://example.test/1"]["queue_order"] == 1
+
+
+def test_crawl_queue_order_is_stable_across_pages_and_resume():
+    progress = {"status": "processing", "sources": {}}
+    first_page = {
+        "event": "page_list", "source_code": "cse", "page": 1,
+        "notices": [
+            {"url": "https://example.test/1", "title": "첫 번째"},
+            {"url": "https://example.test/2", "title": "두 번째"},
+        ],
+    }
+    second_page = {
+        "event": "page_list", "source_code": "cse", "page": 2,
+        "notices": [{"url": "https://example.test/3", "title": "세 번째"}],
+    }
+
+    _merge_crawl_progress(progress, first_page)
+    _merge_crawl_progress(progress, second_page)
+    _merge_crawl_progress(progress, first_page)
+
+    pages = progress["sources"]["cse"]["pages"]
+    assert pages["1"]["notices"]["https://example.test/1"]["queue_order"] == 1
+    assert pages["1"]["notices"]["https://example.test/2"]["queue_order"] == 2
+    assert pages["2"]["notices"]["https://example.test/3"]["queue_order"] == 3
+
+
+def test_legacy_hwp_progress_is_restored_as_substeps(monkeypatch):
+    snapshot = {"sources": {"cse": {"pages": {"1": {"notices": {"url": {
+        "attachments": {"guide.hwp": {
+            "name": "guide.hwp", "status": "processing", "stage": "다운로드·추출 중",
+        }}
+    }}}}}}}
+    monkeypatch.setattr(crawl_progress, "_legacy_hwp_evidence", lambda _name: {
+        "original": "/tmp/guide.hwp", "extracted": 2, "analyzed": 0,
+        "raster_total": 2, "analyzable_total": 2,
+    })
+
+    crawl_progress._restore_legacy_hwp_substeps(snapshot)
+
+    steps = snapshot["sources"]["cse"]["pages"]["1"]["notices"]["url"]["attachments"]["guide.hwp"]["substeps"]
+    assert [(step["key"], step["status"]) for step in steps] == [
+        ("download", "complete"),
+        ("document_structure", "complete"),
+        ("internal_images", "complete"),
+        ("image_analysis", "processing"),
+    ]
+    assert steps[-1]["completed"] == 1
+    assert steps[-1]["total"] == 2
+
+
+def test_completed_legacy_hwp_restores_all_substeps_as_complete(monkeypatch):
+    attachment = {"name": "form.hwp", "status": "complete", "stage": "완료"}
+    snapshot = {"sources": {"cse": {"pages": {"1": {"notices": {"url": {
+        "attachments": {"form.hwp": attachment}
+    }}}}}}}
+    monkeypatch.setattr(crawl_progress, "_legacy_hwp_evidence", lambda _name: {
+        "original": "/tmp/form.hwp", "extracted": 0, "analyzed": 0,
+        "raster_total": 0, "analyzable_total": 0,
+    })
+
+    crawl_progress._restore_legacy_hwp_substeps(snapshot)
+
+    assert all(step["status"] == "complete" for step in attachment["substeps"])
 
 
 def test_worker_has_notice_polling_cron():

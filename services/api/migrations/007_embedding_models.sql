@@ -26,5 +26,10 @@ BEGIN
     END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_notice_chunk_embedding_model
-ON notice_chunk(embedding_provider, embedding_model, notice_id);
+DO $$
+BEGIN
+    IF to_regclass('public.notice_chunk') IS NOT NULL THEN
+        CREATE INDEX IF NOT EXISTS idx_notice_chunk_embedding_model
+        ON notice_chunk(embedding_provider, embedding_model, notice_id);
+    END IF;
+END $$;

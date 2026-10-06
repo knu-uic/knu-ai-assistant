@@ -24,9 +24,8 @@ playwright
 psycopg[binary,pool]
 pgvector
 
-# 인증 (JWT + 비밀번호 해시)
+# 인증 (포털 인증 세션 JWT)
 pyjwt
-bcrypt
 
 # 레이트리밋
 slowapi
@@ -38,14 +37,13 @@ redis
 # 포털 비밀번호 잡 전달용 암호화 (Fernet)
 cryptography
 
-# LangChain / LangGraph (챗 그래프)
+# LangChain (크롤링·임베딩 모델 런타임)
 langchain
 langchain-core
 langchain-community
 langchain-google-genai
 langchain-openai
 langchain-postgres
-langgraph
 langsmith
 
 # langchain이 토크나이저로 요구 (torch 없이 동작)

@@ -8,7 +8,6 @@ from functools import partial
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from db.accounts import get_account
 from db.documents import get_documents
 from db.users import get_user
 from api.deps import optional_user, portal_student_id
@@ -23,9 +22,6 @@ router = APIRouter()
 async def _resolve_major(username: str) -> str | None:
     """로그인 유저 → 연결된 학번 → 학과. 미연동이면 None."""
     student_id = portal_student_id(username)
-    if student_id is None:
-        account = await anyio.to_thread.run_sync(partial(get_account, username))
-        student_id = account.get("student_id") if account else None
     if not student_id:
         return None
     user = await anyio.to_thread.run_sync(partial(get_user, student_id))

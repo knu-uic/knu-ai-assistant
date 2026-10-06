@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Icon } from "../icons.jsx";
-import { streamChatbot, chatSuggestions } from "../api.js";
+import { streamChatbot, chatSuggestions, chatModels, currentUsername, getStoredItem, setStoredItem } from "../api.js";
 import { useApp } from "../store.jsx";
 import { ChatHistory } from "./ChatHistory.jsx";
 
@@ -41,7 +41,23 @@ export function ChatbotPage() {
   const [status, setStatus] = useState("");
   const [input, setInput] = useState("");
   const [panelOpen, setPanelOpen] = useState(false);  // 대화목록 패널 기본 접힘
+  const sourceKey = `knu_chat_source_${currentUsername() || "guest"}`;
+  const [source, setSource] = useState(() => getStoredItem(sourceKey) || "personal");
+  const [schoolModel, setSchoolModel] = useState(null);
   const scrollRef = useRef(null);
+
+  useEffect(() => { setSource(getStoredItem(sourceKey) || "personal"); }, [sourceKey]);
+  useEffect(() => {
+    let active = true;
+    chatModels().then((result) => { if (active) setSchoolModel(result.school); })
+      .catch(() => { if (active) setSchoolModel({ available: false, model: "" }); });
+    return () => { active = false; };
+  }, [sourceKey]);
+
+  function chooseSource(value) {
+    setSource(value);
+    setStoredItem(sourceKey, value);
+  }
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -78,7 +94,11 @@ export function ChatbotPage() {
     }, 16);
 
     try {
-      const final = await streamChatbot(q, profile?.major, {
+      const history = chatMsgs.filter((m) => m.role === "user" || (m.role === "assistant" && !m.answer?.streaming))
+        .map((m) => ({ role: m.role, content: m.role === "user" ? m.content : m.answer?.intro || "" }))
+        .filter((m) => m.content).slice(-12);
+      const final = await streamChatbot(q, history, {
+        source,
         onStep: setStatus,
         onToken: (acc) => { target = acc; },
       });
@@ -101,6 +121,14 @@ export function ChatbotPage() {
 
   return (
     <div className="chat-wrap">
+      <label className="chat-model-picker">대화 모델
+        <select value={source} disabled={thinking} onChange={(e) => chooseSource(e.target.value)}>
+          <option value="personal">내 모델</option>
+          <option value="school" disabled={!schoolModel?.available}>
+            {schoolModel?.available ? `학교 제공 · ${schoolModel.model}` : "학교 제공 · 미설정"}
+          </option>
+        </select>
+      </label>
       <button className="chat-hist-toggle" onClick={() => setPanelOpen(true)} aria-label="대화 목록 열기">
         <Icon name="menu" size={20} />
       </button>

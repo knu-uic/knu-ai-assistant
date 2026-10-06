@@ -80,6 +80,10 @@ BEGIN
         UNIQUE (embedding_dataset_id, notice_id, chunk_idx);
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_notice_chunk_dataset_notice
-ON notice_chunk(embedding_dataset_id, notice_id);
-
+DO $$
+BEGIN
+    IF to_regclass('public.notice_chunk') IS NOT NULL THEN
+        CREATE INDEX IF NOT EXISTS idx_notice_chunk_dataset_notice
+        ON notice_chunk(embedding_dataset_id, notice_id);
+    END IF;
+END $$;

@@ -26,10 +26,6 @@ def _secret() -> str:
     return AUTH_JWT_SECRET
 
 
-def create_access_token(username: str) -> str:
-    return jwt.encode({"sub": username}, _secret(), algorithm="HS256")
-
-
 def create_portal_access_token(student_id: str) -> str:
     """Create a revocable, non-expiring token for a portal-verified student."""
     principal = f"{_PORTAL_SUBJECT_PREFIX}{student_id}"
