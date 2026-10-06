@@ -1,4 +1,5 @@
 import struct
+import extractors.attachments as attachments
 from extractors.attachments import _hwp_record_stream_text
 from extractors.hwp_structured import _counter_f1
 
@@ -31,3 +32,40 @@ def test_cross_parser_score_ignores_spacing_but_detects_missing_content():
 
     assert _counter_f1(complete, spacing_only) == 1.0
     assert _counter_f1(complete, missing) < _counter_f1(complete, spacing_only)
+
+
+def test_attachment_download_checkpoint_reuses_cached_file(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(attachments, "_document_assets_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        attachments,
+        "_download",
+        lambda _url, _context: calls.append("download") or b"image-bytes",
+    )
+    monkeypatch.setattr(attachments, "_image_to_text", lambda *_args: "그림 내용")
+    progress = []
+    att = {
+        "filename": "안내.png",
+        "download_url": "https://example.test/guide.png",
+        "preview_url": None,
+    }
+
+    attachments.attachment_to_text(att, object(), progress_callback=progress.append)
+    saved_steps = progress[-1]["substeps"]
+    monkeypatch.setattr(
+        attachments,
+        "_download",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("downloaded twice")),
+    )
+    restored = []
+    text, meta = attachments.attachment_to_text(
+        att,
+        object(),
+        progress_callback=restored.append,
+        resume_substeps=saved_steps,
+    )
+
+    assert calls == ["download"]
+    assert text.endswith("그림 내용")
+    assert meta["raw_bytes"] == b"image-bytes"
+    assert restored[0]["substeps"][0]["restored"] is True

@@ -2,11 +2,13 @@
 
 ## 목적
 
-Flutter Hidden WebView에서 구현된 인증 흐름을 Playwright로 재현한다.
+공주대학교 포털(portal.kongju.ac.kr)의 SSO 로그인 흐름과 KNUIS 진입 세션 구조를 Playwright 자동화 기준으로 정리한다.
 
 범위:
 
-text Portal 접속 ↓ SSO 로그인 ↓ Portal Main ↓ iframe#startP ↓ frmsystem_s.imgsys1 클릭 ↓ Popup 생성 ↓ 기존 SSO Session 전달 ↓ KNUIS Session 생성 ↓ KNUIS Main 
+```text
+Portal 접속 ↓ SSO 로그인 ↓ Portal Main ↓ iframe#startP ↓ frmsystem_s.imgsys1 클릭 ↓ Popup 생성 ↓ 기존 SSO Session 전달 ↓ KNUIS Session 생성 ↓ KNUIS Main
+```
 
 본 문서는 KNUIS 진입 단계까지만 다룬다.
 
@@ -18,43 +20,29 @@ KNUIS는 독립 로그인 시스템이 아니다.
 
 실제 인증 흐름:
 
-text portal.kongju.ac.kr ↓ SSO 로그인 페이지 ↓ SSO 인증 ↓ SSO Session 생성 ↓ Portal Session 생성 ↓ Portal Main ↓ 통합정보시스템 ↓ 기존 SSO Session 전달 ↓ KNUIS Session 생성 ↓ KNUIS Main 
+```text
+portal.kongju.ac.kr ↓ SSO 로그인 페이지 ↓ SSO 인증 ↓ SSO Session 생성 ↓ Portal Session 생성 ↓ Portal Main ↓ 통합정보시스템 ↓ 기존 SSO Session 전달 ↓ KNUIS Session 생성 ↓ KNUIS Main
+```
 
-즉
-
-text Portal 로그인 = SSO 로그인 
-
-이다.
+즉, **Portal 로그인 = SSO 로그인** 구조이다.
 
 ---
 
-# 2. Flutter와 Playwright 차이
+# 2. 브라우저 환경 및 SSO URL
 
-Flutter WebView는 모바일 User-Agent를 사용한다.
+Playwright Chromium(데스크탑 브라우저) 환경에서 진입할 때의 SSO URL 확인:
 
-text Mozilla/5.0 (iPhone ...) 
-
-따라서 Flutter에서는
-
-text m_sso.jsp 
-
-가 확인되었다.
-
-하지만 Playwright Chromium은 데스크탑 브라우저이다.
-
-따라서 실제 SSO URL은 다음 중 하나일 수 있다.
-
-text sso.jsp login.jsp m_sso.jsp 기타 SSO URL 
-
-Playwright에서는 최초 실행 시 반드시 확인한다.
-
-python await page.goto(     "https://portal.kongju.ac.kr/" )  await page.wait_for_load_state()  print(page.url) 
+```python
+await page.goto("https://portal.kongju.ac.kr/")
+await page.wait_for_load_state()
+print(page.url)
+```
 
 ---
 
 # 3. 실제 로그인 셀렉터
 
-Flutter 코드에서 확인된 셀렉터
+포털 로그인 폼의 입력 필드 및 버튼 셀렉터:
 
 ## 아이디
 

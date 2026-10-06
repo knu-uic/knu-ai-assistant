@@ -25,7 +25,7 @@ pool = AsyncConnectionPool(
     configure=_configure,
 )
 
-# sync 경로(GRAPH retriever, 크롤러, sync 스크립트)용 풀.
+# sync 경로(MCP 검색, 크롤러, sync 스크립트)용 풀.
 # open=True여도 min_size=0이라 import 시점에 실제 연결은 만들지 않는다.
 sync_pool = ConnectionPool(
     conninfo=DB_URL,

@@ -1,6 +1,6 @@
 """로그인 본인 데이터 읽기 (/api/me/*).
 
-React 웹과 Codmes가 공유하며, JWT 유저 → accounts.student_id로만 조회한다.
+React 웹과 Codmes가 공유하며, 포털 JWT의 학번으로만 조회한다.
 경로에 학번을 받지 않으므로 타인 데이터 접근이 구조적으로 불가능(IDOR 차단).
 """
 from functools import partial
@@ -23,7 +23,6 @@ from interfaces.http.schemas.me import (
     TimetableResponse,
 )
 from config import HIDDEN_NOTICE_SOURCE_CODES, RATE_LIMIT_POLL, RATE_LIMIT_READ
-from db.accounts import get_account
 from db.documents import get_documents
 from db.lms import delete_lms_task, get_lms_courses, get_lms_tasks, set_lms_task_done
 from db.users import get_user, set_favorite_courses, set_interests
@@ -32,10 +31,7 @@ router = APIRouter()
 
 
 async def _linked_student_id(username: str) -> str | None:
-    if student_id := portal_student_id(username):
-        return student_id
-    account = await anyio.to_thread.run_sync(partial(get_account, username))
-    return account.get("student_id") if account else None
+    return portal_student_id(username)
 
 
 def _iso(d) -> str | None:

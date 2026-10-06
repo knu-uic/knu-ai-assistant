@@ -19,6 +19,8 @@ fn main() {
         let required = [
             python,
             runtime.join("postgres/bin").join(executable("postgres")),
+            runtime.join("postgres/bin").join(executable("pg_dump")),
+            runtime.join("postgres/bin").join(executable("psql")),
             runtime.join("redis/bin").join(executable("redis-server")),
             runtime.join("java/bin").join(executable("java")),
             runtime.join("runtime-manifest.json"),

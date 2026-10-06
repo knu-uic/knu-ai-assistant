@@ -14,6 +14,14 @@
 .text-link { display: inline; padding: 0; border: 0; border-radius: 0; background: transparent; color: #24704b; font-weight: 600; text-decoration: underline; vertical-align: baseline; }
 .model-picker { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .model-picker select { min-width: 0; }
+.chunk-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.chunk-help { line-height: 1.55; padding: 11px 13px; border-radius: 9px; background: #f5f8f6; }
+.switch-label { display: flex!important; grid-auto-flow: column; align-items: center; gap: 8px!important; }
+.switch-label input { width: auto; accent-color: #24704b; }
+.runtime-model-state { display: grid; gap: 4px; padding: 13px 14px; border: 1px solid #dfe7e2; border-radius: 10px; background: #f7faf8; }
+.runtime-model-state strong { color: #245e42; font-size: 13px; }
+.runtime-model-state span,.runtime-model-state small { color: #6e7d74; font-size: 11px; }
+.reranker-panel .list-head { margin-bottom: 0; }
 .processing-results { margin-top: 18px; padding: 13px 0; border-top: 1px solid #dfe7e2; }
 .processing-results > summary { font-weight: 700; color: #53635a; }
 .quality-grid { display: grid; grid-template-columns: 110px 1fr; gap: 7px 12px; padding: 12px; background: #f7f9f8; border-radius: 10px; font-size: 12px; }
@@ -33,3 +41,20 @@
 .asset-images figcaption span { font-size: 11px; line-height: 1.5; color: #6f7d75; }
 .image-context { font-size: 11px; color: #64736b; }
 .image-context span { display: block; white-space: pre-wrap; padding-top: 7px; }
+.student-account { grid-template-columns: minmax(150px,1fr) minmax(270px,1.6fr) auto auto auto; }
+.account-data-summary { display: grid; gap: 3px; }
+.account-data-summary span { margin: 0; }
+.account-dialog { width: min(900px,90vw); max-height: 88vh; overflow: auto; }
+.account-dialog-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+.account-dialog-head h3 { margin: 0 0 5px; }
+.account-detail { display: grid; gap: 12px; }
+.account-profile { display: flex; gap: 7px 16px; flex-wrap: wrap; padding: 12px; background: #f5f8f6; border-radius: 9px; font-size: 12px; }
+.portal-field { border: 1px solid #e1e9e3; border-radius: 9px; padding: 11px 13px; }
+.portal-field summary { cursor: pointer; font-weight: 650; }
+.portal-field summary span { float: right; color: #718078; font-size: 11px; font-weight: 400; }
+.portal-field pre { max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 12px/1.6 ui-monospace,SFMono-Regular,monospace; background: #f7f9f8; padding: 12px; }
+.account-detail h4 { margin: 6px 0; }
+.account-items { display: grid; gap: 7px; max-height: 270px; overflow: auto; }
+.account-items > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; border: 1px solid #e1e9e3; border-radius: 8px; padding: 9px 11px; }
+.account-items strong { font-size: 12px; }
+.account-items span { font-size: 11px; color: #718078; }

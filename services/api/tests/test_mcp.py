@@ -143,6 +143,9 @@ def test_mcp_lists_grouped_notice_student_and_counseling_tools(monkeypatch):
         "knu_list_notices",
         "knu_search_notice_details",
         "knu_get_notice_detail",
+        "knu_list_academic_documents",
+        "knu_search_academic_details",
+        "knu_get_academic_detail",
         "knu_get_portal_academic_data",
         "knu_list_lms_tasks",
         "knu_list_lms_courses",
@@ -156,6 +159,7 @@ def test_mcp_lists_grouped_notice_student_and_counseling_tools(monkeypatch):
     assert "count" in scan_tool["description"]
     assert "reranking" in deep_tool["description"]
     assert "department" in deep_tool["inputSchema"]["properties"]
+    assert deep_tool["inputSchema"]["properties"]["include_application_url"]["default"] is False
     assert "major" not in deep_tool["inputSchema"]["properties"]
     scan_properties = scan_tool["inputSchema"]["properties"]
     assert set(scan_properties) == {
@@ -174,7 +178,10 @@ def test_mcp_lists_grouped_notice_student_and_counseling_tools(monkeypatch):
     }
     metadata = scan_tool["_meta"]["com.codmes/tool"]
     assert metadata["publicName"] == "knu_list_notices"
-    assert metadata["group"] == "knu.notices"
+    assert metadata["group"] == "knu.notice"
+    academic_tool = next(tool for tool in tools if tool["name"] == "knu_search_academic_details")
+    assert academic_tool["_meta"]["com.codmes/tool"]["group"] == "knu.academic"
+    assert academic_tool["annotations"]["readOnlyHint"] is True
     assert metadata["groupDescriptions"]["knu.portal"].startswith("로그인한 학생")
     assert scan_tool["annotations"]["readOnlyHint"] is True
     assert scan_tool["annotations"]["destructiveHint"] is False
@@ -359,7 +366,7 @@ def test_knu_list_notices_returns_server_total(monkeypatch):
         }
 
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
-    monkeypatch.setattr(mcp_mod, "list_notices_for_scan", fake_list)
+    monkeypatch.setattr(mcp_mod, "list_content_for_scan", fake_list)
     with TestClient(app) as client:
         result = _tool_call(
             client,
@@ -398,7 +405,7 @@ def test_mcp_department_is_enum_and_school_alias_uses_profile_scope(monkeypatch)
     )
     monkeypatch.setattr(
         mcp_mod,
-        "list_notices_for_scan",
+        "list_content_for_scan",
         lambda *args: scan_calls.append(args) or {"total": 1, "items": []},
     )
     token = create_portal_access_token("20260004")
@@ -454,8 +461,8 @@ def test_mcp_automatically_scopes_scan_and_deep_to_student_profile(monkeypatch):
         scan_calls.append(args)
         return {"total": 0, "items": []}
 
-    def fake_retrieve(query, department, category, time_scope, year, notice_ids):
-        deep_calls.append((query, department, category, time_scope, year, notice_ids))
+    def fake_retrieve(query, department, category, time_scope, year, notice_ids, source_kind):
+        deep_calls.append((query, department, category, time_scope, year, notice_ids, source_kind))
         return {
             "query_mode": "deep",
             "original_query": query,
@@ -465,12 +472,13 @@ def test_mcp_automatically_scopes_scan_and_deep_to_student_profile(monkeypatch):
             "time_scope": time_scope,
             "year": year,
             "notice_ids": notice_ids or [],
+            "source_kind": source_kind,
             "routing_fallback": False,
             "contexts": [],
             "evidence_chunks": [],
         }
 
-    monkeypatch.setattr(mcp_mod, "list_notices_for_scan", fake_list)
+    monkeypatch.setattr(mcp_mod, "list_content_for_scan", fake_list)
     monkeypatch.setattr(mcp_mod, "retrieve_mcp_evidence", fake_retrieve)
     token = create_portal_access_token("20260003")
 
@@ -485,6 +493,7 @@ def test_mcp_automatically_scopes_scan_and_deep_to_student_profile(monkeypatch):
 
     assert scan_calls[0][4:6] == ("컴퓨터공학과", 3)
     assert deep_calls[0][1] == "컴퓨터공학과"
+    assert deep_calls[0][6] == "notice"
     assert scan["personalization"] == {
         "department": "컴퓨터공학과",
         "grade": 3,
@@ -500,9 +509,10 @@ def test_mcp_automatically_scopes_scan_and_deep_to_student_profile(monkeypatch):
 def test_knu_search_notice_details_returns_safe_fields(monkeypatch):
     import interfaces.mcp.server as mcp_mod
 
-    def fake_retrieve(query, department, category_override, time_scope, year, notice_ids):
+    def fake_retrieve(query, department, category_override, time_scope, year, notice_ids, source_kind):
         assert (query, department, category_override) == ("수강 철회", None, "수강")
         assert (time_scope, year, notice_ids) == ("current", 2026, None)
+        assert source_kind == "notice"
         return {
             "query_mode": "deep",
             "original_query": query,
@@ -511,6 +521,7 @@ def test_knu_search_notice_details_returns_safe_fields(monkeypatch):
             "time_scope": "current",
             "year": 2026,
             "notice_ids": [],
+            "source_kind": source_kind,
             "routing_fallback": False,
             "contexts": [
                 {
@@ -518,6 +529,7 @@ def test_knu_search_notice_details_returns_safe_fields(monkeypatch):
                     "title": "검색결과 공지",
                     "category": "수강",
                     "source_name": "컴퓨터공학과",
+                    "source_kind": "notice",
                     "source_department": "컴퓨터공학과",
                     "posted_at": datetime.date(2026, 6, 2),
                     "start_date": None,
@@ -537,6 +549,7 @@ def test_knu_search_notice_details_returns_safe_fields(monkeypatch):
                     "title": "검색결과 공지",
                     "category": "수강",
                     "source_name": "컴퓨터공학과",
+                    "source_kind": "notice",
                     "source_department": "컴퓨터공학과",
                     "content": "수강 철회 근거",
                     "vector_score": 0.87,
@@ -559,7 +572,7 @@ def test_knu_search_notice_details_returns_safe_fields(monkeypatch):
     legacy = json.loads(result["content"][0]["text"])
     assert list(legacy[0]) == [
         "url", "title", "snippet", "score", "posted_at", "start_date", "end_date",
-        "category", "source_name", "source_department", "summary",
+        "category", "source_name", "source_kind", "source_department", "summary",
     ]
     assert legacy[0]["url"] == "https://x/9"
     assert legacy[0]["score"] == 0.96
@@ -578,6 +591,7 @@ def test_knu_search_notice_details_returns_safe_fields(monkeypatch):
             "title": "검색결과 공지",
             "category": "수강",
             "source_name": "컴퓨터공학과",
+            "source_kind": "notice",
             "source_department": "컴퓨터공학과",
             "content": "수강 철회 근거",
                 "vector_score": 0.87,
@@ -589,6 +603,44 @@ def test_knu_search_notice_details_returns_safe_fields(monkeypatch):
     assert package["documents"][0]["source_department"] == "컴퓨터공학과"
     assert package["documents"][0]["truncated"] is True
     assert "private_db_value" not in json.dumps(package, ensure_ascii=False)
+
+
+def test_application_links_are_opt_in_and_missing_links_are_null(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+
+    calls = []
+    def fake_retrieve(query, department, category, time_scope, year, notice_ids, source_kind):
+        return {
+            "contexts": [
+                {"url": "https://school.test/1", "title": "신청 공지", "summary": "신청 안내"},
+                {"url": "https://school.test/2", "title": "일반 공지", "summary": "일반 안내"},
+            ],
+            "evidence_chunks": [],
+        }
+
+    def fake_links(urls):
+        calls.append(urls)
+        return {"https://school.test/1": "https://forms.gle/example"}
+
+    monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
+    monkeypatch.setattr(mcp_mod, "retrieve_mcp_evidence", fake_retrieve)
+    monkeypatch.setattr(mcp_mod, "get_notice_application_urls", fake_links)
+
+    with TestClient(app) as client:
+        ordinary = _tool_call_result(
+            client, "unit-mcp-token", "knu_search_notice_details", {"query": "대상이 누구야?"},
+        )
+        applying = _tool_call_result(
+            client, "unit-mcp-token", "knu_search_notice_details",
+            {"query": "어디서 신청해?", "include_application_url": True},
+        )
+
+    assert calls == [["https://school.test/1", "https://school.test/2"]]
+    assert all("application_url" not in doc for doc in ordinary["structuredContent"]["documents"])
+    documents = applying["structuredContent"]["documents"]
+    assert [doc["application_url"] for doc in documents] == ["https://forms.gle/example", None]
+    legacy = json.loads(applying["content"][0]["text"])
+    assert [item["application_url"] for item in legacy] == ["https://forms.gle/example", None]
 
 
 @pytest.mark.parametrize(
@@ -617,7 +669,7 @@ def test_knu_search_notice_details_returns_status(monkeypatch, contexts, expecte
     monkeypatch.setattr(
         mcp_mod,
         "retrieve_mcp_evidence",
-        lambda query, department, category, time_scope, year, notice_ids: {
+        lambda query, department, category, time_scope, year, notice_ids, source_kind: {
             "query_mode": "deep",
             "original_query": query,
             "expanded_query": query,
@@ -625,6 +677,7 @@ def test_knu_search_notice_details_returns_status(monkeypatch, contexts, expecte
             "time_scope": time_scope,
             "year": year,
             "notice_ids": notice_ids or [],
+            "source_kind": source_kind,
             "routing_fallback": False,
             "contexts": contexts,
             "evidence_chunks": [],
@@ -648,7 +701,7 @@ def test_get_knu_notice_detail_limits_content_and_returns_source_url(monkeypatch
 
     content = "가" * (mcp_mod._DETAIL_CONTENT_LIMIT + 1)
     monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
-    monkeypatch.setattr(mcp_mod, "get_document_content", lambda url: content)
+    monkeypatch.setattr(mcp_mod, "get_document_content", lambda url, category, source_kind: content)
     with TestClient(app) as client:
         result = _tool_call(
             client,
@@ -660,5 +713,71 @@ def test_get_knu_notice_detail_limits_content_and_returns_source_url(monkeypatch
     assert result == {
         "content": "가" * mcp_mod._DETAIL_CONTENT_LIMIT,
         "url": "https://x/9",
+        "source_kind": "notice",
         "truncated": True,
     }
+
+
+def test_academic_tools_enforce_academic_source_kind(monkeypatch):
+    import interfaces.mcp.server as mcp_mod
+
+    scan_calls = []
+    deep_calls = []
+    detail_calls = []
+
+    monkeypatch.setattr(mcp_mod, "MCP_AUTH_TOKEN", "unit-mcp-token")
+    monkeypatch.setattr(
+        mcp_mod,
+        "list_content_for_scan",
+        lambda *args: scan_calls.append(args) or {
+            "total": 1,
+            "items": [{"title": "장학안내", "source_kind": args[-1]}],
+        },
+    )
+    monkeypatch.setattr(
+        mcp_mod,
+        "retrieve_mcp_evidence",
+        lambda query, department, category, time_scope, year, notice_ids, source_kind: (
+            deep_calls.append(source_kind)
+            or {
+                "query_mode": "deep",
+                "original_query": query,
+                "expanded_query": query,
+                "categories": [category] if category else [],
+                "time_scope": time_scope,
+                "year": year,
+                "notice_ids": [],
+                "source_kind": source_kind,
+                "routing_fallback": False,
+                "contexts": [],
+                "evidence_chunks": [],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_mod,
+        "get_document_content",
+        lambda url, category, source_kind: detail_calls.append(source_kind) or "학사 문서",
+    )
+
+    with TestClient(app) as client:
+        listing = _tool_call(client, "unit-mcp-token", "knu_list_academic_documents", {"category": "장학"})
+        deep = _tool_call_result(
+            client,
+            "unit-mcp-token",
+            "knu_search_academic_details",
+            {"query": "교내장학금 종류", "category": "장학"},
+        )["structuredContent"]
+        detail = _tool_call(
+            client,
+            "unit-mcp-token",
+            "knu_get_academic_detail",
+            {"url": "https://x/academic"},
+        )
+
+    assert scan_calls[0][-1] == "academic"
+    assert listing["items"][0]["source_kind"] == "academic"
+    assert deep_calls == ["academic"]
+    assert deep["source_kind"] == "academic"
+    assert detail_calls == ["academic"]
+    assert detail["source_kind"] == "academic"

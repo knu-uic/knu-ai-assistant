@@ -6,20 +6,17 @@ use std::{
     io::{BufRead, BufReader},
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, Output, Stdio},
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Manager};
 
-use crate::standalone::{
-    stop_child as stop_embedded_child, EmbeddedProcesses, StandaloneRuntime, POSTGRES_PORT,
-    REDIS_PORT,
-};
+use crate::standalone::{stop_child as stop_embedded_child, EmbeddedProcesses, StandaloneRuntime};
 
 const MAX_LOGS: usize = 1200;
-const API_ADDRESS: &str = "127.0.0.1:8000";
+const DEVELOPMENT_API_PORT: u16 = 8000;
 
 struct Processes {
     api: Option<Child>,
@@ -66,6 +63,7 @@ pub struct ManagerState {
     standalone: Option<StandaloneRuntime>,
     standalone_error: Option<String>,
     show_dock_icon: Mutex<bool>,
+    transfer_active: Mutex<bool>,
 }
 
 #[derive(Deserialize, Serialize, Default)]
@@ -89,6 +87,18 @@ pub struct RuntimeStatus {
     data_root: String,
     database_running: bool,
     redis_running: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeTransferResult {
+    path: String,
+    #[serde(default)]
+    safety_backup: Option<String>,
+    notices: u64,
+    assets: u64,
+    chunks: u64,
+    datasets: u64,
 }
 
 fn find_repo_root() -> PathBuf {
@@ -240,6 +250,7 @@ impl ManagerState {
             standalone,
             standalone_error,
             show_dock_icon: Mutex::new(preferences.show_dock_icon),
+            transfer_active: Mutex::new(false),
         }
     }
 
@@ -292,7 +303,6 @@ impl Drop for ManagerState {
     fn drop(&mut self) {
         if let Ok(mut processes) = self.processes.lock() {
             stop_child(&mut processes.worker);
-            cleanup_interrupted_crawl(self);
             stop_child(&mut processes.api);
             stop_embedded_child(&mut processes.redis);
             stop_embedded_child(&mut processes.postgres);
@@ -376,11 +386,13 @@ fn managed_command_matches(role: &str, command: &str, data_root: &Path) -> bool 
     match role {
         "worker" => command.contains("arq") && command.contains("workers.arq_worker"),
         "api" => command.contains("uvicorn") && command.contains("api.main:app"),
-        "redis" => command.contains("redis-server") && command.contains(&REDIS_PORT.to_string()),
+        "redis" => {
+            command.contains("redis-server")
+                && command.contains(&data_root.join("redis").to_string_lossy().to_string())
+        }
         "postgres" => {
             command.contains("postgres")
                 && command.contains(&data_root.join("postgres").to_string_lossy().to_string())
-                && command.contains(&POSTGRES_PORT.to_string())
         }
         _ => false,
     }
@@ -392,15 +404,16 @@ fn cleanup_interrupted_crawl(state: &ManagerState) {
     if let Some(runtime) = &state.standalone {
         runtime.configure_command(&mut command);
     }
-    match command
+    command
         .args([
             "-c",
             "from workers.crawl_control import cleanup_interrupted_crawl; print(cleanup_interrupted_crawl())",
         ])
         .current_dir(api_root)
         .env("KNU_MANAGER_SETTINGS_PATH", &state.runtime_settings_path)
-        .output()
-    {
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match output_with_timeout(&mut command, Duration::from_secs(5)) {
         Ok(output) if output.status.success() => push_log(
             &state.logs,
             format!(
@@ -417,8 +430,32 @@ fn cleanup_interrupted_crawl(state: &ManagerState) {
         ),
         Err(error) => push_log(
             &state.logs,
-            format!("[manager] crawl state cleanup could not start: {error}"),
+            format!("[manager] crawl state cleanup skipped: {error}"),
         ),
+    }
+}
+
+fn output_with_timeout(command: &mut Command, timeout: Duration) -> Result<Output, String> {
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().map_err(|error| error.to_string()),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "{}초 안에 완료되지 않아 중단했습니다.",
+                    timeout.as_secs()
+                ));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error.to_string());
+            }
+        }
     }
 }
 
@@ -435,22 +472,19 @@ fn child_running(child: &mut Option<Child>) -> bool {
     }
 }
 
-fn api_is_listening() -> bool {
-    API_ADDRESS
-        .parse::<SocketAddr>()
-        .ok()
-        .and_then(|address| TcpStream::connect_timeout(&address, Duration::from_millis(150)).ok())
-        .is_some()
+fn api_is_listening(port: u16) -> bool {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&address, Duration::from_millis(150)).is_ok()
 }
 
-fn wait_for_api(child: &mut Child) -> Result<(), String> {
+fn wait_for_api(child: &mut Child, port: u16) -> Result<(), String> {
     for _ in 0..80 {
         if let Ok(Some(status)) = child.try_wait() {
             return Err(format!(
                 "KNU API가 시작 중 종료되었습니다 ({status}). 서버 로그를 확인하세요."
             ));
         }
-        if api_is_listening() {
+        if api_is_listening(port) {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(100));
@@ -460,6 +494,11 @@ fn wait_for_api(child: &mut Child) -> Result<(), String> {
 
 #[tauri::command]
 pub fn runtime_status(state: tauri::State<ManagerState>) -> RuntimeStatus {
+    let api_port = state
+        .standalone
+        .as_ref()
+        .map(|runtime| runtime.ports().api)
+        .unwrap_or(DEVELOPMENT_API_PORT);
     let (api_running, worker_running, database_running, redis_running) =
         if let Ok(mut p) = state.processes.lock() {
             (
@@ -477,7 +516,7 @@ pub fn runtime_status(state: tauri::State<ManagerState>) -> RuntimeStatus {
             && (state.standalone.is_none() || (database_running && redis_running)),
         api_running,
         worker_running,
-        url: "http://127.0.0.1:8000".into(),
+        url: format!("http://127.0.0.1:{api_port}"),
         admin_token: state.admin_token.clone(),
         server_root: state.root.display().to_string(),
         python_path: state.python.display().to_string(),
@@ -580,6 +619,146 @@ fn migrate_database(state: &ManagerState) -> Result<(), String> {
     Ok(())
 }
 
+fn notice_transfer_path(state: &ManagerState) -> PathBuf {
+    state.root.join("services/api/tools/notice_transfer.py")
+}
+
+fn run_notice_transfer(
+    state: &ManagerState,
+    mode: &str,
+    path: &Path,
+) -> Result<NoticeTransferResult, String> {
+    let script = notice_transfer_path(state);
+    if !script.is_file() {
+        return Err(format!(
+            "공지 데이터 전송 도구를 찾을 수 없습니다: {}",
+            script.display()
+        ));
+    }
+    let api_root = state.root.join("services/api");
+    let mut command = Command::new(&state.python);
+    if let Some(runtime) = &state.standalone {
+        runtime.configure_command(&mut command);
+    }
+    let output = command
+        .arg(script)
+        .arg(mode)
+        .arg(path)
+        .current_dir(api_root)
+        .env("KNU_MANAGER_SETTINGS_PATH", &state.runtime_settings_path)
+        .output()
+        .map_err(|error| format!("공지 데이터 {mode} 작업을 시작하지 못했습니다: {error}"))?;
+    for line in String::from_utf8_lossy(&output.stderr).lines() {
+        push_log(&state.logs, format!("[notice-{mode}] {line}"));
+    }
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            format!("공지 데이터 {mode} 작업에 실패했습니다.")
+        } else {
+            format!("공지 데이터 {mode} 작업에 실패했습니다.\n{detail}")
+        });
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let payload = stdout
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "공지 데이터 전송 결과가 비어 있습니다.".to_string())?;
+    serde_json::from_str(payload)
+        .map_err(|error| format!("공지 데이터 전송 결과를 읽지 못했습니다: {error}"))
+}
+
+fn transfer_notices(
+    state: &ManagerState,
+    mode: &str,
+    path: &Path,
+) -> Result<NoticeTransferResult, String> {
+    {
+        let mut active = state
+            .transfer_active
+            .lock()
+            .map_err(|_| "공지 데이터 작업 상태를 확인하지 못했습니다.")?;
+        if *active {
+            return Err("이미 공지 데이터 가져오기 또는 내보내기가 진행 중입니다.".into());
+        }
+        *active = true;
+    }
+
+    let operation = (|| {
+        let should_restart = {
+            let mut processes = state
+                .processes
+                .lock()
+                .map_err(|_| "process state lock failed")?;
+            let api_running = child_running(&mut processes.api);
+            let worker_running = child_running(&mut processes.worker);
+            let database_running = child_running(&mut processes.postgres);
+            if !api_running || (state.standalone.is_some() && !database_running) {
+                return Err("서버를 먼저 실행한 뒤 공지 데이터를 전송하세요.".into());
+            }
+            stop_child(&mut processes.worker);
+            if mode == "import" {
+                stop_child(&mut processes.api);
+            }
+            state.persist_process_ids(&processes);
+            api_running || worker_running
+        };
+
+        let result = run_notice_transfer(state, mode, path);
+        let restart = if should_restart {
+            start_managed_server(state)
+        } else {
+            Ok(())
+        };
+        match (result, restart) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) => Err(error),
+            (Ok(_), Err(restart_error)) => Err(format!(
+                "공지 데이터 작업은 완료됐지만 서버를 다시 시작하지 못했습니다: {restart_error}"
+            )),
+            (Err(error), Err(restart_error)) => Err(format!(
+                "{error}\n서버도 다시 시작하지 못했습니다: {restart_error}"
+            )),
+        }
+    })();
+
+    if let Ok(mut active) = state.transfer_active.lock() {
+        *active = false;
+    }
+    operation
+}
+
+#[tauri::command]
+pub fn export_notice_data(
+    state: tauri::State<ManagerState>,
+) -> Result<Option<NoticeTransferResult>, String> {
+    let Some(mut path) = rfd::FileDialog::new()
+        .add_filter("KNU 공지 데이터", &["knudata"])
+        .set_file_name("KNU-Notices.knudata")
+        .save_file()
+    else {
+        return Ok(None);
+    };
+    if path.extension().and_then(|value| value.to_str()) != Some("knudata") {
+        path.set_extension("knudata");
+    }
+    transfer_notices(state.inner(), "export", &path).map(Some)
+}
+
+#[tauri::command]
+pub fn import_notice_data(
+    state: tauri::State<ManagerState>,
+) -> Result<Option<NoticeTransferResult>, String> {
+    let Some(path) = rfd::FileDialog::new()
+        .add_filter("KNU 공지 데이터", &["knudata"])
+        .pick_file()
+    else {
+        return Ok(None);
+    };
+    transfer_notices(state.inner(), "import", &path).map(Some)
+}
+
 #[tauri::command]
 pub fn start_server(state: tauri::State<ManagerState>) -> Result<(), String> {
     start_managed_server(state.inner())
@@ -625,14 +804,22 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
         return Err(error);
     }
     if !child_running(&mut p.api) {
-        if api_is_listening() {
+        let api_port = if let Some(runtime) = &state.standalone {
+            runtime.prepare_api_port(&state.logs)?
+        } else {
+            DEVELOPMENT_API_PORT
+        };
+        if api_is_listening(api_port) {
             if state.standalone.is_some() {
                 stop_embedded_child(&mut p.redis);
                 stop_embedded_child(&mut p.postgres);
                 state.persist_process_ids(&p);
             }
-            return Err("8000번 포트에서 다른 KNU API가 이미 실행 중입니다. 이전 KNU Server Manager를 종료한 뒤 다시 시도하세요.".into());
+            return Err(format!(
+                "{api_port}번 포트에서 다른 서비스가 이미 실행 중입니다."
+            ));
         }
+        let api_port_string = api_port.to_string();
         let api = spawn_python(
             state,
             &[
@@ -642,7 +829,7 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
                 "--host",
                 "127.0.0.1",
                 "--port",
-                "8000",
+                &api_port_string,
             ],
             "api",
         )?;
@@ -652,7 +839,7 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
             .api
             .as_mut()
             .ok_or_else(|| "KNU API process was not recorded".to_string())
-            .and_then(wait_for_api);
+            .and_then(|child| wait_for_api(child, api_port));
         if let Err(error) = api_ready {
             stop_child(&mut p.api);
             if state.standalone.is_some() {
@@ -744,12 +931,26 @@ fn stop_child(child: &mut Option<Child>) {
 
 #[tauri::command]
 pub fn stop_server(state: tauri::State<ManagerState>) -> Result<(), String> {
+    stop_managed_server(state.inner(), true)
+}
+
+pub(crate) fn shutdown_managed_server(state: &ManagerState) -> Result<(), String> {
+    stop_managed_server(state, false)
+}
+
+fn stop_managed_server(state: &ManagerState, cleanup_crawl: bool) -> Result<(), String> {
     let mut p = state
         .processes
         .lock()
         .map_err(|_| "process state lock failed")?;
+    let had_managed_process = child_running(&mut p.worker)
+        || child_running(&mut p.api)
+        || child_running(&mut p.redis)
+        || child_running(&mut p.postgres);
     stop_child(&mut p.worker);
-    cleanup_interrupted_crawl(state.inner());
+    if cleanup_crawl && had_managed_process {
+        cleanup_interrupted_crawl(state);
+    }
     stop_child(&mut p.api);
     stop_embedded_child(&mut p.redis);
     stop_embedded_child(&mut p.postgres);

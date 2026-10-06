@@ -1,4 +1,3 @@
-streamlit
 psycopg[binary,pool]
 pgvector
 fastapi
@@ -9,9 +8,8 @@ pydantic
 
 httpx
 
-# 인증 (자체 계정 JWT + 비밀번호 해시)
+# 인증 (포털 인증 세션 JWT)
 pyjwt
-bcrypt
 
 # 레이트리밋 (auth IP 기반 + chat 유저 기반)
 slowapi
@@ -23,7 +21,7 @@ redis
 # 포털 비밀번호 잡 전달용 암호화 (Fernet)
 cryptography
 
-# LangChain / LangGraph
+# LangChain (크롤링·임베딩 모델 런타임)
 # - langchain-openai: LM Studio가 OpenAI 호환 API라서 필요
 # - langchain-google-genai: provider를 google로 바꿀 때 사용
 langchain
@@ -32,7 +30,6 @@ langchain-community
 langchain-google-genai
 langchain-openai
 langchain-postgres
-langgraph
 langsmith
 
 # 임베딩 / 리랭킹

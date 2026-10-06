@@ -40,7 +40,7 @@ export function setToken(t) {
 export function isAuthed() {
   return !!getToken();
 }
-// JWT payload의 sub(=username)을 클라이언트에서 디코드. 대화 기록 localStorage
+// JWT payload의 sub(=portal:학번)을 클라이언트에서 디코드. 대화 기록 localStorage
 // 키를 사용자별로 분리하는 데만 쓴다(인증 판단 아님). 토큰 없거나 깨지면 null.
 export function currentUsername() {
   const t = getToken();
@@ -73,70 +73,75 @@ async function req(method, path, body) {
 
 // ── 인증 ──────────────────────────────────────────────
 export const auth = {
-  async signupRequest(email) {
-    return req("POST", "/api/auth/signup/request", { email });
-  },
-  async signupVerify(email, code, username, password) {
-    const r = await req("POST", "/api/auth/signup/verify", {
-      email,
-      code,
-      username,
+  async portalLogin(studentId, password) {
+    const r = await req("POST", "/api/auth/portal-login", {
+      student_id: studentId,
       password,
     });
     setToken(r.access_token);
     return r;
   },
-  async login(username, password) {
-    const r = await req("POST", "/api/auth/login", { username, password });
-    setToken(r.access_token);
-    return r;
-  },
-  logout() {
-    setToken(null);
+  async logout() {
+    const token = getToken();
+    try {
+      if (token) await fetch("/api/auth/logout", {
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      // 네트워크가 끊겨도 브라우저의 인증 정보는 즉시 제거한다.
+    } finally {
+      setToken(null);
+    }
   },
 };
 
+export const llmAccounts = {
+  list: () => req("GET", "/api/me/llm/accounts"),
+  addOpenAIKey: (api_key) => req("POST", "/api/me/llm/openai-key", { api_key }),
+  addGeminiKey: (api_key) => req("POST", "/api/me/llm/google-key", { api_key }),
+  startCodexLogin: () => req("POST", "/api/me/llm/codex/login"),
+  pollCodexLogin: (id) => req("GET", `/api/me/llm/codex/login/${encodeURIComponent(id)}`),
+  models: (id) => req("GET", `/api/me/llm/accounts/${encodeURIComponent(id)}/models`),
+  select: (id, model) => req("PUT", `/api/me/llm/accounts/${encodeURIComponent(id)}/selection`, { model }),
+  remove: (id) => req("DELETE", `/api/me/llm/accounts/${encodeURIComponent(id)}`),
+};
+
+export const chatModels = () => req("GET", "/api/chat/models");
+
 // ── 챗봇 ──────────────────────────────────────────────
-// 백엔드는 flat 키(answer 문자열)를 반환 → AnswerCard 구조로 어댑트.
-export async function askChatbot(question, major) {
-  const r = await req("POST", "/api/chat", { question, major });
+// 비스트리밍 호출도 스트리밍과 동일하게 대화 기록을 전달한다.
+export async function askChatbot(question, history = [], source = "personal") {
+  const r = await req("POST", "/api/chat", { question, history, source });
   return {
     intro: r.answer || "",
     bullets: [],
-    outro: r.grounded === false ? "근거 문서를 찾지 못했습니다." : "",
+    outro: "",
     citations: [],
   };
 }
 
-// 노드 "완료" → 다음 단계 진행 문구. step은 노드가 끝날 때 오므로
-// 방금 끝난 노드가 아니라 "이제 할 일"을 보여줘야 자연스럽다.
-const STEP_LABEL = {
-  router: "관련 공지를 찾고 있어요...",   // 분석 끝 → 검색 시작
-  retriever: "답변을 생성하고 있어요...",
-  broad_retriever: "답변을 생성하고 있어요...",
-  verifier: "답변을 검토하고 있어요...",
-};
-
 // 스트리밍 챗봇. SSE를 fetch+ReadableStream으로 수동 파싱(EventSource는
 // Authorization 헤더를 못 실어서 토큰 인증과 함께 쓸 수 없음).
 // 콜백: onStep(상태문구) / onToken(누적텍스트) / 반환값=최종 {grounded}
-export async function streamChatbot(question, major, { onStep, onToken } = {}) {
-  const params = new URLSearchParams({ question });
-  if (major) params.set("major", major);
-  const res = await fetch(`/api/chat/stream?${params}`, {
-    headers: { Authorization: `Bearer ${getToken()}` },
+export async function streamChatbot(question, history = [], { onStep, onToken, source = "personal" } = {}) {
+  const res = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${getToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ question, history, source }),
   });
   if (res.status === 401) {
     setToken(null);
     throw new Error("세션이 만료되었습니다. 다시 로그인해주세요.");
   }
-  if (!res.ok || !res.body) throw new Error(`요청 실패 (${res.status})`);
+  if (!res.ok || !res.body) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.detail || `요청 실패 (${res.status})`);
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
   let text = "";
-  let meta = {};
 
   // "event: X\ndata: {...}\n\n" 블록 단위 파싱
   const handle = (block) => {
@@ -145,9 +150,9 @@ export async function streamChatbot(question, major, { onStep, onToken } = {}) {
     if (!ev || dataLine == null) return;
     let data = {};
     try { data = JSON.parse(dataLine); } catch { return; }
-    if (ev === "step") { if (STEP_LABEL[data.node]) onStep?.(STEP_LABEL[data.node]); }
+    if (ev === "step") { onStep?.(data.label || "답변을 준비하고 있어요..."); }
     else if (ev === "token") { text += data.text || ""; onToken?.(text); }
-    else if (ev === "answer") meta = data;
+    else if (ev === "answer" && !text) { text = data.answer || ""; onToken?.(text); }
     else if (ev === "error") throw new Error(data.detail || "답변 생성에 실패했습니다.");
   };
 
@@ -163,7 +168,7 @@ export async function streamChatbot(question, major, { onStep, onToken } = {}) {
   }
   return {
     intro: text,
-    outro: meta.grounded === false ? "근거 문서를 찾지 못했습니다." : "",
+    outro: "",
   };
 }
 
@@ -181,7 +186,7 @@ export async function getNotices() {
     title: n.title,
     body: n.summary || n.content || "",
     target: (n.target && n.target[0]) || "전체",
-    tags: (n.keywords || []).slice(0, 3).map((k) => `# ${k}`),
+    tags: [],
     attachments: [],
     category: n.category || "일반(기타)",
     url: n.url,

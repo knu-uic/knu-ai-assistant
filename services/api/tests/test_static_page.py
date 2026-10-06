@@ -20,7 +20,6 @@ def test_static_page_returns_deterministic_refined_metadata(monkeypatch):
         title_selector="h2",
         content_selector="article",
         category="장학",
-        keywords=("장학", "장학금", "지원"),
     ))
     monkeypatch.setattr(crawler.session, "get", lambda *args, **kwargs: _Response())
 
@@ -30,7 +29,7 @@ def test_static_page_returns_deterministic_refined_metadata(monkeypatch):
     assert result[0]["pre_refined"] is True
     assert result[0]["metadata"]["title"] == "장학안내"
     assert result[0]["metadata"]["category"] == "장학"
-    assert result[0]["metadata"]["keywords"] == ["장학", "장학금", "지원"]
+    assert "keywords" not in result[0]["metadata"]
     assert "12월" in result[0]["metadata"]["summary"]
 
 

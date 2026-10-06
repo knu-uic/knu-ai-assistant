@@ -14,7 +14,6 @@ class NoticeItem(BaseModel):
     end_date: Optional[str] = None
     category: Optional[str] = None
     target: List[str] = Field(default_factory=list)
-    keywords: List[str] = Field(default_factory=list)
     source_name: Optional[str] = None
     department: Optional[str] = None
     deadline_label: Optional[str] = None

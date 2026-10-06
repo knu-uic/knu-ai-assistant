@@ -60,3 +60,53 @@ def test_notice_v2_migration_covers_structured_scan_metadata():
     assert "series_key" in body
     assert "source_text" in body
     assert "extraction_confidence" in body
+
+
+def test_content_v3_migration_normalizes_content_and_domain_keys():
+    migration = MIGRATIONS_DIR / "012_content_model.sql"
+    assert migration.exists()
+
+    body = migration.read_text(encoding="utf-8")
+    assert "ALTER TABLE notice RENAME TO content" in body
+    assert "ALTER TABLE content RENAME COLUMN id TO content_id" in body
+    assert "ALTER TABLE source RENAME COLUMN id TO source_id" in body
+    assert "CREATE TABLE notice (" in body
+    assert "CREATE TABLE academic_document (" in body
+    assert "CREATE TABLE category (" in body
+    assert "CREATE TABLE topic (" in body
+    assert "CREATE TABLE content_topic (" in body
+    assert "ALTER TABLE notice_asset RENAME TO content_asset" in body
+    assert "ALTER TABLE notice_chunk RENAME TO content_chunk" in body
+
+
+def test_content_v4_migration_removes_legacy_compatibility_schema():
+    migration = MIGRATIONS_DIR / "013_remove_content_legacy_compat.sql"
+    assert migration.exists()
+
+    body = migration.read_text(encoding="utf-8")
+    assert "REFERENCES notice(notice_id)" in body
+    assert "DROP VIEW IF EXISTS notice_audience" in body
+    assert "DROP VIEW IF EXISTS notice_asset" in body
+    assert "DROP VIEW IF EXISTS notice_chunk" in body
+    assert "ALTER TABLE content DROP COLUMN category" in body
+    assert "ALTER TABLE content DROP COLUMN topics" in body
+    assert "ALTER TABLE content DROP COLUMN id" in body
+
+
+def test_content_triggers_are_schema_qualified_for_archive_restore():
+    migration = MIGRATIONS_DIR / "014_schema_qualify_content_triggers.sql"
+    assert migration.exists()
+
+    body = migration.read_text(encoding="utf-8")
+    assert "FROM public.source" in body
+    assert "DELETE FROM public.notice" in body
+    assert "INSERT INTO public.academic_document" in body
+
+
+def test_portal_accounts_migration_removes_service_signup_tables():
+    migration = MIGRATIONS_DIR / "015_portal_accounts_only.sql"
+    assert migration.exists()
+
+    body = migration.read_text(encoding="utf-8")
+    assert "DROP TABLE IF EXISTS email_verifications" in body
+    assert "DROP TABLE IF EXISTS accounts" in body

@@ -19,7 +19,7 @@ def test_every_independent_figure_chunk_keeps_marker(monkeypatch, figure_type):
         def embed_documents(self, values):
             return [[float(index)] for index, _ in enumerate(values)]
 
-    monkeypatch.setattr("embedding.embed.get_embeddings", lambda: FakeEmbedder())
+    monkeypatch.setattr("embedding.embed.get_embeddings", lambda *_args: FakeEmbedder())
     text = "[그림 3]\n" + ("긴 문맥 설명 " * 80)
 
     chunks = embed_document_chunks(
@@ -41,7 +41,7 @@ def test_every_body_figure_chunk_keeps_body_marker(monkeypatch):
         def embed_documents(self, values):
             return [[float(index)] for index, _ in enumerate(values)]
 
-    monkeypatch.setattr("embedding.embed.get_embeddings", lambda: FakeEmbedder())
+    monkeypatch.setattr("embedding.embed.get_embeddings", lambda *_args: FakeEmbedder())
     chunks = embed_document_chunks(
         title="포털 사용 안내",
         body_content="",

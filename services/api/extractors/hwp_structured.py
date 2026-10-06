@@ -24,6 +24,7 @@ from extractors.hwp2hwpx import convert_hwp_to_hwpx
 
 
 ImageAnalyzer = Callable[[bytes, str, str, str], dict]
+ProgressCallback = Callable[[dict], None]
 
 
 def _unicode_scalar_text(value: str) -> str:
@@ -352,6 +353,7 @@ def _extract_binaries(
     image_analyzer: ImageAnalyzer | None,
     validation_text: str,
     figures_by_binary_id: dict[int, dict] | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[list[dict], dict]:
     binary_dir = bundle_dir / "images"
     binary_dir.mkdir(parents=True, exist_ok=True)
@@ -367,9 +369,32 @@ def _extract_binaries(
             for parts in document.listdir()
             if parts and parts[0] == "BinData"
         )
-        for order, stream_name in enumerate(names):
-            binary = _decompress_bindata(document.openstream(stream_name).read())
+        binaries = [
+            (stream_name, _decompress_bindata(document.openstream(stream_name).read()))
+            for stream_name in names
+        ]
+        raster_total = sum(1 for stream_name, binary in binaries if _binary_type(stream_name, binary)[2])
+        if progress_callback:
+            progress_callback({"step": "internal_images", "status": "processing", "completed": 0, "total": raster_total})
+        extracted_rasters = 0
+        analyzable_total = 0
+        prepared: list[tuple] = []
+        for stream_name, binary in binaries:
             suffix, mime, is_raster = _binary_type(stream_name, binary)
+            preview_info = None
+            if is_raster:
+                try:
+                    preview_info = _analysis_preview(binary)
+                    width, height = preview_info[2], preview_info[3]
+                    if image_analyzer and width >= 96 and height >= 40 and width * height >= 12_000:
+                        analyzable_total += 1
+                except Exception:
+                    preview_info = None
+            prepared.append((stream_name, binary, suffix, mime, is_raster, preview_info))
+        if progress_callback:
+            progress_callback({"step": "image_analysis", "status": "pending" if analyzable_total else "complete", "completed": 0, "total": analyzable_total})
+
+        for order, (stream_name, binary, suffix, mime, is_raster, preview_info) in enumerate(prepared):
             digest = hashlib.sha256(binary).hexdigest()
             output_name = f"{Path(stream_name).stem}_{digest[:12]}{suffix}"
             output_path = binary_dir / output_name
@@ -383,18 +408,38 @@ def _extract_binaries(
             width = height = None
             if is_raster:
                 raster_count += 1
+                extracted_rasters += 1
+                if progress_callback:
+                    progress_callback({"step": "internal_images", "status": "complete" if extracted_rasters >= raster_total else "processing", "completed": extracted_rasters, "total": raster_total})
                 try:
-                    preview, preview_mime, width, height = _analysis_preview(binary)
+                    if preview_info is None:
+                        raise RuntimeError("이미지 미리보기를 생성하지 못함")
+                    preview, preview_mime, width, height = preview_info
                     # 아이콘/선 조각은 원본만 보존하고 VLM 노이즈를 만들지 않는다.
                     should_analyze = width >= 96 and height >= 40 and width * height >= 12_000
                     if image_analyzer and should_analyze:
+                        if progress_callback:
+                            progress_callback({"step": "image_analysis", "status": "processing", "completed": analyzed_count, "total": analyzable_total, "current": Path(stream_name).name})
+                        analysis_path = output_path.with_suffix(output_path.suffix + ".analysis.json")
                         if digest not in analysis_cache:
-                            analysis_cache[digest] = image_analyzer(
-                                preview,
-                                preview_mime,
-                                Path(stream_name).name,
-                                str((figure or {}).get("context") or ""),
-                            )
+                            if analysis_path.exists():
+                                try:
+                                    cached_analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+                                    if isinstance(cached_analysis, dict):
+                                        analysis_cache[digest] = cached_analysis
+                                except (OSError, json.JSONDecodeError):
+                                    pass
+                            if digest not in analysis_cache:
+                                analysis_cache[digest] = image_analyzer(
+                                    preview,
+                                    preview_mime,
+                                    Path(stream_name).name,
+                                    str((figure or {}).get("context") or ""),
+                                )
+                                analysis_path.write_text(
+                                    json.dumps(analysis_cache[digest], ensure_ascii=False),
+                                    encoding="utf-8",
+                                )
                         analysis = analysis_cache[digest]
                         if analysis.get("kind") == "music_score":
                             music = analysis.get("music") if isinstance(analysis.get("music"), dict) else {}
@@ -448,6 +493,8 @@ def _extract_binaries(
                             analysis["figureNumber"] = figure["number"]
                             analysis["documentContext"] = figure.get("context", "")
                         analyzed_count += 1
+                        if progress_callback:
+                            progress_callback({"step": "image_analysis", "status": "complete" if analyzed_count >= analyzable_total else "processing", "completed": analyzed_count, "total": analyzable_total, "current": Path(stream_name).name})
                         if analysis.get("kind") == "music_score":
                             music_count += 1
                 except Exception as error:
@@ -508,6 +555,7 @@ def extract_hwp_structured(
     assets_root: Path,
     image_analyzer: ImageAnalyzer | None = None,
     acceptance_threshold: float = 0.94,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict:
     """HWP를 구조화하고 재현 가능한 artifact bundle로 보관한다."""
     digest = hashlib.sha256(data).hexdigest()
@@ -536,12 +584,15 @@ def extract_hwp_structured(
     primary_text = _number_markdown_figures(
         source_primary_text, len(figures)
     )
+    if progress_callback:
+        progress_callback({"step": "document_structure", "status": "complete"})
     binary_assets, binary_stats = _extract_binaries(
         data,
         bundle_dir,
         image_analyzer,
         source_primary_text,
         figures_by_binary_id,
+        progress_callback,
     )
     # 이미지 분석이 끝난 뒤에만 원래 그림 위치에 검수된 설명을 삽입한다.
     # 그림별 독립 검색 청크는 _figure_search_contents에서 별도로 유지한다.

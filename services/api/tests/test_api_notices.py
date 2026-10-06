@@ -14,7 +14,6 @@ def test_notices_maps_rows(monkeypatch):
     )]
     import interfaces.http.shared.notices as m
     monkeypatch.setattr(m, "get_documents", lambda **kw: fake_rows)
-    monkeypatch.setattr(m, "get_account", lambda u: None)  # 미연동 → 공통, DB 미접근
     with TestClient(app) as client:
         r = client.get("/api/notices?category=장학&limit=5")
     assert r.status_code == 200
@@ -25,7 +24,7 @@ def test_notices_maps_rows(monkeypatch):
     assert n["title"] == "장학금 공지"
     assert n["posted_at"] == "2026-06-01"
     assert n["target"] == ["재학생"]
-    assert n["keywords"] == ["장학금", "신청"]
+    assert "keywords" not in n
     assert n["source_name"] == "학생지원과"
     assert n["department"] is None
     assert n["deadline_label"] == "마감"
@@ -35,7 +34,6 @@ def test_notices_maps_rows(monkeypatch):
 def test_notices_empty(monkeypatch):
     import interfaces.http.shared.notices as m
     monkeypatch.setattr(m, "get_documents", lambda **kw: [])
-    monkeypatch.setattr(m, "get_account", lambda u: None)
     with TestClient(app) as client:
         r = client.get("/api/notices")
     assert r.status_code == 200
@@ -47,7 +45,6 @@ def test_notices_unlinked_scopes_to_common(monkeypatch):
     import interfaces.http.shared.notices as m
     captured = {}
     monkeypatch.setattr(m, "get_documents", lambda **kw: captured.update(kw) or [])
-    monkeypatch.setattr(m, "get_account", lambda u: None)
     with TestClient(app) as client:
         r = client.get("/api/notices")
     assert r.status_code == 200
@@ -60,7 +57,7 @@ def test_notices_linked_scopes_to_major(monkeypatch):
     import interfaces.http.shared.notices as m
     captured = {}
     monkeypatch.setattr(m, "get_documents", lambda **kw: captured.update(kw) or [])
-    monkeypatch.setattr(m, "get_account", lambda u: {"student_id": "202202165"})
+    monkeypatch.setattr(m, "portal_student_id", lambda principal: "202202165")
     monkeypatch.setattr(m, "get_user", lambda sid: {"major": "컴퓨터공학과"})
     with TestClient(app) as client:
         r = client.get("/api/notices")
@@ -74,8 +71,8 @@ def test_notices_explicit_major_query_wins(monkeypatch):
     import interfaces.http.shared.notices as m
     captured = {}
     monkeypatch.setattr(m, "get_documents", lambda **kw: captured.update(kw) or [])
-    # get_account이 호출되면 안 됨(명시 major 우선) — 호출 시 터지게
-    monkeypatch.setattr(m, "get_account", lambda u: (_ for _ in ()).throw(AssertionError("called")))
+    # 명시 major가 있으면 사용자 학과 조회를 건너뛴어야 한다.
+    monkeypatch.setattr(m, "get_user", lambda sid: (_ for _ in ()).throw(AssertionError("called")))
     with TestClient(app) as client:
         r = client.get("/api/notices?major=경영학과")
     assert r.status_code == 200
@@ -90,11 +87,6 @@ def test_notices_portal_session_uses_synced_department(monkeypatch):
     captured = {}
     monkeypatch.setattr(m, "get_documents", lambda **kw: captured.update(kw) or [])
     monkeypatch.setattr(m, "get_user", lambda sid: {"major": "컴퓨터공학과"})
-    monkeypatch.setattr(
-        m,
-        "get_account",
-        lambda username: (_ for _ in ()).throw(AssertionError("account lookup called")),
-    )
     token = create_portal_access_token("202203236")
 
     with TestClient(app) as client:
@@ -134,7 +126,6 @@ def test_notices_next_cursor_roundtrip(monkeypatch):
         return [_row("https://x/3", ts)]
 
     monkeypatch.setattr(m, "get_documents", fake_get_documents)
-    monkeypatch.setattr(m, "get_account", lambda u: None)
 
     with TestClient(app) as client:
         first = client.get("/api/notices?limit=2")
@@ -155,7 +146,6 @@ def test_notices_next_cursor_roundtrip(monkeypatch):
 def test_notices_invalid_cursor_400(monkeypatch):
     import interfaces.http.shared.notices as m
     monkeypatch.setattr(m, "get_documents", lambda **kw: [])
-    monkeypatch.setattr(m, "get_account", lambda u: None)
     with TestClient(app) as client:
         r = client.get("/api/notices?cursor=%%%not-base64%%%")
     assert r.status_code == 400

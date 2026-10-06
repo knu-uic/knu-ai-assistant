@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Any, List, Tuple, cast
 import httpx
 from langchain_core.messages import SystemMessage, HumanMessage
-from model import get_llm, local_inference_slot
+from model import RefineOutputError, get_refine_llm, local_inference_slot
 from schema import MetadataSchema, RefinementSchema
 from api.runtime_settings import load_settings
 from dotenv import load_dotenv
@@ -20,7 +20,7 @@ from config import (
 _REFINE_ASSET_NAME_LIMIT = 12
 
 # Gemini API가 가끔 응답 전 connection을 drop. 재시도로 흡수.
-_RETRYABLE_EXC = (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError)
+_RETRYABLE_EXC = (httpx.RemoteProtocolError, httpx.ReadTimeout, httpx.ConnectError, RefineOutputError)
 _MAX_ATTEMPTS = 4
 _BACKOFF_BASE = 2.0  # 2s, 4s, 8s
 # Gemini Tier 1 RPM 1000 — 동시성 10이면 RPM 600 정도라 안전 마진.
@@ -30,7 +30,7 @@ _BATCH_CONCURRENCY = 1
 def _structured_output_kwargs() -> dict[str, str]:
     """Select the reliable structured-output mode for local runtimes."""
 
-    provider = str(load_settings().get("vlm", {}).get("provider") or VLM_PROVIDER).lower()
+    provider = str(load_settings().get("refine", {}).get("provider") or VLM_PROVIDER).lower()
     return {"method": "json_schema"} if provider in {"local", "lmstudio", "ollama"} else {}
 
 
@@ -73,11 +73,6 @@ def _user_prompt(item: dict) -> str:
   4. 행사(공모전) (대회, 해커톤, 동아리, 축제, 세미나 등)
   5. 일반(기타) (분실물, 시설안내, 예비군 등 위 4개에 속하지 않는 모든 것)
 
-## topics / series_key
-- topics는 핵심 제도·주제·활동을 1~5개 추출한다.
-- 매년 반복되는 동일 계열임이 명확하면 짧은 영문 kebab-case series_key를 만든다.
-- 반복 여부가 불명확하면 series_key는 null이다.
-
 ## summary
 - 공지의 핵심 내용을 2~3문장으로 요약한다.
 - 대상, 기간, 장소, 신청/참여 방법, 혜택, 문의처가 명시되어 있으면 포함한다.
@@ -98,8 +93,6 @@ def _user_prompt(item: dict) -> str:
 - 값이 없으면 null 또는 빈 배열로 둔다.
 - evidence에는 값별 실제 원문 근거를 담는다.
 
-## extraction_confidence
-- 전체 구조화 결과의 신뢰도를 0~1로 평가한다.
 	"""
 
 
@@ -240,8 +233,7 @@ def _adjust_result_dates(result: MetadataSchema, item: dict) -> None:
         if period.starts_on != original_start or period.ends_on != original_end:
             period.inferred_year = True
 
-    # 일부 crawler는 이미 추출한 기존 메타데이터를 넘긴다. v2 구조화 필드가
-    # 실제로 존재할 때만 파생값을 다시 계산해 기존 날짜·대상·키워드를 보존한다.
+    # 일부 crawler는 이미 추출한 기존 메타데이터를 넘긴다.
     if result.periods:
         application_period = next(
             (period for period in result.periods if period.kind == "application"),
@@ -255,8 +247,6 @@ def _adjust_result_dates(result: MetadataSchema, item: dict) -> None:
             for audience in result.audiences
             if audience.kind in {"grade", "enrollment_status"}
         ] or result.target
-    if result.topics:
-        result.keywords = list(result.topics)
 
 
 def _llm_item(item: dict) -> dict:
@@ -382,7 +372,7 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
         # mode some local models keep generating until max_tokens and leave an
         # unparseable, truncated tool call.
         structured_kwargs = _structured_output_kwargs()
-        model = get_llm().with_structured_output(
+        model = get_refine_llm().with_structured_output(
             RefinementSchema,
             **structured_kwargs,
         )
@@ -391,7 +381,7 @@ def refine(crawled_data: List[dict]) -> List[Tuple[MetadataSchema, List[dict], d
             for _, item in needs_llm
         ]
         # return_exceptions=True: 한 항목 실패해도 batch 전체가 죽지 않고 자리에 예외 객체가 들어옴.
-        with local_inference_slot():
+        with local_inference_slot(load_settings()["refine"]["provider"]):
             batch_out = model.batch(
                 cast(Any, prompts),
                 config={"max_concurrency": _BATCH_CONCURRENCY},
@@ -432,7 +422,7 @@ def _invoke_with_retry(model, system_msg: SystemMessage, item: dict) -> Refineme
     user_msg = HumanMessage(content=_user_prompt(item))
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            with local_inference_slot():
+            with local_inference_slot(load_settings()["refine"]["provider"]):
                 return cast(RefinementSchema, model.invoke([system_msg, user_msg]))
         except _RETRYABLE_EXC as e:
             if attempt == _MAX_ATTEMPTS:

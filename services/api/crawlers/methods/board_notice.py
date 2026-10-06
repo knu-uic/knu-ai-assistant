@@ -654,6 +654,8 @@ class BoardNoticeCrawler:
         select_records: Callable[[list[dict]], list[dict]] | None = None,
         on_detail_failure: Callable[[str, str], None] | None = None,
         on_detail_ready: Callable[[dict], None] | None = None,
+        detail_checkpoints: dict[str, dict] | None = None,
+        on_attachment_checkpoint: Callable[[str, str, dict], None] | None = None,
         on_progress: Callable[[dict], None] | None = None,
     ) -> Iterator[dict]:
         scope = scope or CrawlPageScope()
@@ -809,6 +811,8 @@ class BoardNoticeCrawler:
                                 page_num=page_num,
                                 list_title=record.get("title"),
                                 on_detail_ready=on_detail_ready,
+                                detail_checkpoint=(detail_checkpoints or {}).get(record["url"]),
+                                on_attachment_checkpoint=on_attachment_checkpoint,
                                 on_progress=on_progress,
                             ): record["url"]
                             for idx, record in enumerate(new_records, 1)
@@ -904,6 +908,8 @@ class BoardNoticeCrawler:
         page_num: int | None = None,
         list_title: str | None = None,
         on_detail_ready: Callable[[dict], None] | None = None,
+        detail_checkpoint: dict | None = None,
+        on_attachment_checkpoint: Callable[[str, str, dict], None] | None = None,
         on_progress: Callable[[dict], None] | None = None,
     ) -> dict | None:
         """Collect one post over retrying HTTP; Chromium is lazy and shared."""
@@ -916,6 +922,8 @@ class BoardNoticeCrawler:
                 is_pinned=is_pinned,
                 page_num=page_num,
                 list_title=list_title,
+                detail_checkpoint=detail_checkpoint,
+                on_attachment_checkpoint=on_attachment_checkpoint,
                 on_progress=on_progress,
             )
             if on_detail_ready:
@@ -962,6 +970,8 @@ class BoardNoticeCrawler:
         is_pinned: bool = False,
         page_num: int | None = None,
         list_title: str | None = None,
+        detail_checkpoint: dict | None = None,
+        on_attachment_checkpoint: Callable[[str, str, dict], None] | None = None,
         on_progress: Callable[[dict], None] | None = None,
     ) -> dict:
         def report(**values) -> None:
@@ -1084,35 +1094,107 @@ class BoardNoticeCrawler:
         # xlsx_relevant(title, body_text) >> 만약 제목이나 본문에 '공고', '모집', '채용' 같은 단어가 있으면, 첨부된 엑셀 파일도 텍스트로 변환해서 내용에 포함할지 여부 판단하고 싶으면 이 함수를 활용할 수 있습니다. 
        
         attachments = self._collect_attachments(soup)
+        cached_attachments = dict((detail_checkpoint or {}).get("attachments") or {})
         report(
             title=title,
             status="processing",
             stage=(f"첨부파일 {len(attachments)}개 처리 중" if attachments else "저장 준비 중"),
             attachments=[
-                {"name": att["filename"], "status": "pending", "stage": "대기"}
+                {
+                    "name": att["filename"],
+                    "status": "complete" if (cached_attachments.get(att["filename"]) or {}).get("status") == "complete" else "pending",
+                    "stage": "체크포인트 복원" if (cached_attachments.get(att["filename"]) or {}).get("status") == "complete" else "대기",
+                }
                 for att in attachments
             ],
         )
         for att in attachments:
             print(f"  - 첨부 처리: {att['filename']}")
 
-            if on_progress:
-                on_progress({
-                    "event": "attachment_status",
-                    "source_code": self.SOURCE_CODE,
-                    "page": page_num,
-                    "url": post_url,
-                    "title": title,
-                    "attachment_name": att["filename"],
-                    "status": "processing",
-                    "stage": "다운로드·추출 중",
-                })
+            cached = cached_attachments.get(att["filename"]) or {}
+            latest_substeps: list[dict] = list(cached.get("substeps") or [])
+            cached_result = cached.get("result") if isinstance(cached, dict) else None
+            if (
+                cached.get("status") == "complete"
+                and isinstance(cached_result, dict)
+                and cached_result.get("source_url") == att.get("download_url")
+            ):
+                txt = str(cached_result.get("text") or "")
+                meta = dict(cached_result.get("meta") or {})
+                if on_progress:
+                    on_progress({
+                        "event": "attachment_status",
+                        "source_code": self.SOURCE_CODE,
+                        "page": page_num,
+                        "url": post_url,
+                        "title": title,
+                        "attachment_name": att["filename"],
+                        "status": "complete",
+                        "stage": "체크포인트에서 복원",
+                        "size": cached.get("size", 0),
+                        "substeps": cached.get("substeps") or [],
+                    })
+            else:
+                def emit_attachment_progress(detail: dict) -> None:
+                    nonlocal latest_substeps
+                    latest_substeps = list(detail.get("substeps") or latest_substeps)
+                    stage = next((
+                        f"{step.get('label')} {step.get('completed')} / {step.get('total')}"
+                        if step.get("total") is not None else str(step.get("label") or "처리 중")
+                        for step in reversed(latest_substeps)
+                        if step.get("status") == "processing"
+                    ), "다운로드·추출 중")
+                    if on_progress:
+                        on_progress({
+                            "event": "attachment_status",
+                            "source_code": self.SOURCE_CODE,
+                            "page": page_num,
+                            "url": post_url,
+                            "title": title,
+                            "attachment_name": att["filename"],
+                            "status": "processing",
+                            "stage": stage,
+                            **detail,
+                        })
+                    if on_attachment_checkpoint:
+                        on_attachment_checkpoint(post_url, att["filename"], {
+                            "status": "processing",
+                            "source_url": att.get("download_url"),
+                            "stage": stage,
+                            "substeps": latest_substeps,
+                        })
 
-            txt, meta = attachment_to_text(
-                {**att, "preview_url": None},
-                http_context,
-                include_xlsx=include_xlsx,
-            )
+                emit_attachment_progress({"substeps": latest_substeps})
+                txt, meta = attachment_to_text(
+                    {**att, "preview_url": None},
+                    http_context,
+                    include_xlsx=include_xlsx,
+                    progress_callback=emit_attachment_progress,
+                    resume_substeps=latest_substeps,
+                )
+                storage_path = meta.get("storage_path")
+                raw_size = len(meta.get("raw_bytes") or b"")
+                if meta.get("raw_bytes") is not None and not storage_path:
+                    storage_path = self._save_attachment_asset(
+                        meta["raw_bytes"], att["filename"],
+                    )
+                    meta["storage_path"] = storage_path
+                checkpoint_meta = {
+                    key: value for key, value in meta.items()
+                    if key != "raw_bytes"
+                }
+                if on_attachment_checkpoint:
+                    on_attachment_checkpoint(post_url, att["filename"], {
+                        "status": "complete",
+                        "source_url": att.get("download_url"),
+                        "size": raw_size,
+                        "substeps": latest_substeps,
+                        "result": {
+                            "source_url": att.get("download_url"),
+                            "text": txt,
+                            "meta": checkpoint_meta,
+                        },
+                    })
             if meta.get("review_required"):
                 review_reasons.append(
                     str(meta.get("review_reason") or "attachment_review_required")
@@ -1129,7 +1211,8 @@ class BoardNoticeCrawler:
                     "status": "failed" if attachment_failed else "complete",
                     "stage": "검토 필요" if attachment_failed else "완료",
                     "error": meta.get("review_reason") if attachment_failed else None,
-                    "size": len(meta.get("raw_bytes") or b""),
+                    "size": len(meta.get("raw_bytes") or b"") or int(cached.get("size") or 0),
+                    "substeps": cached.get("substeps") or latest_substeps,
                 })
             if isinstance(meta.get("quality"), dict):
                 extraction_quality.append(meta["quality"])

@@ -50,6 +50,31 @@ verify_sha256() {
   fi
 }
 
+relocate_macos_postgres() {
+  [ "$platform" = "darwin" ] || return 0
+  while IFS= read -r target; do
+    file "$target" | grep -q 'Mach-O' || continue
+    while IFS= read -r dependency; do
+      case "$dependency" in
+        "$output_root/postgres/"*)
+          dependency_target="$output_root/postgres/lib/${dependency##*/}"
+          relative_dependency="$(python3 - "$target" "$dependency_target" <<'PY'
+import os
+import sys
+
+print(os.path.relpath(sys.argv[2], os.path.dirname(sys.argv[1])))
+PY
+)"
+          install_name_tool -change "$dependency" "@loader_path/$relative_dependency" "$target"
+          ;;
+      esac
+    done < <(otool -L "$target" | tail -n +2 | awk '{print $1}')
+    case "$target" in
+      *.dylib) install_name_tool -id "@rpath/${target##*/}" "$target" ;;
+    esac
+  done < <(find "$output_root/postgres/bin" "$output_root/postgres/lib" -type f)
+}
+
 postgres_archive="$build_root/postgresql.tar.bz2"
 curl --fail --location --silent --show-error \
   "https://ftp.postgresql.org/pub/source/v$postgres_version/postgresql-$postgres_version.tar.bz2" \
@@ -81,6 +106,8 @@ make OPTFLAGS="" PG_CONFIG="$output_root/postgres/bin/pg_config" -j"$jobs"
 make OPTFLAGS="" PG_CONFIG="$output_root/postgres/bin/pg_config" install
 cp LICENSE "$output_root/licenses/pgvector.txt"
 popd >/dev/null
+
+relocate_macos_postgres
 
 redis_archive="$build_root/redis.tar.gz"
 curl --fail --location --silent --show-error \

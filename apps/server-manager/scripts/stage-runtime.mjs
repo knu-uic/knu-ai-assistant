@@ -175,6 +175,7 @@ function postgresChecks() {
     binary("bin/initdb"),
     binary("bin/createdb"),
     binary("bin/psql"),
+    binary("bin/pg_dump"),
     ["share/postgresql/extension/vector.control", "share/extension/vector.control"],
     ["share/postgresql/extension/pg_trgm.control", "share/extension/pg_trgm.control"],
     vectorLibrary,

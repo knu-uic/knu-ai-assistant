@@ -5,7 +5,7 @@ use std::{
     collections::VecDeque,
     env, fs,
     io::{BufRead, BufReader},
-    net::{SocketAddr, TcpStream},
+    net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     sync::{Arc, Mutex},
@@ -15,8 +15,26 @@ use std::{
 
 // Keep this distinct from Codmes Server's managed PostgreSQL port (55432) so
 // both desktop managers can run on the same Mac.
-pub const POSTGRES_PORT: u16 = 55433;
-pub const REDIS_PORT: u16 = 56379;
+pub const DEFAULT_API_PORT: u16 = 8000;
+pub const DEFAULT_POSTGRES_PORT: u16 = 55433;
+pub const DEFAULT_REDIS_PORT: u16 = 56379;
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct RuntimePorts {
+    pub api: u16,
+    pub postgres: u16,
+    pub redis: u16,
+}
+
+impl Default for RuntimePorts {
+    fn default() -> Self {
+        Self {
+            api: DEFAULT_API_PORT,
+            postgres: DEFAULT_POSTGRES_PORT,
+            redis: DEFAULT_REDIS_PORT,
+        }
+    }
+}
 
 #[derive(Deserialize, Serialize)]
 struct RuntimeSecrets {
@@ -49,6 +67,7 @@ pub struct StandaloneRuntime {
     psql: PathBuf,
     redis: PathBuf,
     secrets: RuntimeSecrets,
+    ports: Mutex<RuntimePorts>,
 }
 
 impl StandaloneRuntime {
@@ -73,6 +92,7 @@ impl StandaloneRuntime {
                 .join(executable("redis-server")),
             postgres,
             secrets: load_or_create_secrets(&data_root)?,
+            ports: Mutex::new(load_ports(&data_root)?),
             runtime_root,
             data_root,
         };
@@ -96,16 +116,73 @@ impl StandaloneRuntime {
         &self.data_root
     }
 
+    pub fn ports(&self) -> RuntimePorts {
+        self.ports.lock().map(|ports| *ports).unwrap_or_default()
+    }
+
+    fn prepare_ports(&self, logs: &Arc<Mutex<VecDeque<String>>>) -> Result<RuntimePorts, String> {
+        let current = self.ports();
+        let selected = RuntimePorts {
+            api: current.api,
+            postgres: select_available_port(current.postgres, 55433, 55449, "PostgreSQL")?,
+            redis: select_available_port(current.redis, 56379, 56399, "Redis")?,
+        };
+        if selected.api != current.api
+            || selected.postgres != current.postgres
+            || selected.redis != current.redis
+        {
+            save_ports(&self.data_root, selected)?;
+            if let Ok(mut ports) = self.ports.lock() {
+                *ports = selected;
+            }
+            push_log(
+                logs,
+                format!(
+                    "[manager] 포트 충돌 자동 조정: PostgreSQL {}→{}, Redis {}→{}",
+                    current.postgres, selected.postgres, current.redis, selected.redis
+                ),
+            );
+        }
+        Ok(selected)
+    }
+
+    pub fn prepare_api_port(&self, logs: &Arc<Mutex<VecDeque<String>>>) -> Result<u16, String> {
+        let current = self.ports();
+        let selected = select_available_port(current.api, 8000, 8019, "KNU API")?;
+        if selected != current.api {
+            let updated = RuntimePorts {
+                api: selected,
+                ..current
+            };
+            save_ports(&self.data_root, updated)?;
+            if let Ok(mut ports) = self.ports.lock() {
+                *ports = updated;
+            }
+            push_log(
+                logs,
+                format!(
+                    "[manager] 포트 충돌 자동 조정: API {}→{}",
+                    current.api, selected
+                ),
+            );
+        }
+        Ok(selected)
+    }
+
     pub fn configure_command(&self, command: &mut Command) {
         let postgres_password = &self.secrets.postgres_password;
+        let ports = self.ports();
         command
             .env("RUNTIME_ENV", "local")
             .env(
                 "DATABASE_URL",
-                format!("postgresql://knu:{postgres_password}@127.0.0.1:{POSTGRES_PORT}/knu"),
+                format!(
+                    "postgresql://knu:{postgres_password}@127.0.0.1:{}/knu",
+                    ports.postgres
+                ),
             )
             .env("DB_HOST", "127.0.0.1")
-            .env("DB_PORT", POSTGRES_PORT.to_string())
+            .env("DB_PORT", ports.postgres.to_string())
             .env("DB_NAME", "knu")
             .env("DB_USER", "knu")
             .env("DB_PASSWORD", postgres_password)
@@ -113,7 +190,7 @@ impl StandaloneRuntime {
             // Pass their standard password variable for the first-run database
             // existence check and creation over the SCRAM-protected TCP socket.
             .env("PGPASSWORD", postgres_password)
-            .env("REDIS_URL", format!("redis://127.0.0.1:{REDIS_PORT}"))
+            .env("REDIS_URL", format!("redis://127.0.0.1:{}", ports.redis))
             .env("AUTH_JWT_SECRET", &self.secrets.auth_jwt_secret)
             .env("PORTAL_SYNC_ENC_KEY", &self.secrets.portal_sync_enc_key)
             .env("MCP_AUTH_TOKEN", &self.secrets.mcp_auth_token)
@@ -123,6 +200,15 @@ impl StandaloneRuntime {
                 "EMBEDDING_MODEL",
                 env_or("EMBEDDING_MODEL", "bge-m3:latest"),
             )
+            .env("RERANKER_ENABLED", env_or("RERANKER_ENABLED", "true"))
+            .env("RERANKER_PROVIDER", "local")
+            .env(
+                "RERANKER_MODEL",
+                env_or("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3"),
+            )
+            .env("RERANKER_MAX_LENGTH", env_or("RERANKER_MAX_LENGTH", "512"))
+            .env("HF_HOME", self.data_root.join("models/huggingface"))
+            .env("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
             .env(
                 "OPENAI_COMPAT_BASE_URL",
                 env_or("OPENAI_COMPAT_BASE_URL", "http://127.0.0.1:11434/v1"),
@@ -133,7 +219,6 @@ impl StandaloneRuntime {
                 "DOCUMENT_IMAGE_ANALYSIS_ENABLED",
                 env_or("DOCUMENT_IMAGE_ANALYSIS_ENABLED", "true"),
             )
-            .env("MAIL_PROVIDER", env_or("MAIL_PROVIDER", "console"))
             .env(
                 "NOTICE_POLL_ENABLED",
                 env_or("NOTICE_POLL_ENABLED", "false"),
@@ -189,6 +274,7 @@ impl StandaloneRuntime {
     }
 
     pub fn start(&self, logs: &Arc<Mutex<VecDeque<String>>>) -> Result<EmbeddedProcesses, String> {
+        self.prepare_ports(logs)?;
         fs::create_dir_all(self.data_root.join("assets")).map_err(|e| e.to_string())?;
         fs::create_dir_all(self.data_root.join("logs")).map_err(|e| e.to_string())?;
         fs::create_dir_all(self.data_root.join("postgres-socket")).map_err(|e| e.to_string())?;
@@ -209,6 +295,7 @@ impl StandaloneRuntime {
     }
 
     fn start_postgres(&self, logs: &Arc<Mutex<VecDeque<String>>>) -> Result<Child, String> {
+        let port = self.ports().postgres;
         let data = self.data_root.join("postgres");
         if !data.join("PG_VERSION").is_file() {
             fs::create_dir_all(&data).map_err(|e| e.to_string())?;
@@ -242,7 +329,7 @@ impl StandaloneRuntime {
                 return Err("내장 PostgreSQL 데이터 디렉터리 초기화에 실패했습니다.".into());
             }
         }
-        ensure_port_free(POSTGRES_PORT, "PostgreSQL")?;
+        ensure_port_free(port, "PostgreSQL")?;
         let mut command = Command::new(&self.postgres);
         self.configure_command(&mut command);
         let mut child = command
@@ -252,7 +339,7 @@ impl StandaloneRuntime {
                 "-h",
                 "127.0.0.1",
                 "-p",
-                &POSTGRES_PORT.to_string(),
+                &port.to_string(),
                 "-k",
                 &self.data_root.join("postgres-socket").to_string_lossy(),
             ])
@@ -261,16 +348,12 @@ impl StandaloneRuntime {
             .spawn()
             .map_err(|e| format!("내장 PostgreSQL을 시작하지 못했습니다: {e}"))?;
         pipe_output(&mut child, "postgres", logs.clone());
-        wait_for_port(
-            &mut child,
-            POSTGRES_PORT,
-            "PostgreSQL",
-            Duration::from_secs(15),
-        )?;
+        wait_for_port(&mut child, port, "PostgreSQL", Duration::from_secs(15))?;
         Ok(child)
     }
 
     fn ensure_database(&self, logs: &Arc<Mutex<VecDeque<String>>>) -> Result<(), String> {
+        let port = self.ports().postgres;
         let mut check = Command::new(&self.psql);
         self.configure_command(&mut check);
         let output = check
@@ -278,7 +361,7 @@ impl StandaloneRuntime {
                 "-h",
                 "127.0.0.1",
                 "-p",
-                &POSTGRES_PORT.to_string(),
+                &port.to_string(),
                 "-U",
                 "knu",
                 "-d",
@@ -302,7 +385,7 @@ impl StandaloneRuntime {
                 "-h",
                 "127.0.0.1",
                 "-p",
-                &POSTGRES_PORT.to_string(),
+                &port.to_string(),
                 "-U",
                 "knu",
                 "knu",
@@ -318,7 +401,8 @@ impl StandaloneRuntime {
     }
 
     fn start_redis(&self, logs: &Arc<Mutex<VecDeque<String>>>) -> Result<Child, String> {
-        ensure_port_free(REDIS_PORT, "Redis")?;
+        let port = self.ports().redis;
+        ensure_port_free(port, "Redis")?;
         let data = self.data_root.join("redis");
         fs::create_dir_all(&data).map_err(|e| e.to_string())?;
         let mut command = Command::new(&self.redis);
@@ -328,7 +412,7 @@ impl StandaloneRuntime {
                 "--bind",
                 "127.0.0.1",
                 "--port",
-                &REDIS_PORT.to_string(),
+                &port.to_string(),
                 "--dir",
                 &data.to_string_lossy(),
                 "--appendonly",
@@ -341,7 +425,7 @@ impl StandaloneRuntime {
             .spawn()
             .map_err(|e| format!("내장 Redis를 시작하지 못했습니다: {e}"))?;
         pipe_output(&mut child, "redis", logs.clone());
-        wait_for_port(&mut child, REDIS_PORT, "Redis", Duration::from_secs(10))?;
+        wait_for_port(&mut child, port, "Redis", Duration::from_secs(10))?;
         Ok(child)
     }
 }
@@ -371,6 +455,50 @@ fn load_or_create_secrets(data_root: &Path) -> Result<RuntimeSecrets, String> {
     set_private_permissions(&temporary)?;
     fs::rename(&temporary, &path).map_err(|e| e.to_string())?;
     Ok(secrets)
+}
+
+fn ports_path(data_root: &Path) -> PathBuf {
+    data_root.join("config/runtime-ports.json")
+}
+
+fn load_ports(data_root: &Path) -> Result<RuntimePorts, String> {
+    let path = ports_path(data_root);
+    match fs::read(&path) {
+        Ok(raw) => serde_json::from_slice(&raw)
+            .map_err(|error| format!("런타임 포트 설정을 읽지 못했습니다: {error}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(RuntimePorts::default()),
+        Err(error) => Err(format!("런타임 포트 설정을 읽지 못했습니다: {error}")),
+    }
+}
+
+fn save_ports(data_root: &Path, ports: RuntimePorts) -> Result<(), String> {
+    let path = ports_path(data_root);
+    let config = path
+        .parent()
+        .ok_or_else(|| "런타임 설정 경로가 올바르지 않습니다.".to_string())?;
+    fs::create_dir_all(config).map_err(|error| error.to_string())?;
+    let temporary = config.join(".runtime-ports.json.tmp");
+    fs::write(
+        &temporary,
+        serde_json::to_vec_pretty(&ports).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    set_private_permissions(&temporary)?;
+    fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn select_available_port(preferred: u16, start: u16, end: u16, name: &str) -> Result<u16, String> {
+    if port_is_free(preferred) {
+        return Ok(preferred);
+    }
+    (start..=end)
+        .find(|port| *port != preferred && port_is_free(*port))
+        .ok_or_else(|| format!("{name}에 사용할 빈 포트를 {start}–{end} 범위에서 찾지 못했습니다."))
+}
+
+fn port_is_free(port: u16) -> bool {
+    TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
 
 fn random_string(length: usize) -> String {
@@ -510,5 +638,20 @@ mod tests {
         let key = URL_SAFE.encode(bytes);
         assert_eq!(key.len(), 44);
         assert!(key.ends_with('='));
+    }
+
+    #[test]
+    fn selects_an_alternate_port_when_the_preferred_port_is_busy() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let occupied = listener.local_addr().unwrap().port();
+        let range_start = if occupied < 65530 {
+            occupied
+        } else {
+            occupied - 5
+        };
+        let range_end = range_start + 5;
+        let selected = select_available_port(occupied, range_start, range_end, "test").unwrap();
+        assert_ne!(selected, occupied);
+        assert!((range_start..=range_end).contains(&selected));
     }
 }

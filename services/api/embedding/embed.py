@@ -4,8 +4,8 @@ from api.runtime_settings import load_settings
 from model import get_embeddings, local_inference_slot
 
 
-# context window 기반 동적 chunk 크기.
-# 너무 작은 chunk는 retrieval precision은 좋아도 context fragmentation이 심해진다.
+# Server Manager 설정이 없을 때 사용하는 기본값. 실제 실행값은
+# runtime_settings.embedding의 chunk_size/chunk_overlap에서 읽는다.
 CHUNK_SIZE = 280
 CHUNK_OVERLAP = 80
 
@@ -129,7 +129,12 @@ def embed_chunks(content: str) -> list[tuple[int, str, list[float]]]:
 
     반환: [(chunk_idx, chunk_content, embedding_vector), ...]
     """
-    chunks = chunk_text(content)
+    settings = load_settings().get("embedding", {})
+    chunks = chunk_text(
+        content,
+        chunk_size=int(settings.get("chunk_size", CHUNK_SIZE)),
+        overlap=int(settings.get("chunk_overlap", CHUNK_OVERLAP)),
+    )
     if not chunks:
         return []
     embedder = get_embeddings()
@@ -143,24 +148,15 @@ def embed_chunks(content: str) -> list[tuple[int, str, list[float]]]:
     ]
 
 
-def embed_document_chunks(
+def prepare_document_chunks(
     title: str,
     body_content: str,
     attachment_contents: list[dict] | None = None,
-) -> list[tuple[int, str, list[float], str, str | None]]:
-    """문서 전체를 body/attachment 단위로 분리 청킹 후 임베딩.
-
-    반환:
-    [
-        (
-            chunk_idx,
-            chunk_text,
-            embedding,
-            chunk_type,
-            attachment_name,
-        )
-    ]
-    """
+    *,
+    chunk_size: int = CHUNK_SIZE,
+    chunk_overlap: int = CHUNK_OVERLAP,
+) -> list[tuple[int, str, str, str | None]]:
+    """문서 전체를 body/attachment 단위로 분리해 임베딩 입력을 만든다."""
 
     attachment_contents = attachment_contents or []
 
@@ -199,12 +195,7 @@ def embed_document_chunks(
             ),
         })
 
-    if not chunk_inputs:
-        return []
-
-    embedder = get_embeddings()
-
-    results: list[tuple[int, str, list[float], str, str | None]] = []
+    results: list[tuple[int, str, str, str | None]] = []
 
     chunk_idx = 0
 
@@ -215,7 +206,7 @@ def embed_document_chunks(
         figure_marker = item.get("figure_marker")
 
         # 꼬리표를 합치지 않은 순수한 본문 텍스트 기준 분할
-        chunks = chunk_text(text)
+        chunks = chunk_text(text, chunk_size=chunk_size, overlap=chunk_overlap)
         if figure_marker:
             chunks = [
                 chunk if figure_marker in chunk else f"{figure_marker}\n{chunk}"
@@ -231,16 +222,11 @@ def embed_document_chunks(
         else:
             enriched_chunks = chunks
 
-        provider = str(load_settings().get("embedding", {}).get("provider") or "")
-        with local_inference_slot(provider):
-            vectors = embedder.embed_documents(enriched_chunks)
-
-        for chunk_text_value, vector in zip(enriched_chunks, vectors):
+        for chunk_text_value in enriched_chunks:
             results.append(
                 (
                     chunk_idx,
                     chunk_text_value,
-                    vector,
                     chunk_type,
                     attachment_name,
                 )
@@ -249,6 +235,33 @@ def embed_document_chunks(
             chunk_idx += 1
 
     return results
+
+
+def embed_document_chunks(
+    title: str,
+    body_content: str,
+    attachment_contents: list[dict] | None = None,
+) -> list[tuple[int, str, list[float], str, str | None]]:
+    """현재 런타임 설정으로 문서를 청킹하고 각 청크를 임베딩한다."""
+    settings = load_settings().get("embedding", {})
+    prepared = prepare_document_chunks(
+        title,
+        body_content,
+        attachment_contents,
+        chunk_size=int(settings.get("chunk_size", CHUNK_SIZE)),
+        chunk_overlap=int(settings.get("chunk_overlap", CHUNK_OVERLAP)),
+    )
+    if not prepared:
+        return []
+    texts = [chunk[1] for chunk in prepared]
+    embedder = get_embeddings(settings)
+    with local_inference_slot(str(settings.get("provider") or "")):
+        vectors = embedder.embed_documents(texts)
+    return [
+        (idx, text, vector, chunk_type, attachment_name)
+        for (idx, text, chunk_type, attachment_name), vector
+        in zip(prepared, vectors)
+    ]
 
 
 def embed_query(query: str) -> list[float]:

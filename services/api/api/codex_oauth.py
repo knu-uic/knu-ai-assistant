@@ -298,14 +298,21 @@ def discover_models(client: httpx.Client | None = None) -> dict:
     return {"source": source, "models": models}
 
 
-def codex_response(prompt: str, *, model: str, image_data_url: str | None = None, client: httpx.Client | None = None) -> str:
+def codex_response(
+    prompt: str,
+    *,
+    model: str,
+    image_data_url: str | None = None,
+    instructions: str | None = None,
+    client: httpx.Client | None = None,
+) -> str:
     account = active_account()
     content: list[dict] = [{"type": "input_text", "text": prompt}]
     if image_data_url:
         content.append({"type": "input_image", "image_url": image_data_url})
     body = {
         "model": model,
-        "instructions": "Answer accurately. Return only the requested result without hidden reasoning.",
+        "instructions": instructions or "Answer accurately. Return only the requested result without hidden reasoning.",
         "input": [{"role": "user", "content": content}],
         "store": False,
         "stream": True,

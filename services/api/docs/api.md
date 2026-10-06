@@ -1,6 +1,6 @@
 # KNU AI Assistant
 
-공주대학교 공지와 학과 자료를 크롤링해 PostgreSQL/pgvector에 저장하고, FastAPI와 LangGraph 기반 RAG 챗봇으로 제공하는 학생 맞춤형 안내 서비스입니다.
+공주대학교 공지와 학과 자료를 크롤링해 PostgreSQL/pgvector에 저장하고, 학생별 개인 모델이 KNU MCP 검색 도구를 호출하는 맞춤형 안내 서비스입니다.
 
 독립 웹 제품은 `apps/web/`의 React/Vite 클라이언트이고, Codmes 플러그인은 네이티브 Surface와 MCP를 사용합니다. `services/api/`는 두 클라이언트가 공유하는 FastAPI 백엔드와 Redis/ARQ 백그라운드 작업을 제공합니다. 자세한 경계는 [architecture.md](architecture.md)를 참고합니다.
 
@@ -8,16 +8,17 @@
 
 - 공주대학교 학생 공지 크롤링
 - 컴퓨터공학과 학과공지 크롤링
+- 소프트웨어공학과 학과공지 크롤링
+- 소프트웨어공학과 교과과정표 PDF 파싱
 - 경영학과 학과공지 크롤링
 - 컴퓨터공학과 교과과정표 PDF 결정론적 파싱
 - 경영학과 교과과정표 HWP 텍스트 추출
 - 본문 이미지 OCR, 이미지/PDF/HWPX/HWP/XLSX/XLS/ZIP 첨부 텍스트 추출
-- LLM 기반 `summary`, `category`, `target`, `start_date`, `end_date`, `keywords` 생성
+- LLM 기반 `summary`, `category`, `periods`, `audiences`, `application` 생성 (`target`과 접수일은 파생)
 - 원문 `content` 보존 및 청크 임베딩 저장
-- 카테고리별 물리 테이블과 pgvector HNSW 검색
+- 통합 `content-v3` 상속 모델(공지/학사문서 분리)과 pgvector HNSW 검색
 - chunk-first retrieval + BGE reranker 기반 evidence-centric RAG
-- router → retriever → reranker → answerer 기반 LangGraph RAG 파이프라인
-- optional verifier 기반 답변 충실도 검증
+- 학생별 개인 LLM 계정·모델 선택과 KNU MCP 도구 호출 기반 웹 대화
 - 사용자 학과/관심사 기반 홈 추천과 공지 목록
 - LMS(Canvas API) 할 일/강의/공지 동기화
 - KNUIS 포털 졸업학점/성적/시간표 동기화
@@ -49,7 +50,6 @@
 ├── model.py                       # LLM/Embedding/Reranker 설정 (루트로 복원)
 ├── schema.py                      # 구조화 출력 스키마 (루트로 복원)
 ├── sitecustomize.py               # pycache 라우팅 (루트로 복원)
-├── integrations.py                # LMS·포털 연동 오케스트레이션 (루트로 복원)
 │
 ├── pipelines/                     # 데이터 처리 파이프라인
 │   ├── ingest.py                  # 크롤링/적재 배치 (main.py → 이름 변경)
@@ -81,12 +81,8 @@
 ├── embedding/
 │   └── embed.py                   # 청킹 및 임베딩
 ├── retrieval/
-│   ├── graph.py                   # LangGraph RAG
+│   ├── evidence.py                # MCP용 근거 검색·재순위화
 │   └── rerank.py                  # BGE reranker 래퍼
-│   ├── prompts.py                 # router/answerer/verifier 프롬프트
-│   └── context_packing.py         # 컨텍스트 패킹/카드 렌더 헬퍼
-├── debugtools/
-│   └── crawl_one.py               # 단일 URL 테스트 리포트
 ├── docs/                          # 문서
 │   ├── api.md                     # (현재 파일)
 │   └── crawling_guide.md          # 크롤링 가이드
@@ -108,28 +104,26 @@ apps/web/Vite
      → Redis → workers/arq_worker.py (ARQ: LMS·포털 동기화, 공지 폴링)
 ```
 
-FastAPI는 `Dockerfile.api`를 사용하고, 무거운 `Dockerfile`은 ARQ 워커를 기본 실행합니다. `pipelines/ingest.py`는 별도 배치 실행용이며, 답변 생성과 검색은 `retrieval/graph.py`가 담당합니다.
+FastAPI는 `Dockerfile.api`를 사용하고, 무거운 `Dockerfile`은 ARQ 워커를 기본 실행합니다. `pipelines/ingest.py`는 별도 배치 실행용이며, 웹 답변은 학생 개인 모델, 검색은 `retrieval/evidence.py`가 담당합니다.
 
 ### 1. 크롤링 → 저장 (pipelines/ingest.py)
 
 ```text
 크롤러 수집
 → extractors/attachments.py가 본문 이미지 OCR + 첨부파일 텍스트 추출
-→ pipelines/refine.py에서 LLM(Gemini batch)으로 summary/category/target/date/keywords 생성
+→ pipelines/refine.py에서 LLM으로 summary/category/periods/audiences/application 생성
 → db/documents.py (또는 db): document_* 테이블에 원문 content + summary 저장
 → db/documents.py (또는 db): document_asset 테이블에 첨부파일 메타데이터 저장
 → embedding/embed.py에서 body + attachment chunk 청킹 및 임베딩
 → db/documents.py (또는 db): document_*_chunk 테이블에 vector 저장 (HNSW 인덱스)
 ```
 
-### 2. RAG 검색/답변 (retrieval/graph.py)
+### 2. 학생별 대화·검색
 
 ```text
-사용자 질문
-→ [router_node] 질문 분석 (precise/broad 분류 + 카테고리 선정 + 쿼리 확장)
-→ [retriever_node] vector similarity 검색 → BGE reranker 재정렬
-→ [answerer_node] evidence chunk + support document context packing → LLM 답변 생성
-→ [verifier_node] (optional) 답변 충실도 검증
+사용자 질문 → 학생별 개인 모델 → KNU MCP 도구 선택
+→ vector similarity 검색 → BGE reranker 재정렬 → 도구 결과
+→ 학생별 개인 모델이 답변 생성
 ```
 
 ### 3. LMS/KNUIS 동기화 (sync/)
@@ -148,70 +142,60 @@ KNUIS 포털 동기화 (sync/knuis_sync.py):
 
 ## 데이터베이스
 
-PostgreSQL 16 + pgvector를 사용합니다.
+PostgreSQL 16 + pgvector를 사용하며, 현재 스키마는 통합 콘텐츠 상속 모델인 **`content-v3`** 체계입니다.
+(KNU Server Manager 및 FastAPI 관리자 API 기준 총 22개의 물리 테이블이 운영됩니다.)
 
-### 문서 테이블 (카테고리별 분리)
+### 핵심 테이블 구조 (content-v3 모델)
+
+공통 제목·본문·출처·메타데이터는 상위 테이블인 `content`에 저장하고, 업무 성격과 생명주기가 다른 공지사항(`notice`)과 상시 학사문서(`academic_document`)를 1:1 서브타입 물리 테이블로 분리합니다.
 
 ```text
-document_scholarship  (장학)
-document_academic     (수강)
-document_career       (취업/진로)
-document_event        (행사/공모전)
-document_etc          (일반/기타)
-
--- 각 문서는 source(게시판 출처) 테이블을 참조
+source ─────────► content ──────┬──► notice (공지사항 1:1)
+                    ▲           └──► academic_document (상시 학사문서 1:1)
+                    │
+category ───────────┤
+                    ├──► content_topic ◄── topic
+                    ├──► notice_period (신청/제출/발표 등 다중 일정)
+                    ├──► notice_target (학과/학년 등 다중 대상 조건)
+                    ├──► notice_application (신청 방법/링크/서류)
+                    ├──► content_asset (첨부파일 및 추출 텍스트)
+                    └──► content_chunk (검색 청크 및 임베딩 벡터) ◄── embedding_dataset
 ```
 
-각 문서 테이블의 핵심 컬럼:
+#### 1) 콘텐츠 및 검색 도메인 테이블
 
-| 컬럼 | 설명 |
+| 테이블 | 설명 |
 | --- | --- |
-| `source_id` | `source.id` 참조 (게시판 출처) |
-| `url` | 원문 URL, unique |
-| `title` | 제목 |
-| `content` | 원문 본문 + OCR + 첨부 추출 텍스트 (풀 텍스트) |
-| `body_content` | 본문 원본 (별도 보존) |
-| `attachment_names` | 첨부파일명 리스트 (JSONB) |
-| `attachment_contents` | 첨부파일 추출 텍스트 (JSONB) |
-| `summary` | LLM 요약 (2~3문장) |
-| `posted_at` | 게시글 등록일 |
-| `start_date`, `end_date` | 접수/행사 기간 |
-| `is_pinned` | 게시판 고정 공지 보존 플래그 |
-| `target` | 학년/재적상태 대상 (배열) |
-| `keywords` | 추천/필터용 키워드 (배열) |
-| `extra` | 교과과정표 등 구조화 부가 데이터 (JSONB) |
+| `source` | 수집 출처 관리 (공주대 학생 공지, 학과 공지, 교과과정표 등) |
+| `content` | 통합 콘텐츠 상위 엔터티 (제목, 원문, 본문 원본, 요약, 출처, 카테고리, 등록일, 보관 상태 등) |
+| `notice` | `content` 중 공지사항 하위 엔터티 (`content_type = 'notice'` 전용 1:1) |
+| `academic_document` | `content` 중 교과과정표·장학안내 등 상시 학사정보 하위 엔터티 (`document_kind` 보유) |
+| `category` | 정규화된 카테고리 사전 (`장학`, `수강`, `취업(진로)`, `행사(공모전)`, `일반(기타)`) |
+| `topic` | 본문에서 자동 추출된 세부 주제어 사전 |
+| `content_topic` | `content`와 `topic` 간의 N:M 매핑 테이블 |
+| `notice_period` | 접수, 서류제출, 결과발표, 행사 등 의미별 일정 (시작일/종료일/근거 문장) |
+| `notice_target` | 학과, 학년, 재적상태 등 대상 조건 (구 `notice_audience`는 VIEW로 호환 제공) |
+| `notice_application` | 신청 방법, 신청 URL, 제출 서류 목록, 문의처, 장소, 혜택 정보 |
+| `content_asset` | 첨부파일 메타데이터 및 추출 텍스트 (구 `notice_asset`은 VIEW로 호환 제공) |
+| `content_chunk` | 본문 및 첨부 텍스트 청크와 pgvector 임베딩 벡터 (구 `notice_chunk`는 VIEW로 호환 제공) |
+| `embedding_dataset` | 임베딩 모델/출력차원/청크설정별 데이터셋 및 백그라운드 빌드 상태 관리 |
 
-### 청크 테이블 (카테고리별 분리)
+#### 2) 수집 운영 및 계정·학적 테이블
 
-```text
-document_scholarship_chunk
-document_academic_chunk
-document_career_chunk
-document_event_chunk
-document_etc_chunk
-
-각 청크: (document_id, chunk_idx, content, chunk_type, attachment_name, embedding vector)
-- chunk_type: 'body' 또는 'attachment'
-- attachment_name: 청크가 속한 첨부파일명 (attachment 청크만)
-- embedding: EMBEDDING_DIM 차원 vector (HNSW cosine index)
-```
-
-### 사용자/동기화 테이블
-
-```text
-users               (student_id, name, major, year, interests, favorite_courses,
-                     graduation_credits JSONB, timetable JSONB,
-                     grade_distribution_json JSONB, cumulative_grades_json JSONB)
-lms_tasks           (student_id, task_type, title, course_name, due_date, ...)
-lms_courses         (student_id, course_id, course_name)
-document_asset      (category, document_id, kind, filename, source_url, ...)
-```
+| 테이블 | 설명 |
+| --- | --- |
+| `crawl_url_state` | 고정 URL 기준 수집 단계(discovered, collecting, refining, completed, failed) 및 체크포인트 |
+| `crawl_run_state` | 수집 강제 종료 후 재개를 위한 런타임 체크포인트 싱글톤 |
+| `extraction_review` | 자동 품질 기준 미달 추출물의 격리 보관 및 검토함 |
+| `users` | 학교 포털 인증으로 동기화된 학생 프로필, 학적, 시간표, 성적, 졸업학점 JSONB 데이터 |
+| `lms_tasks` | Canvas LMS 과제/강의/공지 동기화 할 일 목록 |
+| `lms_courses` | Canvas LMS 수강 과목 목록 |
 
 ## 청킹 및 임베딩 (embedding/embed.py)
 
 ### 청킹 전략
 
-- **CHUNK_SIZE = 280자**, **CHUNK_OVERLAP = 80자** (`embedding/embed.py` 모듈 상수)
+- 기본값은 **청크 280자**, **중첩 80자**이며 Server Manager의 임베딩 설정에서 변경한다.
 - `chunk_text()`가 `RecursiveCharacterTextSplitter` 없이 줄 경계 + 표 문맥을 고려해 자체적으로 분할한다.
   - XLSX 표가 잘릴 경우 `_table_context_prefix()`가 현재 시트/헤더를 청크 앞에 보강한다.
 - attachment_contents는 item별로 별도 청킹 (chunk_type='attachment')
@@ -249,173 +233,18 @@ document_asset      (category, document_id, kind, filename, source_url, ...)
 | `target` | 학년/재적상태 제한 (없으면 ["전체"]) |
 | `start_date` | 접수 시작일 (yyyy-mm-dd) |
 | `end_date` | 접수 마감일 (yyyy-mm-dd) |
-| `keywords` | 핵심 해시태그 1~3개 |
 | `title` | 원문 제목 (덮어쓰기) |
 | `content` | 원문 본문 (LLM 축소 방지용 덮어쓰기) |
 
 날짜 보정: LLM이 연도 없는 날짜에 추정 연도를 붙인 경우, 게시글 등록연도로 자동 보정.
 
-## RAG 검색/답변 (retrieval/graph.py)
+## 학생별 대화와 KNU MCP 검색
 
-### LangGraph 파이프라인 구조
+웹 학생은 학교 포털로 로그인한 뒤 프로필 화면에서 자신의 Codex 계정 또는 OpenAI API 키를 연결하고 모델을 선택합니다. 개인 자격증명은 `student_llm_account`에 학번별로 암호화해 저장하며, 공지 크롤링·정제용 학교 공용 설정과 공유하지 않습니다. 계정 또는 모델이 없으면 웹 채팅은 409를 반환하고 공용 계정으로 대체하지 않습니다.
 
-```
-                    ┌──────────┐
-                    │  router  │
-                    └────┬─────┘
-                         │
-                  ┌──────┴──────┐
-                  │ query_mode  │
-                  └──────┬──────┘
-                         │
-            ┌────────────┴────────────┐
-            │ precise                 │ broad
-            ▼                         ▼
-    ┌───────────────┐       ┌──────────────────┐
-    │   retriever   │       │ broad_retriever   │
-    │ (vector+rerank)│       │ (DISTINCT ON doc) │
-    └───────┬───────┘       └────────┬─────────┘
-            │                        │
-            ▼                        ▼
-    ┌───────────────┐       ┌──────────────────┐
-    │   answerer    │       │ broad_answerer    │
-    │ (evidence+doc)│       │ (메타카드 목록)   │
-    └───────┬───────┘       └────────┬─────────┘
-            │                        │
-            ▼                        ▼
-    ┌───────────────┐              END
-    │  verifier     │ (ENABLE_VERIFIER=true 시)
-    │  (충실도 검증)│
-    └───────┬───────┘
-            ▼
-          END
-```
+`POST /api/chat/stream`은 질문과 최근 대화 기록을 받습니다. 서버는 인증 토큰의 학번으로 개인 모델을 조회하고, KNU MCP의 읽기 도구 목록을 모델에 제공합니다. 모델이 도구를 선택하면 같은 학번 권한으로 실행하고, 결과를 모델에 돌려주어 답변을 완성합니다. 상담 접수 같은 쓰기 도구는 웹의 최종 승인 절차가 준비되기 전까지 공개하지 않습니다.
 
-### 1. 라우터 노드 (router_node)
-
-질문을 LLM에 전달해 다음 3가지를 결정:
-
-| 결정 필드 | 설명 |
-|-----------|------|
-| `query_mode` | `precise`(특정 공지 1건) 또는 `broad`(여러 공지 목록) |
-| `categories` | 검색 대상 카테고리 리스트 (0~5개) |
-| `expanded_query` | 격식체/도메인 유의어를 반영한 검색용 확장 쿼리 |
-
-라우터 시스템 프롬프트 핵심 규칙:
-- 애매하면 `precise` 선택 (안전 기본값)
-- "알려줘/조회해/보여줘" 같은 서술어 제거
-- 핵심 명사 + 도메인 유의어 2~4개 추가 (과확장 금지)
-
-### 2. retriever 노드 (precise 경로)
-
-`_retrieve_with_rerank()` 함수 실행:
-
-```
-1. embed_query(expanded_query) → query vector
-2. db.search_chunks(): 5개 카테고리 UNION ALL vector similarity 검색
-   → LIMIT RERANK_CANDIDATES(default 50)
-3. BGE reranker로 chunk 단위 재정렬
-4. 상위 EVIDENCE_TOP_K(=RERANK_TOP_N, default 5) = evidence chunks
-5. 문서 단위 best score 집계 → top SUPPORT_DOC_TOP_N(default 3) 선정
-6. evidence chunk 텍스트는 support document body에서 dedup 제거
-7. evidence chunks + support documents 반환
-```
-
-검색 시 학과 필터: 사용자 프로필의 `major`와 `source.department` 매칭 (department='공통' 또는 NULL도 포함)
-
-### 3. broad_retriever 노드 (broad 경로)
-
-- `DISTINCT ON (d.url)`로 공지당 1 chunk만 후보로 참여
-- `search_chunks(limit=BROAD_RERANK_CANDIDATES=50, distinct_by_doc=True)`
-- rerank 후 상위 BROAD_DOC_TOP_N(default 12)개 반환
-- evidence chunk packing / full-doc fetch 없음 (가벼운 목록)
-
-### 4. answerer 노드 (precise)
-
-#### context packing 전략 (_pack_contexts)
-
-evidence chunk(35% budget) + support document context(65% budget)를 단일 prompt로 패킹:
-
-**evidence chunk 포맷:**
-```
-# 핵심 검색 청크
-
-[1] 제목
-URL: ...
-청크본문
-
-[2] 제목
-...
-```
-
-**1등 support document (_format_context_with_budget):**
-```
-[제목](URL)
-접수기간: yyyy-mm-dd ~ yyyy-mm-dd
-
-[본문]
-body full 우선 보존 (80% budget)
-첨부파일명은 메타데이터만 (본문 미포함)
-```
-
-**2~3등 support document (_format_support_context):**
-```
-[제목](URL)
-
-[요약]
-summary 우선
-
-[검색 매칭 청크]
-rerank matched chunk
-
-[본문 일부]
-body 일부 (50% budget)
-```
-
-#### 답변 생성
-
-- System prompt: "반드시 컨텍스트만 근거로 답변"
-- Human message: 오늘 날짜 + 사용자 질문 + 패킹된 컨텍스트
-- 답변 끝에 참고 공지 제목/URL 목록 첨부
-- 내부 분석/추론 과정 출력 금지
-
-### 5. broad_answerer 노드 (broad)
-
-- 공지를 메타카드(제목+URL+접수기간+요약) 목록으로 렌더
-- budget(6000자) 안에서 가능한 한 많은 카드 포함
-
-### 6. verifier 노드 (optional)
-
-`ENABLE_VERIFIER=true`일 때만 precise 경로 끝에 연결:
-
-| 판정 | 조건 |
-|------|------|
-| `grounded=True` | 답변의 모든 사실이 컨텍스트에 명시됨 |
-| `grounded=True` | 컨텍스트 사실 + 오늘 날짜에서 논리적 도출 가능 |
-| `grounded=True` | 컨텍스트가 비었거나 무관 → 정직한 회피 |
-| `grounded=False` | 컨텍스트에 없는 내용 단정 (할루시네이션) |
-| `grounded=False` | 컨텍스트에 정보가 명백히 있는데 회피 |
-
-`fidelity`: 0.0(전부 환각) ~ 1.0(전부 근거 있음)
-
-### 검색/답변 설정
-
-```env
-RERANK_CANDIDATES=50                  # vector 검색 후보 수 (config.py 기본값)
-RERANK_TOP_N=5                        # evidence chunk 수 (config.py 기본값)
-SUPPORT_DOC_TOP_N=3                   # support document 수
-BROAD_RERANK_CANDIDATES=50            # broad 경로 후보 수
-BROAD_DOC_TOP_N=12                    # broad 경로 문서 수
-ANSWER_CONTEXT_BUDGET_RATIO=0.70      # answerer context budget 비율 (CONTEXT_WINDOW_CHARS에 곱함)
-VERIFIER_CONTEXT_BUDGET_RATIO=0.20    # verifier context budget 비율
-ATTACHMENT_NAME_RESERVE_RATIO=0.13    # support doc 본문 예산 중 첨부파일명 표기에 예약할 비율
-ENABLE_VERIFIER=false                 # verifier 활성화
-```
-
-- answerer/verifier의 context budget은 정해진 char 수치가 아니라 `CONTEXT_WINDOW_CHARS(=max(4000, LLM_MAX_CONTEXT_WINDOW_TOKENS * LLM_CHARS_PER_TOKEN))` × 각 비율로 계산한다.
-- `LLM_MAX_CONTEXT_WINDOW_TOKENS`(기본 60000) × `LLM_CHARS_PER_TOKEN`(기본 1.5)로 컨텍스트 윈도우 글자 수가 동적으로 결정된다.
-- `CHUNK_SIZE`/`CHUNK_OVERLAP`은 환경변수가 아니라 `embedding/embed.py`의 모듈 상수(280/80)다.
-
+MCP의 깊은 검색은 `retrieval/evidence.py`가 담당합니다. 질문 임베딩 → pgvector 후보 검색 → reranker 재정렬 → 근거 청크와 원문 문맥 반환 순서이며, 서버에서 별도의 라우터·답변 생성 LLM을 호출하지 않습니다.
 ## 리랭커 (retrieval/rerank.py)
 
 ### 제공자 선택
@@ -619,7 +448,7 @@ CRAWL_HTTP_BACKOFF_SECONDS=3
 ATTACHMENT_DOWNLOAD_TIMEOUT_SECONDS=180000
 ATTACHMENT_DOWNLOAD_RETRY_ATTEMPTS=3
 ATTACHMENT_DOWNLOAD_BACKOFF_SECONDS=3
-# CHUNK_SIZE/CHUNK_OVERLAP은 환경변수가 아니라 embedding/embed.py의 모듈 상수(280/80)다.
+# 청크 크기/중첩 기본값은 280/80이며 Server Manager 임베딩 설정에서 관리한다.
 
 # LangSmith
 LANGSMITH_TRACING=false
@@ -716,17 +545,6 @@ docker compose up -d db redis
 docker compose -f docker-compose.prod.yml up --build
 ```
 
-## 단일 URL 테스트
-
-DB 저장 없이 특정 공지 하나만 크롤링하고 txt 리포트를 만들 수 있습니다.
-
-```bash
-python3 debugtools/crawl_one.py "https://www.kongju.ac.kr/bbs/KNU/2132/427500/artclView.do?layout=unknown"
-```
-
-결과는 기본적으로 `data/reports/`에 저장됩니다.
-
-리포트에는 크롤링 결과, asset OCR/첨부 추출 결과, LLM refine 결과, embedding chunk가 포함됩니다. DB에는 저장하지 않습니다.
 
 ### 게시판 크롤링 안정성 정책
 
@@ -841,14 +659,14 @@ OR s.department IS NULL
 ```bash
 python3 -m py_compile \
   api/main.py workers/arq_worker.py \
-  pipelines/ingest.py pipelines/refine.py \
-  config.py model.py schema.py integrations.py sitecustomize.py \
+  pipelines/ingest.py pipelines/refine.py pipelines/list_sync.py \
+  config.py model.py schema.py sitecustomize.py \
   db/__init__.py db/schema.py db/documents.py db/users.py db/lms.py \
-  embedding/embed.py retrieval/graph.py retrieval/rerank.py \
+  embedding/embed.py retrieval/evidence.py retrieval/rerank.py \
   extractors/attachments.py parsers/curriculum.py \
   crawlers/registry.py crawlers/methods/*.py \
-  crawlers/sites/*.py crawlers/sites/departments/*.py \
-  debugtools/crawl_one.py \
+  crawlers/sites/academic/*.py crawlers/sites/academic/department/*.py \
+  crawlers/sites/notice/*.py crawlers/sites/notice/department/*.py \
   sync/knuis_sync.py sync/lms_sync.py sync/lms_login.py
 ```
 

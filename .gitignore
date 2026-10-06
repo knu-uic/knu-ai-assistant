@@ -28,54 +28,22 @@ AGENTS.md
 data/
 /tests/
 CLAUDE.md
-.DS_store
+.DS_Store
+**/.DS_Store
 state.json
-crawl_result
+crawl_result/
 .hf_cache/
 .idea/
 graphify-out/
 
-# ========================================
-# Flutter / Dart
-# ========================================
-
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-/coverage/
-
-# Flutter build outputs
-/build/
-
-# Symbolication related
-app.*.symbols
-
-# Obfuscation related
-app.*.map.json
-
-# Android build outputs
-/android/app/debug
-/android/app/profile
-/android/app/release
-
-# Flutter IDE files
-*.iml
-
 # 에디터/툴 설정
 .vscode/
 .claude/
+services/api/.vscode/
 
 # 바이브코딩 부수 산출물 — 깃 추적 제외
 .superpowers/
 docs/superpowers/
-
-# API 서비스 테스트·참조앱
-services/api/.vscode/
-services/api/test_streamlit/
 .agents/
 
 # KNU Server Manager generated output / local secrets

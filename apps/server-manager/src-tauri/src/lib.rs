@@ -2,8 +2,9 @@ mod manager;
 mod standalone;
 
 use manager::{
-    apply_dock_policy, clear_logs, open_auth_url, open_external_url, runtime_status,
-    set_show_dock_icon, start_managed_server, start_server, stop_server, ManagerState,
+    apply_dock_policy, clear_logs, export_notice_data, import_notice_data, open_auth_url,
+    open_external_url, runtime_status, set_show_dock_icon, shutdown_managed_server,
+    start_managed_server, start_server, stop_server, ManagerState,
 };
 use tauri::{
     menu::{Menu, MenuItem},
@@ -97,7 +98,6 @@ pub fn run() {
                         let _ = stop_server(app.state::<ManagerState>());
                     }
                     "quit" => {
-                        let _ = stop_server(app.state::<ManagerState>());
                         app.exit(0);
                     }
                     _ => {}
@@ -131,7 +131,9 @@ pub fn run() {
             clear_logs,
             open_auth_url,
             open_external_url,
-            set_show_dock_icon
+            set_show_dock_icon,
+            export_notice_data,
+            import_notice_data
         ])
         .build(tauri::generate_context!())
         .expect("failed to build KNU Server Manager");
@@ -148,7 +150,7 @@ pub fn run() {
             }
         }
         RunEvent::ExitRequested { .. } | RunEvent::Exit => {
-            let _ = stop_server(app.state::<ManagerState>());
+            let _ = shutdown_managed_server(app.state::<ManagerState>().inner());
         }
         _ => {}
     });

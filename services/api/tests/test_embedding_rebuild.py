@@ -58,18 +58,30 @@ def test_rebuild_keeps_old_rows_until_target_is_complete(tmp_path, monkeypatch):
     })
     statements = []
 
-    class Connection:
-        rows = [(7, 0, "first", "body", None), (7, 1, "second", "body", None)]
-
-        def execute(self, query, params=()):
-            statements.append((" ".join(query.split()), params))
-            return self
+    class Result:
+        def __init__(self, *, rows=None, row=None):
+            self.rows = rows or []
+            self.row = row
 
         def fetchall(self):
             return self.rows
 
         def fetchone(self):
-            return (2,)
+            return self.row
+
+    class Connection:
+        def execute(self, query, params=()):
+            normalized = " ".join(query.split())
+            statements.append((normalized, params))
+            if "pg_try_advisory_lock" in normalized:
+                return Result(row=(True,))
+            if "SELECT content_id, title" in normalized:
+                return Result(rows=[(7, "공지", "x" * 400)])
+            if "FROM content_asset" in normalized:
+                return Result(rows=[])
+            if "SELECT count(*) FROM content_chunk" in normalized:
+                return Result(row=(2,))
+            return Result()
 
         def commit(self):
             return None
@@ -107,6 +119,8 @@ def test_rebuild_keeps_old_rows_until_target_is_complete(tmp_path, monkeypatch):
         "model": "new-model",
         "base_url": "http://127.0.0.1:11434/v1",
         "dimension": 3,
+        "chunk_size": 280,
+        "chunk_overlap": 80,
         "api_key": "",
     }
 
@@ -114,8 +128,8 @@ def test_rebuild_keeps_old_rows_until_target_is_complete(tmp_path, monkeypatch):
 
     assert load_settings()["embedding"]["model"] == "new-model"
     assert rebuild.rebuild_status()["state"] == "complete"
-    assert sum("INSERT INTO notice_chunk" in query for query, _ in statements) == 2
+    assert sum("INSERT INTO content_chunk" in query for query, _ in statements) == 2
     assert not any(
-        "DELETE FROM notice_chunk" in query and params[-1] == 11
+        "DELETE FROM content_chunk" in query and params[-1] == 11
         for query, params in statements
     )

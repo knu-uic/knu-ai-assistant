@@ -3,7 +3,7 @@
 test_streamlit/pages/home.py의 _score_notice 로직을 이식한다.
 입력은 db.get_documents가 반환하는 row 튜플. 컬럼 순서는 거기서 SELECT한 순서를 따른다:
   [0]url [1]title [2]content [3]posted_at [4]start_date [5]end_date
-  [6]category [7]target [8]keywords [9]code [10]name [11]kind [12]department [13]summary
+  [6]category [7]target [8]legacy topics [9]code [10]name [11]kind [12]department [13]summary
 """
 from datetime import date
 
@@ -38,7 +38,6 @@ def _row_fields(row) -> dict:
         "end_date": _to_date(row[5]),
         "category": row[6],
         "target": _strlist(row[7]),
-        "keywords": _strlist(row[8]),
         "department": row[12],
         "summary": (row[13] if len(row) > 13 else None) or "",
     }
@@ -51,19 +50,17 @@ def score_notice(
     year: int | None,
     today: date,
 ) -> tuple[int, list[str]]:
-    """관심키워드 매칭 + 학과 일치 + 학년 + 마감 임박도로 점수 산출.
+    """제목·본문 관심어 매칭 + 학과 일치 + 학년 + 마감 임박도로 점수 산출.
 
     반환: (score, matched_keywords)
     """
     score = 0
-    haystack = f"{f['title']} {f['summary'] or f['content']}".lower()
-    notice_kws = f["keywords"]
-
+    haystack = f"{f['title']} {f['summary']} {f['content']}".lower()
     matched: list[str] = []
     for kw in interests:
         if not kw:
             continue
-        if kw in notice_kws or kw.lower() in haystack:
+        if kw.lower() in haystack:
             matched.append(kw)
     score += len(matched) * 10
 
