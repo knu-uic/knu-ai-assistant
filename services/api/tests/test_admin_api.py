@@ -443,9 +443,11 @@ def test_dismiss_crawl_rejects_active_run(monkeypatch):
     assert error.value.status_code == 409
 
 
-def test_admin_updates_runtime_settings_without_returning_secret(tmp_path, monkeypatch):
+@pytest.mark.parametrize("refine_model", ["", "test-refine-model"])
+def test_admin_updates_runtime_settings_without_returning_secret(tmp_path, monkeypatch, refine_model):
     monkeypatch.setenv("KNU_ADMIN_TOKEN", "manager-secret")
     monkeypatch.setenv("KNU_MANAGER_SETTINGS_PATH", str(tmp_path / "manager.json"))
+    monkeypatch.setenv("LLM_MODEL", refine_model)
     with TestClient(app) as client:
         response = client.put(
             "/api/admin/settings",
@@ -466,7 +468,7 @@ def test_admin_updates_runtime_settings_without_returning_secret(tmp_path, monke
     assert response.json()["crawl_interval_hours"] == 12
     assert response.json()["vlm"]["has_api_key"] is True
     assert "api_key" not in response.json()["vlm"]
-    assert response.json()["refine"]["model"] != ""
+    assert response.json()["refine"]["model"] == refine_model
     assert "api_key" not in response.json()["refine"]
 
 
