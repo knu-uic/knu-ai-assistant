@@ -35,6 +35,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server/manager/src-tauri
+          cache-on-failure: true
       - name: Restore pinned Windows native tools
         if: runner.os == 'Windows'
         id: windows-native

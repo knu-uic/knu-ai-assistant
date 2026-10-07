@@ -1031,7 +1031,7 @@ mod tests {
         let data_root = PathBuf::from("/tmp/KNU Server Manager data");
         assert!(managed_command_matches(
             "postgres",
-            "/Applications/KNU Server Manager.app/Contents/Resources/runtime/postgres/bin/postgres -D /tmp/KNU Server Manager data/postgres -p 55433",
+            &format!("postgres -D {} -p 55433", data_root.join("postgres").display()),
             &data_root,
         ));
         assert!(managed_command_matches(

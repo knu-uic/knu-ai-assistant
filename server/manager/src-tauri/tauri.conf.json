@@ -14,7 +14,7 @@
     "resources": {
       "../runtime/": "runtime/"
     },
-    "icon": ["icons/icon.png"],
+    "icon": ["icons/icon.png", "icons/icon.ico"],
     "macOS": {
       "minimumSystemVersion": "14.0",
       "signingIdentity": "-"
