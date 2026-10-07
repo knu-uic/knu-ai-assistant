@@ -82,6 +82,8 @@ npm run tauri dev
   `stage:runtime` 수행. Windows 서비스나 전역 DB를 설치하지 않음.
 - Python 의존성이 기존 묶음과 다르면 같은 Python 패치 버전으로 `.dev/python/`을 만들고
   requirements 설치. 설치 앱/공유 런타임에는 pip-install하지 않음.
+- 새 Python 환경의 Playwright에 맞는 Chromium은 `.dev/browsers/`에 별도 준비.
+  기존 앱에 동봉된 브라우저를 변경하지 않음.
 - npm 라이브러리는 최초 또는 package-lock 변경 시 `npm ci`로 설치.
 - `.dev/runtime.json` 작성.
 
@@ -114,8 +116,8 @@ Windows ARM64는 현재 자동 준비 대상이 아닙니다. requirements에 �
 Redis/포트 라이선스와 출처를 보관합니다. Cygwin 및 동봉 DLL의 추가 라이선스·소스 제공 의무는
 **공개 Windows 앱 재배포 전에 별도 검토**해야 합니다. 이번 준비 경로는 로컬 개발용이고
 공개 Windows 릴리스를 자동 게시하지 않습니다. `.github/workflows/knu-native-development.yml`로
-Windows/macOS 준비·단위 테스트·빈 DB에서 Manager 시작/종료, 비동기 DB 조회와 Node 맥락 엔진
-실행을 검증합니다. 해당 Windows 작업의
+Windows/macOS 준비·단위 테스트·빈 DB에서 Manager 시작/종료, 비동기 DB 조회, Node 맥락 엔진과
+headless Chromium 실행을 검증합니다. 해당 Windows 작업의
 성공 전에는 Windows 실행 검증 완료로 간주하지 않습니다.
 PostgreSQL의 보안 정책에 따라 Windows 개발 앱/터미널은 관리자 권한이 아닌 일반 권한으로
 실행합니다. GitHub Windows runner는 기본적으로 관리자이므로 시작/종료 테스트만 임시 일반

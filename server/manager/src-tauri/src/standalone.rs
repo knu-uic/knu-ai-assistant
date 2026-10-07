@@ -60,6 +60,7 @@ impl EmbeddedProcesses {
 
 pub struct StandaloneRuntime {
     runtime_root: PathBuf,
+    browser_root: PathBuf,
     data_root: PathBuf,
     postgres: PathBuf,
     initdb: PathBuf,
@@ -82,6 +83,7 @@ impl StandaloneRuntime {
             ));
         }
         let runtime = Self {
+            browser_root: runtime_root.join("knu/.playwright"),
             initdb: runtime_root.join("postgres/bin").join(executable("initdb")),
             createdb: runtime_root
                 .join("postgres/bin")
@@ -114,6 +116,13 @@ impl StandaloneRuntime {
 
     pub fn data_root(&self) -> &Path {
         &self.data_root
+    }
+
+    pub fn with_browser_root(mut self, root: Option<PathBuf>) -> Self {
+        if let Some(root) = root {
+            self.browser_root = root;
+        }
+        self
     }
 
     pub fn ports(&self) -> RuntimePorts {
@@ -246,7 +255,7 @@ impl StandaloneRuntime {
             )
             .env(
                 "PLAYWRIGHT_BROWSERS_PATH",
-                self.runtime_root.join("knu/.playwright"),
+                &self.browser_root,
             )
             .env(
                 "PADDLE_PDX_CACHE_HOME",
@@ -666,6 +675,7 @@ mod tests {
     fn packaged_python_does_not_write_into_the_signed_bundle() {
         let runtime = StandaloneRuntime {
             runtime_root: PathBuf::from("/runtime"),
+            browser_root: PathBuf::from("/runtime/knu/.playwright"),
             data_root: PathBuf::from("/data"),
             postgres: PathBuf::from("postgres"),
             initdb: PathBuf::from("initdb"),
@@ -687,6 +697,12 @@ mod tests {
         }));
         assert!(command.get_envs().any(|(name, value)| {
             name == "PYTHONIOENCODING" && value == Some(std::ffi::OsStr::new("utf-8"))
+        }));
+        let runtime = runtime.with_browser_root(Some(PathBuf::from("/dev/browsers")));
+        let mut command = Command::new("python");
+        runtime.configure_command(&mut command);
+        assert!(command.get_envs().any(|(name, value)| {
+            name == "PLAYWRIGHT_BROWSERS_PATH" && value == Some(std::ffi::OsStr::new("/dev/browsers"))
         }));
     }
 

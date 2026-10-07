@@ -254,7 +254,9 @@ impl ManagerState {
             (None, Some(error))
         } else if let Some(runtime_root) = runtime_root {
             match StandaloneRuntime::discover(runtime_root, data_root.clone()) {
-                Ok(runtime) => (Some(runtime), None),
+                Ok(runtime) => (Some(runtime.with_browser_root(
+                    development.as_ref().and_then(|config| config.browser_root.clone())
+                )), None),
                 Err(error) => (None, Some(error)),
             }
         } else {
@@ -966,7 +968,8 @@ mod tests {
             preferences_path: data.join("config/manager.json"),
             runtime_settings_path: data.join("config/runtime-settings.json"),
             standalone: Some(
-                StandaloneRuntime::discover(config.runtime_root, data.clone()).unwrap(),
+                StandaloneRuntime::discover(config.runtime_root, data.clone()).unwrap()
+                    .with_browser_root(config.browser_root),
             ),
             data_root: data.clone(),
             standalone_error: None,
@@ -994,6 +997,7 @@ import psycopg
 import redis
 from db.schema import DB_URL
 from api.context_engine import estimate_request
+from playwright.sync_api import sync_playwright
 assert pathlib.Path(api.main.__file__).resolve() == pathlib.Path('api/main.py').resolve()
 assert '.venv' not in sys.executable
 base = 'http://127.0.0.1:{port}'
@@ -1016,6 +1020,13 @@ with asyncio.Runner(loop_factory=loop_factory) as runner:
     estimate = runner.run(estimate_request([{{'role': 'user', 'content': '테스트'}}], 'mock', 8000))
 assert estimate['tokens'] > 0 and estimate['budget']['inputBudget'] > 0
 print('ASYNC_NODE_CONTEXT_ENGINE_OK')
+with sync_playwright() as playwright:
+    browser = playwright.chromium.launch(headless=True)
+    page = browser.new_page()
+    page.set_content('<html><title>native-smoke</title><body>테스트</body></html>')
+    assert page.title() == 'native-smoke'
+    browser.close()
+print('PACKAGED_BROWSER_OK')
 client = redis.Redis.from_url(os.environ['REDIS_URL'], socket_timeout=5)
 deadline = time.monotonic() + 30
 while not client.get('arq:queue:health-check') and time.monotonic() < deadline:

@@ -13,6 +13,7 @@ pub struct DevelopmentRuntime {
     pub arch: String,
     pub runtime_root: PathBuf,
     pub python_path: PathBuf,
+    pub browser_root: Option<PathBuf>,
     pub requirements_text: String,
 }
 
@@ -62,6 +63,7 @@ pub fn validate(
     if !config.runtime_root.is_absolute()
         || !config.python_path.is_absolute()
         || !config.python_path.is_file()
+        || config.browser_root.as_ref().is_some_and(|path| !path.is_absolute() || !path.is_dir())
     {
         return Err(format!("개발용 실행 도구를 찾지 못했습니다. {repair}"));
     }
@@ -97,6 +99,7 @@ mod tests {
             arch: "arm64".into(),
             runtime_root: PathBuf::from("/runtime"),
             python_path: PathBuf::from("/runtime/python"),
+            browser_root: None,
             requirements_text: String::new(),
         };
         assert!(validate(&config, Path::new("/repo"), "win32", "x64")
@@ -124,6 +127,7 @@ mod tests {
             arch: architecture().into(),
             runtime_root: repo.clone(),
             python_path: python,
+            browser_root: None,
             requirements_text: "fastapi==0.1\n".into(),
         };
         let error = validate(&config, &repo, platform(), architecture()).unwrap_err();

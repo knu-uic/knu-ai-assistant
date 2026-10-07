@@ -192,6 +192,17 @@ async function preparePython(runtimeRoot, requirements) {
   return python;
 }
 
+async function prepareBrowsers(runtimeRoot, pythonPath, requirements) {
+  const packaged = await fs.realpath(path.join(runtimeRoot, pythonRelative(process.platform)));
+  if (await fs.realpath(pythonPath) === packaged) return path.join(runtimeRoot, 'knu/.playwright');
+  // New Python dependencies may need a different Chromium revision. Keep the
+  // installed app read-only and prepare that revision alongside the dev tools.
+  const browsers = path.join(devRoot, 'browsers', fingerprint(requirements));
+  await run(pythonPath, ['-B', '-m', 'playwright', 'install', 'chromium'],
+    { env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: browsers, PYTHONDONTWRITEBYTECODE: '1' } });
+  return browsers;
+}
+
 async function checkTools() {
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22+ is required');
   try { await run('cargo', ['--version'], { capture: true }); }
@@ -240,6 +251,7 @@ export async function setup(args = process.argv.slice(2)) {
   const hasPip = await run(pythonPath, ['-B', '-c', 'import importlib.util; print(bool(importlib.util.find_spec("pip")))'], { capture: true });
   if (hasPip === 'True') await run(pythonPath, ['-B', '-m', 'pip', 'check']);
   else await run(await ensureUv(), ['pip', 'check', '--python', pythonPath]);
+  const browserRoot = await prepareBrowsers(runtimeRoot, pythonPath, requirements);
   if (!args.includes('--skip-npm')) {
     const lock = await fs.readFile(path.join(managerRoot, 'package-lock.json'), 'utf8');
     const marker = path.join(devRoot, 'npm-lock.sha256');
@@ -252,7 +264,7 @@ export async function setup(args = process.argv.slice(2)) {
     }
   }
   const config = { schemaVersion: 1, platform: process.platform, arch: process.arch, runtimeRoot: await fs.realpath(runtimeRoot),
-    pythonPath: await fs.realpath(pythonPath), requirementsText: requirements };
+    pythonPath: await fs.realpath(pythonPath), browserRoot: await fs.realpath(browserRoot), requirementsText: requirements };
   const temporary = path.join(devRoot, `runtime-${process.pid}.json.tmp`);
   await fs.writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   await fs.rename(temporary, path.join(devRoot, 'runtime.json'));
