@@ -75,8 +75,9 @@ npm run tauri dev
 
 - OS/CPU·빌드 도구 검사.
 - 기존 `runtime/` 또는 macOS 설치 앱의 실행 도구만 재사용. 기존 데이터·비밀 설정은 복사하지 않음.
-- 도구가 없는 Apple Silicon Mac은 현재 프로젝트 버전의 GitHub DMG를 SHA-256 검증 후
+- 도구가 없는 Apple Silicon Mac은 검증된 0.2.3 GitHub DMG의 실행 도구를 SHA-256 검증 후
   `.dev/runtimes/`에 추출. 최초 다운로드는 큼.
+  앱 버전과 준비용 도구 버전은 분리하므로 아직 릴리스하지 않은 코드도 개발 가능.
 - Windows x64는 아래 네이티브 도구를 준비하고 pgvector를 MSVC로 빌드한 뒤 배포와 같은
   `stage:runtime` 수행. Windows 서비스나 전역 DB를 설치하지 않음.
 - Python 의존성이 기존 묶음과 다르면 같은 Python 패치 버전으로 `.dev/python/`을 만들고

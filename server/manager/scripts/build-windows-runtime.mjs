@@ -70,7 +70,9 @@ export async function buildWindowsRuntime() {
       console.log(`[setup] Preparing Windows ${name}`);
       const archive = path.join(temporary, `${name}.zip`);
       await downloadChecked(asset.url, archive, asset.sha256);
+      console.log(`[setup] Verified Windows ${name} download; extracting`);
       await extract(archive, path.join(temporary, `unpacked-${name}`));
+      console.log(`[setup] Extracted Windows ${name}`);
     }
     const staged = path.join(temporary, 'native');
     await fs.mkdir(staged);

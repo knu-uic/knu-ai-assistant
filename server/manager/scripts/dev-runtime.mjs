@@ -14,6 +14,9 @@ export const devRoot = path.join(managerRoot, '.dev');
 export const pythonRelative = platform => platform === 'win32' ? 'knu/.knu-runtime/python.exe' : 'knu/.knu-runtime/bin/python';
 const binary = (name, platform) => platform === 'win32' ? `${name}.exe` : name;
 export const fingerprint = text => createHash('sha256').update(text).digest('hex');
+// Seed tools independently of the app version: a version-bump PR must not
+// require its own not-yet-published release. Live source/dependencies stay current.
+const macRuntimeSeedVersion = '0.2.3';
 
 // Only used with api.github.com, never passed to archive download hosts.
 export function githubHeaders() {
@@ -65,7 +68,16 @@ export async function downloadChecked(url, destination, sha256, fetchImpl = fetc
   const response = await fetchImpl(url, { signal: AbortSignal.timeout(900_000) });
   if (!response.ok) throw new Error(`Download failed (${response.status}): ${url}`);
   const hash = createHash('sha256');
-  const hashing = new Transform({ transform(chunk, encoding, callback) { hash.update(chunk); callback(null, chunk); } });
+  let downloaded = 0, lastReport = Date.now();
+  const hashing = new Transform({ transform(chunk, encoding, callback) {
+    hash.update(chunk);
+    downloaded += chunk.length;
+    if (Date.now() - lastReport >= 30_000) {
+      console.log(`[setup] Download ${path.basename(destination)}: ${Math.round(downloaded / 1024 / 1024)} MiB`);
+      lastReport = Date.now();
+    }
+    callback(null, chunk);
+  } });
   await pipeline(Readable.fromWeb(response.body), hashing, createWriteStream(destination, { flags: 'wx', mode: 0o600 }));
   if (hash.digest('hex') !== sha256) {
     await fs.rm(destination);
@@ -89,6 +101,14 @@ export async function extract(archive, destination) {
   await fs.mkdir(destination, { recursive: true });
   if (archive.endsWith('.zip')) {
     if (process.platform === 'win32') {
+      // Prefer Windows' built-in archive extractor for large runtime ZIPs;
+      // PostgreSQL contains 21,000+ files. Retain the older PowerShell fallback.
+      let hasTar = false;
+      try { await run('tar.exe', ['--version'], { capture: true }); hasTar = true; } catch {}
+      if (hasTar) {
+        await run('tar.exe', ['-xf', archive, '-C', destination]);
+        return;
+      }
       // Read paths from environment, not interpolated PowerShell source.
       await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
         'Expand-Archive -LiteralPath $env:KNU_ARCHIVE -DestinationPath $env:KNU_EXTRACT -Force'],
@@ -203,8 +223,7 @@ export async function setup(args = process.argv.slice(2)) {
     }
     if (!runtimeRoot) {
       if (process.platform === 'darwin') {
-        const { version } = JSON.parse(await fs.readFile(path.join(managerRoot, 'package.json'), 'utf8'));
-        runtimeRoot = await downloadMacRuntime(version);
+        runtimeRoot = await downloadMacRuntime(macRuntimeSeedVersion);
       } else if (process.platform === 'win32' && process.arch === 'x64') {
         runtimeRoot = await prepareWindowsRuntime();
       } else throw new Error('No matching native runtime. Prepare a release runtime and pass --runtime PATH');

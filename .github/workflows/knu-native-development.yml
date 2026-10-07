@@ -35,6 +35,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: server/manager/src-tauri
+      - name: Restore pinned Windows native tools
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: server/manager/native-runtime/win32-x64
+          key: knu-native-windows-v1-${{ hashFiles('server/manager/scripts/build-windows-runtime.mjs') }}
       - name: Prepare project-local native environment
         env:
           GH_TOKEN: ${{ github.token }}
