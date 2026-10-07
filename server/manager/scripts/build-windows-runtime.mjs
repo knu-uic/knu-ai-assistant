@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { devRoot, managerRoot, run, downloadChecked, extract, exists } from './dev-runtime.mjs';
+import { devRoot, managerRoot, run, downloadChecked, extract, exists, githubHeaders } from './dev-runtime.mjs';
 
 export const windowsArchives = {
   postgres: { url: 'https://get.enterprisedb.com/postgresql/postgresql-16.15-1-windows-x64-binaries.zip',
@@ -19,7 +19,7 @@ export const windowsArchives = {
 
 async function githubFile(repository, revision, relative) {
   const response = await fetch(`https://api.github.com/repos/${repository}/contents/${relative}?ref=${revision}`,
-    { headers: { 'User-Agent': 'knu-native-dev', Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(30_000) });
+    { headers: githubHeaders(), signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`Cannot preserve upstream license: ${repository}/${relative}`);
   const body = await response.json();
   if (body.encoding !== 'base64') throw new Error('Unexpected upstream file encoding');

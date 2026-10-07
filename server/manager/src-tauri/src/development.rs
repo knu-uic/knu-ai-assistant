@@ -110,4 +110,29 @@ mod tests {
             std::env::temp_dir().join(format!("knu-dev-missing-{}", rand::random::<u64>()));
         assert!(load(&missing).unwrap().is_none());
     }
+
+    #[test]
+    fn changed_dependencies_require_setup_again() {
+        let repo = std::env::temp_dir().join(format!("knu-dev-validation-{}", rand::random::<u64>()));
+        fs::create_dir_all(repo.join("server/api")).unwrap();
+        fs::write(repo.join("server/api/requirements.txt"), "fastapi==0.2\n").unwrap();
+        let python = repo.join("portable-python");
+        fs::write(&python, "test fixture, never executed").unwrap();
+        let mut config = DevelopmentRuntime {
+            schema_version: 1,
+            platform: platform().into(),
+            arch: architecture().into(),
+            runtime_root: repo.clone(),
+            python_path: python,
+            requirements_text: "fastapi==0.1\n".into(),
+        };
+        let error = validate(&config, &repo, platform(), architecture()).unwrap_err();
+        assert!(error.contains("Python 의존성이 변경"));
+        config.requirements_text = "fastapi==0.2\n".into();
+        assert!(validate(&config, &repo, platform(), architecture()).is_ok());
+        fs::remove_file(&config.python_path).unwrap();
+        assert!(validate(&config, &repo, platform(), architecture())
+            .unwrap_err().contains("실행 도구"));
+        fs::remove_dir_all(repo).unwrap();
+    }
 }

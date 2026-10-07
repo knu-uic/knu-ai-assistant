@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { run } from './dev-runtime.mjs';
+import { run, githubHeaders } from './dev-runtime.mjs';
 
 // Apply our checked-in text patch without requiring a Unix patch/bash command.
 export function applyUnifiedPatch(source, patch) {
@@ -35,7 +35,7 @@ export async function prepareHwpConverter({ python, uv, javaHome, apiRoot, desti
     await run(uv, ['pip', 'install', '--python', python, '--target', packageRoot, 'hwp2hwpx==1.0.1']);
     const revision = 'edc05278506b663d5bdd98050a51f54b7ff5e0bc';
     const response = await fetch(`https://api.github.com/repos/neolord0/hwp2hwpx/contents/src/main/java/kr/dogfoot/hwp2hwpx/ForContentHPFFile.java?ref=${revision}`,
-      { headers: { 'User-Agent': 'knu-runtime-builder', Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(30_000) });
+      { headers: githubHeaders(), signal: AbortSignal.timeout(30_000) });
     if (!response.ok) throw new Error(`HWP source download failed: ${response.status}`);
     const body = await response.json();
     if (body.encoding !== 'base64') throw new Error('Invalid HWP source response');

@@ -15,6 +15,13 @@ export const pythonRelative = platform => platform === 'win32' ? 'knu/.knu-runti
 const binary = (name, platform) => platform === 'win32' ? `${name}.exe` : name;
 export const fingerprint = text => createHash('sha256').update(text).digest('hex');
 
+// Only used with api.github.com, never passed to archive download hosts.
+export function githubHeaders() {
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  return { Accept: 'application/vnd.github+json', 'User-Agent': 'knu-native-dev',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
 export async function validateRuntime(root, platform = process.platform, arch = process.arch) {
   const manifest = JSON.parse(await fs.readFile(path.join(root, 'runtime-manifest.json'), 'utf8'));
   if (manifest.schemaVersion !== 1 || manifest.platform !== platform || manifest.arch !== arch || manifest.python !== '3.12') {
@@ -68,7 +75,7 @@ export async function downloadChecked(url, destination, sha256, fetchImpl = fetc
 
 export async function githubAsset(repository, tag, name) {
   const response = await fetch(`https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`,
-    { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'knu-native-dev' }, signal: AbortSignal.timeout(30_000) });
+    { headers: githubHeaders(), signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`Cannot read release ${repository}/${tag}: HTTP ${response.status}`);
   const release = await response.json();
   const asset = release.assets.find(asset => asset.name === name);
@@ -204,6 +211,10 @@ export async function setup(args = process.argv.slice(2)) {
     }
   }
   const requirements = await fs.readFile(path.join(repoRoot, 'server/api/requirements.txt'), 'utf8');
+  const nodeVersion = await run(path.join(runtimeRoot, binary('node/bin/node', process.platform)), ['--version'], { capture: true });
+  if (!/^v\d+\./.test(nodeVersion) || Number(nodeVersion.slice(1).split('.')[0]) < 22) {
+    throw new Error('The runtime must include Node.js 22+ for the conversation context engine');
+  }
   const pythonPath = await preparePython(runtimeRoot, requirements);
   const pythonVersion = await run(pythonPath, ['-B', '-c', 'import sys; assert sys.version_info[:2] == (3,12); import importlib.metadata as m; [m.version(x) for x in ["fastapi","psycopg","arq","playwright"]]; print(sys.version.split()[0])'], { capture: true });
   console.log(`[setup] Portable Python ${pythonVersion}; host Python/DB/Redis are not used`);
