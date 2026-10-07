@@ -175,6 +175,10 @@ impl StandaloneRuntime {
         command
             // Python must not add cache files to the sealed macOS app bundle.
             .env("PYTHONDONTWRITEBYTECODE", "1")
+            // Korean/emoji logs must also work through Windows' piped output,
+            // independently of the user's legacy console code page.
+            .env("PYTHONUTF8", "1")
+            .env("PYTHONIOENCODING", "utf-8")
             .env(
                 "KNU_CONTEXT_NODE",
                 self.runtime_root.join("node/bin").join(executable("node")),
@@ -680,6 +684,9 @@ mod tests {
         runtime.configure_command(&mut command);
         assert!(command.get_envs().any(|(name, value)| {
             name == "PYTHONDONTWRITEBYTECODE" && value == Some(std::ffi::OsStr::new("1"))
+        }));
+        assert!(command.get_envs().any(|(name, value)| {
+            name == "PYTHONIOENCODING" && value == Some(std::ffi::OsStr::new("utf-8"))
         }));
     }
 
