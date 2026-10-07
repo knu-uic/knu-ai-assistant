@@ -39,7 +39,7 @@ graphify-out/
 # 에디터/툴 설정
 .vscode/
 .claude/
-services/api/.vscode/
+server/api/.vscode/
 
 # 바이브코딩 부수 산출물 — 깃 추적 제외
 .superpowers/
@@ -47,14 +47,25 @@ docs/superpowers/
 .agents/
 
 # KNU Server Manager generated output / local secrets
-apps/server-manager/node_modules/
-apps/server-manager/dist/
-apps/server-manager/runtime/
-!apps/server-manager/runtime/
-apps/server-manager/runtime/*
-!apps/server-manager/runtime/.gitkeep
-apps/server-manager/native-runtime/
-apps/server-manager/src-tauri/target/
-apps/server-manager/src-tauri/gen/schemas/
-services/api/data/server-manager.json
-services/api/data/codex-auth.json
+server/manager/node_modules/
+server/manager/dist/
+server/manager/runtime/
+!server/manager/runtime/
+server/manager/runtime/*
+!server/manager/runtime/.gitkeep
+server/manager/native-runtime/
+server/manager/src-tauri/target/
+server/manager/src-tauri/gen/schemas/
+server/api/data/server-manager.json
+server/api/data/codex-auth.json
+
+# KNU PICK mobile local configuration and build output
+client/mobile/.gradle/
+client/mobile/.kotlin/
+client/mobile/**/build/
+client/mobile/local.properties
+client/mobile/iosApp/Pods/
+client/mobile/iosApp/*.xcworkspace/
+# Kotlin's source package is named data; it is not a generated data directory.
+!client/mobile/shared/src/commonMain/kotlin/kr/ac/kongju/knupick/data/
+!client/mobile/shared/src/commonMain/kotlin/kr/ac/kongju/knupick/data/*.kt

@@ -1,6 +1,8 @@
 # KNU AI Assistant
 
-> 서버를 GUI로 실행·관리하려면 [KNU Server Manager](apps/server-manager/README.md)를 사용하세요.
+> 서버를 GUI로 실행·관리하려면 [KNU Server Manager](server/manager/README.md)를 사용하세요.
+> Android 앱은 [KNU PICK 모바일](client/mobile/README.md), 공유 대화와 맥락 관리는
+> [대화 저장·공통 엔진 안내](docs/chat-context.md)를 참고하세요.
 
 > 흩어진 대학 공지와 학사 정보를 한곳에 모아, 학생에게 필요한 정보만 찾아주는 공주대학교 맞춤형 AI 어시스턴트
 
@@ -27,6 +29,7 @@ KNU PICK 웹이 기본 사용자 화면이며, FastAPI 서버가 공지 수집, 
 - LMS 과목, 과제, 공지와 미완료 학습 항목 동기화
 - 개인화된 공지·학사 정보를 제공하는 KNU PICK 웹
 - 학생별 개인 LLM 계정·모델 선택과 KNU MCP 도구 호출 기반 웹 대화
+- KMP/CMP Android 학생 앱과 웹·앱 공유 서버 대화 기록, Codmes 공통 맥락 엔진
 - 외부 AI 클라이언트를 위한 MCP 도구와 Codmes 네이티브 플러그인
 
 ## 처리 흐름
@@ -39,7 +42,8 @@ KNU PICK 웹이 기본 사용자 화면이며, FastAPI 서버가 공지 수집, 
 
 | 영역 | 기술 |
 |---|---|
-| Web | React 18, Vite 5 |
+| Web | React 18, Vite 7 |
+| Mobile | Kotlin Multiplatform, Compose Multiplatform, Android 우선 |
 | API | FastAPI, Uvicorn, JWT, SSE |
 | AI / RAG | KNU MCP 도구 호출, LangChain, BGE reranker, LLM·Embedding provider 추상화 |
 | Data | PostgreSQL 16, pgvector, HNSW, Redis |
@@ -49,15 +53,24 @@ KNU PICK 웹이 기본 사용자 화면이며, FastAPI 서버가 공지 수집, 
 ## 저장소 구조
 
 ```text
-apps/web/                    KNU PICK React/Vite 웹
-apps/server-manager/         로컬 KNU API·worker를 관리하는 Tauri 데스크톱 앱
-services/api/                FastAPI, 데이터 수집·검색, 포털/LMS 동기화, MCP
-docs/                        KNUIS·로그인 조사 문서
+client/                      학생용 클라이언트
+├── web/                     KNU PICK React/Vite 웹
+└── mobile/                  Kotlin·Compose Multiplatform 프로젝트
+    ├── shared/              공통 화면·상태·API 통신
+    └── androidApp/          Android 실행 앱
+server/                      서버와 운영 도구
+├── api/                     FastAPI·수집·검색·포털/LMS 동기화·MCP
+└── manager/                 서버를 실행·관리하는 Tauri 데스크톱 앱
+docs/                        프로젝트 공통 문서
 ```
 
-웹과 외부 연동 클라이언트는 `services/api`의 공통 도메인과 저장소를 사용합니다.
+웹·모바일과 외부 연동 클라이언트는 `server/api`의 공통 도메인과 저장소를 사용합니다.
 클라이언트별 화면 코드는 분리하지만 공지, 사용자, 포털, LMS 데이터 처리 로직은
 서버에서 중복 구현하지 않습니다.
+
+Server Manager는 학생용 클라이언트가 아니라 운영자용 도구이므로 `server/manager`에
+배치합니다. Android Studio에서는 `client/mobile` 폴더를 엽니다. iOS 실행 앱은 아직
+구현하지 않았으며 추후 같은 모바일 프로젝트에 추가합니다.
 
 ## 구성 요소
 
@@ -73,21 +86,22 @@ docs/                        KNUIS·로그인 조사 문서
 | [Codmes KNU plugin](https://github.com/knu-uic/codmes-plugin-knu) | KNU 데이터를 Codmes 네이티브 화면과 AI 도구로 연결하는 별도 선택형 어댑터 |
 
 구체적인 서버 내부 경계는
-[API 아키텍처 문서](services/api/docs/architecture.md)를 참고합니다.
+[API 아키텍처 문서](server/api/docs/architecture.md)를 참고합니다.
 
 ## 로컬 개발 조건
 
 각 개발 서버 컴퓨터에는 다음 조건이 충족되어 있어야 합니다.
 
 - Python 3.12 가상환경이 저장소 루트의 `.venv`에 준비되어 있음
-- `services/api/.env`가 작성되어 있음
+- `server/api/.env`가 작성되어 있음
 - PostgreSQL 16과 pgvector를 사용할 수 있음
 - Redis를 실행할 수 있음
-- Node.js와 `apps/web`의 npm 의존성이 설치되어 있음
+- Node.js 22.12+와 `client/web`의 npm 의존성이 설치되어 있음
+- API 채팅용 Node.js 22+ (Manager 설치본·API Docker 이미지에는 포함)
 
 최초 환경 구성과 환경 변수는
-[API 개발 실행 문서](services/api/docs/dev-run.md)와
-[`services/api/.env.example`](services/api/.env.example)을 참고합니다.
+[API 개발 실행 문서](server/api/docs/dev-run.md)와
+[`server/api/.env.example`](server/api/.env.example)을 참고합니다.
 
 ## 로컬 실행
 
@@ -95,14 +109,14 @@ DB와 Redis를 먼저 실행합니다. 다음 예시는 Docker Compose를 사용
 직접 설치한 PostgreSQL과 Redis를 사용해도 됩니다.
 
 ```sh
-cd services/api
+cd server/api
 docker compose up -d db redis
 ```
 
 API 서버를 실행합니다.
 
 ```sh
-cd services/api
+cd server/api
 source ../../.venv/bin/activate
 python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
 ```
@@ -111,7 +125,7 @@ python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
 실행합니다.
 
 ```sh
-cd services/api
+cd server/api
 source ../../.venv/bin/activate
 arq workers.arq_worker.WorkerSettings
 ```
@@ -119,7 +133,7 @@ arq workers.arq_worker.WorkerSettings
 마지막으로 KNU PICK 웹을 실행합니다.
 
 ```sh
-cd apps/web
+cd client/web
 npm install
 npm run dev
 ```
@@ -133,9 +147,9 @@ npm run dev
 - 포털 비밀번호는 인증과 동기화 요청에만 사용하며 영속 저장하지 않습니다.
 - 브라우저 세션과 작업 상태처럼 수명이 짧은 정보는 Redis 또는 임시 저장소를
   사용합니다.
-- 운영 환경의 비밀값은 `services/api/.env`에서 관리하며 Git에 커밋하지 않습니다.
+- 운영 환경의 비밀값은 `server/api/.env`에서 관리하며 Git에 커밋하지 않습니다.
 - KNU Server Manager에서 등록한 Codex OAuth 계정은 Codmes와 공유하지 않고
-  `services/api/data/codex-auth.json`에 비밀 정보로 별도 보관합니다.
+  `server/api/data/codex-auth.json`에 비밀 정보로 별도 보관합니다.
 - Server Manager의 데이터 화면은 공지별 추출 버전과 용량, 전체 DB·첨부
   파일 용량을 구분해 보여줍니다. 수집 결과 파일은 Git 소스에 포함하지
   않습니다.
@@ -144,9 +158,9 @@ npm run dev
 
 ### MCP
 
-`services/api`는 외부 AI 클라이언트가 공지 검색과 상세 근거 조회를 사용할 수
+`server/api`는 외부 AI 클라이언트가 공지 검색과 상세 근거 조회를 사용할 수
 있도록 `/api/mcp`를 제공합니다. 도구 호출과 인증 구조는
-[운영 실행 문서](services/api/docs/prod-run.md)를 참고합니다.
+[운영 실행 문서](server/api/docs/prod-run.md)를 참고합니다.
 
 ### Codmes
 
