@@ -112,6 +112,9 @@ Redis/포트 라이선스와 출처를 보관합니다. Cygwin 및 동봉 DLL의
 공개 Windows 릴리스를 자동 게시하지 않습니다. `.github/workflows/knu-native-development.yml`로
 Windows/macOS 준비·단위 테스트·빈 DB에서 Manager 시작/종료를 검증합니다. 해당 Windows 작업의
 성공 전에는 Windows 실행 검증 완료로 간주하지 않습니다.
+PostgreSQL의 보안 정책에 따라 Windows 개발 앱/터미널은 관리자 권한이 아닌 일반 권한으로
+실행합니다. GitHub Windows runner는 기본적으로 관리자이므로 시작/종료 테스트만 임시 일반
+계정으로 실행하고 테스트 후 계정·권한을 정리합니다. 개발 PC의 계정을 만들거나 바꾸지 않습니다.
 
 ### 기존 `.venv` 개발 모드
 

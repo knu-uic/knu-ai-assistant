@@ -58,4 +58,17 @@ jobs:
       - name: Unit and TypeScript tests
         run: npm run check
       - name: Fresh database, live source, packaged tools, clean shutdown
+        if: runner.os != 'Windows'
         run: cargo test --manifest-path src-tauri/Cargo.toml native_development_smoke -- --ignored --nocapture
+      - name: Fresh Windows database under an ordinary user (not elevated)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $artifacts = cargo test --manifest-path src-tauri/Cargo.toml --no-run --message-format=json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests = @($artifacts | ForEach-Object {
+            try { $entry = $_ | ConvertFrom-Json } catch { return }
+            if ($entry.reason -eq 'compiler-artifact' -and $entry.profile.test -and $entry.target.name -eq 'knu_server_manager_lib' -and $entry.executable) { $entry.executable }
+          })
+          if ($tests.Count -ne 1) { throw 'Expected exactly one native smoke test executable' }
+          ./scripts/windows-smoke.ps1 -TestBinary $tests[0]
