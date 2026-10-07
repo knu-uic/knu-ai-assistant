@@ -1,5 +1,10 @@
 # 로컬 개발 서버 실행 가이드
 
+Server Manager로 최신 소스를 개발하려면 [독립 개발 환경](../../manager/README.md#개발-실행)의
+`npm run setup:dev` → `npm run tauri dev`를 우선 사용한다. 이 경로는 배포용 네이티브
+실행 도구와 별도 개발 DB를 쓰며 Docker/루트 `.venv`가 필요하지 않다.
+아래는 API/worker를 직접 띄우는 기존 `.venv`·Docker DB 개발 방식이다.
+
 네이티브 개발 기준(맥에서 직접 실행). `.env`는 `RUNTIME_ENV=local`.
 전체 기능(로그인·공지·챗봇·동기화)을 쓰려면 **4개 + 웹 = 5개**가 다 떠 있어야 한다.
 

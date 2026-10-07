@@ -62,6 +62,7 @@ pub struct ManagerState {
     data_root: PathBuf,
     standalone: Option<StandaloneRuntime>,
     standalone_error: Option<String>,
+    native_development: bool,
     show_dock_icon: Mutex<bool>,
     transfer_active: Mutex<bool>,
 }
@@ -168,6 +169,21 @@ fn pipe_output(child: &mut Child, name: &'static str, logs: Arc<Mutex<VecDeque<S
 
 impl ManagerState {
     pub fn new(app: &AppHandle) -> Self {
+        let repo = find_repo_root();
+        let development = if cfg!(debug_assertions)
+            && env::var_os("KNU_EMBEDDED_RUNTIME_ROOT").is_none()
+            && env::var("KNU_LEGACY_DEV").as_deref() != Ok("1")
+        {
+            crate::development::load(&repo).and_then(|config| config
+                .map(Some)
+                .ok_or_else(|| "독립 개발 환경이 준비되지 않았습니다. server/manager에서 npm run setup:dev를 실행하세요.".to_string()))
+        } else {
+            Ok(None)
+        };
+        let development_error = development.as_ref().err().cloned();
+        let development = development.ok().flatten();
+        // Invalid setup must not silently use system Python/production settings.
+        let native_development = development.is_some() || development_error.is_some();
         let configured_runtime = env::var("KNU_EMBEDDED_RUNTIME_ROOT")
             .ok()
             .map(PathBuf::from);
@@ -179,25 +195,43 @@ impl ManagerState {
         } else {
             None
         };
-        let runtime_root = configured_runtime.or(packaged_runtime);
-        let packaged = runtime_root.is_some();
-        let root = runtime_root
+        let runtime_root = development
             .as_ref()
-            .map(|path| path.join("knu"))
-            .unwrap_or_else(find_repo_root);
-        let python = python_for(&root, packaged);
-        let data_root = env::var("KNU_DATA_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                app.path()
-                    .app_data_dir()
-                    .unwrap_or_else(|_| root.join(".knu-server-manager/data"))
-            });
-        let preferences_path = app
-            .path()
-            .app_config_dir()
-            .unwrap_or_else(|_| data_root.join("config"))
-            .join("manager.json");
+            .map(|config| config.runtime_root.clone())
+            .or(configured_runtime)
+            .or(packaged_runtime);
+        let packaged = runtime_root.is_some();
+        let root = if native_development {
+            repo.clone()
+        } else {
+            runtime_root
+                .as_ref()
+                .map(|path| path.join("knu"))
+                .unwrap_or(repo.clone())
+        };
+        let python = development
+            .as_ref()
+            .map(|config| config.python_path.clone())
+            .unwrap_or_else(|| python_for(&root, packaged));
+        let data_root = if native_development {
+            crate::development::data_root(&repo)
+        } else {
+            env::var("KNU_DATA_ROOT")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| {
+                    app.path()
+                        .app_data_dir()
+                        .unwrap_or_else(|_| root.join(".knu-server-manager/data"))
+                })
+        };
+        let preferences_path = if native_development {
+            data_root.join("config/manager.json")
+        } else {
+            app.path()
+                .app_config_dir()
+                .unwrap_or_else(|_| data_root.join("config"))
+                .join("manager.json")
+        };
         let preferences = fs::read_to_string(&preferences_path)
             .ok()
             .and_then(|value| serde_json::from_str::<ManagerPreferences>(&value).ok())
@@ -207,7 +241,7 @@ impl ManagerState {
             .unwrap_or(&root)
             .join("runtime-settings.json");
         // 이전 개발 버전이 소스 아래 JSON을 새 앱 영구 설정으로 한 번만 이전한다.
-        if !runtime_settings_path.exists() {
+        if !native_development && !runtime_settings_path.exists() {
             let legacy_path = root.join("server/api/data/server-manager.json");
             if legacy_path.exists() {
                 if let Some(parent) = runtime_settings_path.parent() {
@@ -216,7 +250,9 @@ impl ManagerState {
                 let _ = fs::copy(legacy_path, &runtime_settings_path);
             }
         }
-        let (standalone, standalone_error) = if let Some(runtime_root) = runtime_root {
+        let (standalone, standalone_error) = if let Some(error) = development_error {
+            (None, Some(error))
+        } else if let Some(runtime_root) = runtime_root {
             match StandaloneRuntime::discover(runtime_root, data_root.clone()) {
                 Ok(runtime) => (Some(runtime), None),
                 Err(error) => (None, Some(error)),
@@ -248,6 +284,7 @@ impl ManagerState {
             data_root,
             standalone,
             standalone_error,
+            native_development,
             show_dock_icon: Mutex::new(preferences.show_dock_icon),
             transfer_active: Mutex::new(false),
         }
@@ -525,7 +562,9 @@ pub fn runtime_status(state: tauri::State<ManagerState>) -> RuntimeStatus {
             .map(|v| v.iter().cloned().collect())
             .unwrap_or_default(),
         show_dock_icon: state.show_dock_icon(),
-        deployment_mode: if state.standalone.is_some() || state.standalone_error.is_some() {
+        deployment_mode: if state.native_development {
+            "native-development".into()
+        } else if state.standalone.is_some() || state.standalone_error.is_some() {
             "standalone".into()
         } else {
             "development".into()
@@ -764,6 +803,15 @@ pub fn start_server(state: tauri::State<ManagerState>) -> Result<(), String> {
 }
 
 pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
+    if state.native_development {
+        let config = crate::development::load(&state.root)?
+            .ok_or("개발 실행 환경 설정이 없어졌습니다. npm run setup:dev를 실행하세요.")?;
+        if config.python_path != state.python {
+            return Err(
+                "개발 실행 도구가 변경되었습니다. Manager 개발 앱을 다시 실행하세요.".into(),
+            );
+        }
+    }
     let mut p = state
         .processes
         .lock()
@@ -887,6 +935,75 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::net::TcpListener;
+
+    /// Explicit opt-in: only a fresh temporary DB is touched. This exercises
+    /// the same Manager start/stop functions used by the desktop UI.
+    #[test]
+    #[ignore = "requires npm run setup:dev and a matching native runtime"]
+    fn native_development_smoke_with_fresh_data_and_live_source() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.ancestors().nth(3).unwrap().to_path_buf();
+        let config = crate::development::load(&root)
+            .unwrap()
+            .expect("Run npm run setup:dev first");
+        let data = env::temp_dir().join(format!("knu-native-smoke-{}", rand::random::<u64>()));
+        fs::create_dir_all(&data).unwrap();
+        let state = ManagerState {
+            processes: Mutex::new(Processes {
+                api: None,
+                worker: None,
+                postgres: None,
+                redis: None,
+            }),
+            logs: Arc::new(Mutex::new(VecDeque::new())),
+            admin_token: "native-smoke-test-only".into(),
+            root: root.clone(),
+            python: config.python_path,
+            preferences_path: data.join("config/manager.json"),
+            runtime_settings_path: data.join("config/runtime-settings.json"),
+            standalone: Some(
+                StandaloneRuntime::discover(config.runtime_root, data.clone()).unwrap(),
+            ),
+            data_root: data.clone(),
+            standalone_error: None,
+            native_development: true,
+            show_dock_icon: Mutex::new(false),
+            transfer_active: Mutex::new(false),
+        };
+        // No automatic crawling, models or user credentials are needed.
+        fs::write(
+            &state.runtime_settings_path,
+            r#"{"auto_crawl_enabled":false}"#,
+        )
+        .unwrap();
+        let result = (|| -> Result<(), String> {
+            start_managed_server(&state)?;
+            let runtime = state.standalone.as_ref().unwrap();
+            let port = runtime.ports().api;
+            let mut command = Command::new(&state.python);
+            runtime.configure_command(&mut command);
+            let probe = command.current_dir(root.join("server/api"))
+                .args(["-B", "-c", &format!(
+                    "import sys,pathlib,urllib.request,json; import api.main; from db.schema import DB_URL; import psycopg; assert pathlib.Path(api.main.__file__).resolve() == pathlib.Path('api/main.py').resolve(); assert '.venv' not in sys.executable; h=json.load(urllib.request.urlopen('http://127.0.0.1:{port}/api/health')); print('Health:',h); c=psycopg.connect(DB_URL); assert c.execute('SELECT count(*) FROM schema_migrations').fetchone()[0] >= 19; assert c.execute('SELECT count(*) FROM users').fetchone()[0] == 0; assert c.execute('SELECT count(*) FROM content').fetchone()[0] == 0; c.close(); import redis,os; r=redis.Redis.from_url(os.environ['REDIS_URL']); assert r.get('arq:queue:health-check'); print('LIVE_SOURCE_AND_FRESH_DATABASE_AND_WORKER_OK')"
+                )]).output().map_err(|error| error.to_string())?;
+            if !probe.status.success() {
+                return Err(String::from_utf8_lossy(&probe.stderr).into_owned());
+            }
+            println!("{}", String::from_utf8_lossy(&probe.stdout));
+            Ok(())
+        })();
+        let stop = shutdown_managed_server(&state);
+        if let Err(error) = &result {
+            eprintln!("Smoke failure: {error}");
+            for line in state.logs.lock().unwrap().iter() {
+                eprintln!("{line}");
+            }
+        }
+        assert!(stop.is_ok());
+        // Temporary smoke DB only; never the installed app or .dev/data DB.
+        fs::remove_dir_all(&data).unwrap();
+        result.unwrap();
+    }
 
     #[test]
     fn locates_client_server_repository_from_manager_and_mobile() {

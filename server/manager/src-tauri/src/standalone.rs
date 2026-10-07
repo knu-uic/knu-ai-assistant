@@ -230,6 +230,11 @@ impl StandaloneRuntime {
                 env_or("NOTICE_POLL_ENABLED", "false"),
             )
             .env("DOCUMENT_ASSETS_ROOT", self.data_root.join("assets"))
+            .env(
+                "HWP2HWPX_JAR",
+                self.runtime_root
+                    .join("knu/server/api/third_party/hwp2hwpx/build/hwp2hwpx-patched.jar"),
+            )
             .env("HWP_ASSETS_ROOT", self.data_root.join("assets"))
             .env(
                 "KNU_CODEX_AUTH_PATH",
@@ -338,23 +343,28 @@ impl StandaloneRuntime {
         ensure_port_free(port, "PostgreSQL")?;
         let mut command = Command::new(&self.postgres);
         self.configure_command(&mut command);
+        command.args([
+            "-D",
+            &data.to_string_lossy(),
+            "-h",
+            "127.0.0.1",
+            "-p",
+            &port.to_string(),
+        ]);
+        // All Manager connections use loopback TCP. Disable unused Unix
+        // sockets so long repository/temp paths cannot prevent startup.
+        #[cfg(not(target_os = "windows"))]
+        command.args(["-c", "unix_socket_directories="]);
         let mut child = command
-            .args([
-                "-D",
-                &data.to_string_lossy(),
-                "-h",
-                "127.0.0.1",
-                "-p",
-                &port.to_string(),
-                "-k",
-                &self.data_root.join("postgres-socket").to_string_lossy(),
-            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("내장 PostgreSQL을 시작하지 못했습니다: {e}"))?;
         pipe_output(&mut child, "postgres", logs.clone());
-        wait_for_port(&mut child, port, "PostgreSQL", Duration::from_secs(15))?;
+        if let Err(error) = wait_for_port(&mut child, port, "PostgreSQL", Duration::from_secs(15)) {
+            stop_child(&mut Some(child));
+            return Err(error);
+        }
         Ok(child)
     }
 
@@ -410,17 +420,25 @@ impl StandaloneRuntime {
         let port = self.ports().redis;
         ensure_port_free(port, "Redis")?;
         let data = self.data_root.join("redis");
+        let redis_directory = if cfg!(target_os = "windows") {
+            ".".to_string()
+        } else {
+            data.to_string_lossy().into_owned()
+        };
         fs::create_dir_all(&data).map_err(|e| e.to_string())?;
         let mut command = Command::new(&self.redis);
         self.configure_command(&mut command);
         let mut child = command
+            // Relative paths also work with the Windows Cygwin Redis port;
+            // Windows drive paths passed to --dir do not.
+            .current_dir(&data)
             .args([
                 "--bind",
                 "127.0.0.1",
                 "--port",
                 &port.to_string(),
                 "--dir",
-                &data.to_string_lossy(),
+                &redis_directory,
                 "--appendonly",
                 "yes",
                 "--protected-mode",
@@ -431,7 +449,10 @@ impl StandaloneRuntime {
             .spawn()
             .map_err(|e| format!("내장 Redis를 시작하지 못했습니다: {e}"))?;
         pipe_output(&mut child, "redis", logs.clone());
-        wait_for_port(&mut child, port, "Redis", Duration::from_secs(10))?;
+        if let Err(error) = wait_for_port(&mut child, port, "Redis", Duration::from_secs(10)) {
+            stop_child(&mut Some(child));
+            return Err(error);
+        }
         Ok(child)
     }
 }

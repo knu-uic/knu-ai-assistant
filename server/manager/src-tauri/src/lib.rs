@@ -1,3 +1,4 @@
+mod development;
 mod manager;
 mod standalone;
 

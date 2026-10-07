@@ -59,13 +59,71 @@ Server Manager의 `수집 관리 > 수집 설정`에서 자동 수집을 OFF로 
 
 ## 개발 실행
 
+기본 개발 모드는 **배포용 실행 도구를 재사용하고 현재 repository의 Python 소스를 직접 실행**합니다.
+Docker나 전역 Python/PostgreSQL/Redis, 루트 `.venv`는 사용하지 않습니다. Tauri 빌드용
+Node.js 22+, Rust/Cargo와 OS 개발 도구는 필요합니다(macOS: Apple Command Line Tools,
+Windows: Microsoft C++ Build Tools x64와 WebView2). 누락된 도구는 준비 명령이 안내하며
+전역 도구를 몰래 설치하거나 삭제하지 않습니다.
+
+```bash
+cd server/manager
+npm run setup:dev
+npm run tauri dev
+```
+
+`setup:dev`는 다음 순서로 준비합니다. DB/API/worker는 아직 시작하지 않습니다.
+
+- OS/CPU·빌드 도구 검사.
+- 기존 `runtime/` 또는 macOS 설치 앱의 실행 도구만 재사용. 기존 데이터·비밀 설정은 복사하지 않음.
+- 도구가 없는 Apple Silicon Mac은 현재 프로젝트 버전의 GitHub DMG를 SHA-256 검증 후
+  `.dev/runtimes/`에 추출. 최초 다운로드는 큼.
+- Windows x64는 아래 네이티브 도구를 준비하고 pgvector를 MSVC로 빌드한 뒤 배포와 같은
+  `stage:runtime` 수행. Windows 서비스나 전역 DB를 설치하지 않음.
+- Python 의존성이 기존 묶음과 다르면 같은 Python 패치 버전으로 `.dev/python/`을 만들고
+  requirements 설치. 설치 앱/공유 런타임에는 pip-install하지 않음.
+- npm 라이브러리는 최초 또는 package-lock 변경 시 `npm ci`로 설치.
+- `.dev/runtime.json` 작성.
+
+이후 앱에서 서버 시작을 누르면 **최신 `server/api` 소스**로 실행됩니다. 개발 DB·자산·인증 정보·
+Manager 설정·로그는 **`server/manager/.dev/data/`**에 저장됩니다. 설치 앱의 Application Support와
+완전히 분리되며 `.dev/` 전체는 Git 제외입니다. 작은 Python 수정은 서버 중지→시작으로 반영됩니다.
+requirements 변경은 준비 명령을 다시 실행하고 Manager 개발 앱도 재시작합니다. 오래된 설정이나
+잘못된 OS 실행 도구는 시스템 Python으로 대체하지 않고 오류로 중지합니다.
+LLM/Ollama 모델과 연결 설정은 별도로 준비해야 합니다.
+
+직접 준비한 실행 도구 지정: `npm run setup:dev -- --runtime /absolute/path/to/runtime`.
+Intel Mac/Linux는 자동 다운로드할 공개 도구가 없으므로 해당 OS/CPU의 runtime을 지정해야 합니다.
+Windows ARM64는 현재 자동 준비 대상이 아닙니다. requirements에 비고정 버전도 있으므로 새로
+설치한 라이브러리가 과거 묶음과 모두 같다고 보장하지 않습니다. 기존 묶음 재사용 시에는 그 묶음의
+설치 결과를 그대로 사용합니다.
+
+### Windows 네이티브 개발
+
+- PostgreSQL 16.15-1: EDB 공식 Windows ZIP, 공급사 확인 SHA-256 고정.
+- pgvector 0.8.6: 기존 릴리스와 같은 upstream commit 고정, `nmake /F Makefile.win`.
+- Redis 7.2.15: 사용자가 선택한 `redis-windows/redis-windows` 커뮤니티 Cygwin 포트, SHA-256 고정.
+  공식 Redis Windows 배포본이 아니며 호환 DLL도 함께 둠. Docker/WSL은 사용하지 않음.
+- Node 22.23.1 공식 ZIP, Temurin JDK 21.0.12.1+1: 다운로드 SHA-256 고정.
+- Python 3.12: uv managed Python과 같은 requirements/Playwright/OCR 준비 절차.
+
+Redis/포트 라이선스와 출처를 보관합니다. Cygwin 및 동봉 DLL의 추가 라이선스·소스 제공 의무는
+**공개 Windows 앱 재배포 전에 별도 검토**해야 합니다. 이번 준비 경로는 로컬 개발용이고
+공개 Windows 릴리스를 자동 게시하지 않습니다. `.github/workflows/knu-native-development.yml`로
+Windows/macOS 준비·단위 테스트·빈 DB에서 Manager 시작/종료를 검증합니다. 해당 Windows 작업의
+성공 전에는 Windows 실행 검증 완료로 간주하지 않습니다.
+
+### 기존 `.venv` 개발 모드
+
+아래는 명시적으로 `KNU_LEGACY_DEV=1`을 지정할 때만 사용하는 기존 방식입니다.
+Windows PowerShell에서는 `$env:KNU_LEGACY_DEV='1'`을 먼저 지정합니다.
+
 먼저 repository 루트에 `.venv`를 만들고 `server/api/requirements.txt`를 설치합니다.
 PostgreSQL과 Redis는 기존 KNU 서버 설정대로 실행되어 있어야 합니다.
 
 ```bash
 cd server/manager
 npm install
-npm run tauri dev
+KNU_LEGACY_DEV=1 npm run tauri dev
 ```
 
 Manager는 기본적으로 repository 루트의 `.venv/bin/python`
@@ -73,7 +131,7 @@ Manager는 기본적으로 repository 루트의 `.venv/bin/python`
 
 ```bash
 KNU_SERVER_ROOT=/path/to/knu-ai-assistant \
-KNU_PYTHON_PATH=/path/to/python npm run tauri dev
+KNU_PYTHON_PATH=/path/to/python KNU_LEGACY_DEV=1 npm run tauri dev
 ```
 
 ## 독립 실행형 릴리스
@@ -159,11 +217,11 @@ npm run bundle
 실행 후 앱 서명 무결성을 검증했다. Apple Developer ID 서명·공증 여부는 릴리스에
 명시하며 로컬 검증 통과만으로 공증 완료를 의미하지 않는다.
 
-개발 모드는 기존 `.venv`와 외부 PostgreSQL·Redis를 계속 사용하여
-기존 작업 흐름을 깨지 않는다. `npm run bundle`이 만드는 설치 패키지는
-위 런타임을 포함하는 독립 실행형이다. 현재 native runtime 소스 빌더는
-macOS·Linux용이며, Windows용 PostgreSQL/pgvector·Redis 배포 입력은 별도로
-준비해 `stage:runtime`에 전달해야 한다.
+기존 `.venv`·외부 PostgreSQL·Redis 방식은 `KNU_LEGACY_DEV=1`로 남겨 둔다.
+기본 개발 모드는 `setup:dev`로 준비한 실행 도구와 최신 소스/별도 데이터를 쓴다.
+`npm run bundle`은 위 도구를 포함하는 독립 실행형이다. `build-native-runtime.sh`는
+macOS·Linux용이고, `build-windows-runtime.mjs`는 Windows x64 개발용 준비 경로다.
+공개 Windows 설치본의 실제 검증·서명·재배포 라이선스 검토 및 릴리스 구성은 별도다.
 
 초기 사용자용 배포는 macOS 14 이상을 대상으로 한다.
 `knu-server-vX.Y.Z` tag를 push하면 `KNU Server Manager macOS release`

@@ -1,0 +1,40 @@
+name: KNU native development verification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'server/manager/**'
+      - 'server/api/requirements.txt'
+      - 'server/api/third_party/hwp2hwpx/**'
+      - '.github/workflows/knu-native-development.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-development:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: server/manager
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.1'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server/manager/src-tauri
+      - name: Prepare project-local native environment
+        run: npm run setup:dev
+      - name: Unit and TypeScript tests
+        run: npm run check
+      - name: Fresh database, live source, packaged tools, clean shutdown
+        run: cargo test --manifest-path src-tauri/Cargo.toml native_development_smoke -- --ignored --nocapture
