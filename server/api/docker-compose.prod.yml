@@ -1,0 +1,123 @@
+# 공식 외부 호스팅용 compose. 외부에는 Caddy의 HTTP/HTTPS만 노출한다.
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-knu-uic}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-knu-uic}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-knu-uic} -d ${DB_NAME:-knu-uic}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - bot_network
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    networks:
+      - bot_network
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: "no"
+    command: python -m db.migrate
+    env_file:
+      - .env
+    environment:
+      RUNTIME_ENV: docker
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - bot_network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: always
+    env_file:
+      - .env
+    environment:
+      # .env는 네이티브 개발용(local)이라, 컨테이너에서만 docker로 덮어쓴다.
+      # (config.py: load_dotenv override=False라 이 OS env가 우선)
+      RUNTIME_ENV: docker                # → DB_HOST=db
+      REDIS_URL: redis://redis:6379      # 코드 기본값(localhost) 대신 redis 서비스로
+    volumes:
+      - document_assets:/app/data/assets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - bot_network
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile             # worker 이미지(playwright·문서 구조 파서)
+    restart: always
+    command: arq workers.arq_worker.WorkerSettings   # 스트림릿 CMD를 워커로 덮어씀
+    env_file:
+      - .env
+    environment:
+      RUNTIME_ENV: docker
+      REDIS_URL: redis://redis:6379
+    volumes:
+      # worker가 추출한 첨부·그림을 API가 같은 경로에서 제공한다.
+      - document_assets:/app/data/assets
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    networks:
+      - bot_network
+
+  web:
+    build:
+      context: ../../client/web    # client/web/Dockerfile (node 빌드 → caddy 2-stage)
+    restart: always
+    environment:
+      KNU_SITE_ADDRESS: ${KNU_SITE_ADDRESS:?KNU_SITE_ADDRESS is required}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - bot_network
+
+volumes:
+  pgdata:
+  redisdata:
+  document_assets:
+  caddy_data:
+  caddy_config:
+
+networks:
+  bot_network:
+    driver: bridge

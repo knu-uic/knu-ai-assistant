@@ -1,0 +1,14 @@
+{
+  "source": "Codmes/packages/context-engine",
+  "base_commit": "76f8ca723aee99d38f0a275ea056c4e058a8bffa",
+  "note": "Extracted from the Codmes runtime at this base, with shared input-budget and prompt-overhead guards. Snapshot hashes identify the coordinated extraction, not a published upstream commit.",
+  "files": {
+    "bridge.mjs": "f0378c319488eee03a62936e117e987e40ac4dc63e931c28b76d0f6678bc3f78",
+    "context-budget.mjs": "ead049aed6d26e6949364564056e1d82faaec7ab5a1272e17ac190ce4fafcea4",
+    "conversation-compaction.mjs": "89aadfa7f7448282d6013884c95c0aa27103623809cf569471503d4429d9b9e3",
+    "engine.mjs": "a89f8122465522de5ab678410aa14b06b41370cf3064c1e2dc72ed27418ed2b7",
+    "engine.test.mjs": "29fea5b4788e821271dcf2e9702d81a2980a8b9c1801eb14829f2efb3e507a83",
+    "README.md": "4b5b95afabd4b166e00944bc9b0801f9f8cd680ea16af2ca819c8c04e19fdd65",
+    "package.json": "8845f627fcff3a3b46e4c803777fb2e965e37d3fd9dbe19e0600169a08ad36ab"
+  }
+}

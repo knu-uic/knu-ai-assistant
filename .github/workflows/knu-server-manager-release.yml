@@ -31,7 +31,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: apps/server-manager/package-lock.json
+          cache-dependency-path: server/manager/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -44,15 +44,15 @@ jobs:
 
       - name: Install manager build dependencies
         run: npm ci
-        working-directory: apps/server-manager
+        working-directory: server/manager
 
       - name: Resolve release metadata
         id: release
         shell: bash
         run: |
           set -euo pipefail
-          package_version="$(node -p "require('./apps/server-manager/package.json').version")"
-          tauri_version="$(node -p "require('./apps/server-manager/src-tauri/tauri.conf.json').version")"
+          package_version="$(node -p "require('./server/manager/package.json').version")"
+          tauri_version="$(node -p "require('./server/manager/src-tauri/tauri.conf.json').version")"
           [[ "$package_version" == "$tauri_version" ]] || {
             echo "Manager version mismatch: package=$package_version tauri=$tauri_version" >&2
             exit 1
@@ -113,42 +113,52 @@ jobs:
           architecture="$(uname -m)"
           [[ "$platform" == "darwin" ]] || { echo "macOS runner required" >&2; exit 1; }
           output="$RUNNER_TEMP/knu-native-$platform-$architecture"
-          bash apps/server-manager/scripts/build-native-runtime.sh "$output"
+          bash server/manager/scripts/build-native-runtime.sh "$output"
           echo "postgres=$output/postgres" >> "$GITHUB_OUTPUT"
           echo "redis=$output/redis" >> "$GITHUB_OUTPUT"
           echo "java=$output/java" >> "$GITHUB_OUTPUT"
+          echo "node=$output/node" >> "$GITHUB_OUTPUT"
           echo "architecture=$architecture" >> "$GITHUB_OUTPUT"
 
       - name: Test manager and extraction boundaries
         run: npm run check
-        working-directory: apps/server-manager
+        working-directory: server/manager
 
       - name: Stage standalone runtime
         run: npm run stage:runtime
-        working-directory: apps/server-manager
+        working-directory: server/manager
         env:
           KNU_POSTGRES_RUNTIME: ${{ steps.native.outputs.postgres }}
           KNU_REDIS_RUNTIME: ${{ steps.native.outputs.redis }}
           KNU_JAVA_RUNTIME: ${{ steps.native.outputs.java }}
+          KNU_NODE_RUNTIME: ${{ steps.native.outputs.node }}
 
       - name: Test packaged KNU API
-        working-directory: apps/server-manager/runtime/knu/services/api
+        working-directory: server/manager/runtime/knu/server/api
         shell: bash
         run: |
           set -euo pipefail
           runtime_python="../../.knu-runtime/bin/python"
           site_packages="$($runtime_python -c 'import site; print(site.getsitepackages()[0])')"
-          PYTHONPATH="$PWD:$site_packages" uvx --python "$runtime_python" --from pytest pytest tests -q
+          PYTHONDONTWRITEBYTECODE=1 KNU_CONTEXT_NODE="$PWD/../../../node/bin/node" PYTHONPATH="$PWD:$site_packages" uvx --python "$runtime_python" --from pytest pytest tests -q
 
       - name: Build standalone application
         shell: bash
-        working-directory: apps/server-manager
+        working-directory: server/manager
         run: |
           set -euo pipefail
           npm run tauri build -- --bundles app --no-sign
           app_path="$(find src-tauri/target/release/bundle -maxdepth 3 -type d -name '*.app' -print -quit)"
           [[ -n "$app_path" ]] || { echo "Tauri did not create an app bundle" >&2; exit 1; }
           echo "APP_PATH=$PWD/$app_path" >> "$GITHUB_ENV"
+
+      - name: Seal and verify application without Developer ID
+        if: steps.release.outputs.tagged != 'true' || steps.signing.outputs.enabled != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
       - name: Seal and verify signed application
         if: steps.release.outputs.tagged == 'true' && steps.signing.outputs.enabled == 'true'
