@@ -4,6 +4,8 @@
   "version": "0.2.3",
   "type": "module",
   "scripts": {
+    "setup:dev": "node scripts/dev-runtime.mjs",
+    "check:python-native": "node scripts/check-native-python.mjs",
     "dev": "vite",
     "build": "tsc && vite build",
     "check": "node --test scripts/*.test.mjs && tsc --noEmit && cargo test --manifest-path src-tauri/Cargo.toml",

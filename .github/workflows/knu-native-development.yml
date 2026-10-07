@@ -1,0 +1,74 @@
+name: KNU native development verification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'server/manager/**'
+      - 'server/api/requirements.txt'
+      - 'server/api/model.py'
+      - 'server/api/process_lock.py'
+      - 'server/api/tests/test_process_lock.py'
+      - 'server/api/third_party/hwp2hwpx/**'
+      - '.github/workflows/knu-native-development.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-development:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: server/manager
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.1'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server/manager/src-tauri
+          cache-on-failure: true
+      - name: Restore pinned Windows native tools
+        if: runner.os == 'Windows'
+        id: windows-native
+        uses: actions/cache/restore@v4
+        with:
+          path: server/manager/native-runtime/win32-x64
+          key: knu-native-windows-v1-${{ hashFiles('server/manager/scripts/build-windows-runtime.mjs') }}
+      - name: Prepare project-local native environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npm run setup:dev
+      - name: Cache verified Windows native tools
+        if: runner.os == 'Windows' && steps.windows-native.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: server/manager/native-runtime/win32-x64
+          key: ${{ steps.windows-native.outputs.cache-primary-key }}
+      - name: Cross-process Python inference lock
+        run: npm run check:python-native
+      - name: Unit and TypeScript tests
+        run: npm run check
+      - name: Fresh database, live source, packaged tools, clean shutdown
+        if: runner.os != 'Windows'
+        run: cargo test --manifest-path src-tauri/Cargo.toml native_development_smoke -- --ignored --nocapture
+      - name: Fresh Windows database under an ordinary user (not elevated)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $artifacts = cargo test --manifest-path src-tauri/Cargo.toml --no-run --message-format=json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests = @($artifacts | ForEach-Object {
+            try { $entry = $_ | ConvertFrom-Json } catch { return }
+            if ($entry.reason -eq 'compiler-artifact' -and $entry.profile.test -and $entry.target.name -eq 'knu_server_manager_lib' -and $entry.executable) { $entry.executable }
+          })
+          if ($tests.Count -ne 1) { throw 'Expected exactly one native smoke test executable' }
+          ./scripts/windows-smoke.ps1 -TestBinary $tests[0]

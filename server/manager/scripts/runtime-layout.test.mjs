@@ -17,7 +17,8 @@ test("portable Node symlinks survive removal of the extraction directory", async
     await fs.symlink("../lib/node_modules/npm/bin/npm-cli.js", path.join(source, "bin/npm"));
     await copyPortableNode(source, destination);
     await fs.rm(source, { recursive: true });
-    assert.equal(await fs.readlink(path.join(destination, "bin/npm")), "../lib/node_modules/npm/bin/npm-cli.js");
+    assert.equal(path.normalize(await fs.readlink(path.join(destination, "bin/npm"))),
+      path.normalize("../lib/node_modules/npm/bin/npm-cli.js"));
     assert.equal(await fs.readFile(path.join(destination, "bin/npm"), "utf8"), "// npm");
     assert.equal(await fs.readFile(path.join(destination, "bin/node"), "utf8"), "test binary");
   } finally {

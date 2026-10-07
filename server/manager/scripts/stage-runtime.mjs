@@ -4,6 +4,7 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { copyApiSource } from "./runtime-layout.mjs";
+import { prepareHwpConverter } from "./prepare-hwp-converter.mjs";
 
 const managerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(managerRoot, "../..");
@@ -101,12 +102,8 @@ async function stageHwpConverter(python) {
   const javaHome = process.env.KNU_BUILD_JAVA_HOME || process.env.JAVA_HOME;
   if (!javaHome) throw new Error("KNU_BUILD_JAVA_HOME or JAVA_HOME must point to a JDK 21 installation.");
   const output = path.join(appRoot, "server/api/third_party/hwp2hwpx/build/hwp2hwpx-patched.jar");
-  await run("bash", [path.join(repoRoot, "server/api/third_party/hwp2hwpx/build-local.sh")], repoRoot, {
-    ...process.env,
-    PYTHON_BIN: python,
-    JAVA_HOME: javaHome,
-    HWP2HWPX_OUTPUT_JAR: output,
-  });
+  await fs.mkdir(path.dirname(output), { recursive: true });
+  await prepareHwpConverter({ python, uv, javaHome, apiRoot: path.join(repoRoot, "server/api"), destination: output });
 }
 
 async function stageNativeRuntime(name, envName, checks) {
