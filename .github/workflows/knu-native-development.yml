@@ -6,6 +6,9 @@ on:
     paths:
       - 'server/manager/**'
       - 'server/api/requirements.txt'
+      - 'server/api/model.py'
+      - 'server/api/process_lock.py'
+      - 'server/api/tests/test_process_lock.py'
       - 'server/api/third_party/hwp2hwpx/**'
       - '.github/workflows/knu-native-development.yml'
 
@@ -38,5 +41,7 @@ jobs:
         run: npm run setup:dev
       - name: Unit and TypeScript tests
         run: npm run check
+      - name: Cross-process Python inference lock
+        run: npm run check:python-native
       - name: Fresh database, live source, packaged tools, clean shutdown
         run: cargo test --manifest-path src-tauri/Cargo.toml native_development_smoke -- --ignored --nocapture

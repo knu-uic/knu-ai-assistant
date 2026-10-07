@@ -4,7 +4,6 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-import fcntl
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -36,6 +35,7 @@ from config import (
 )
 from api.runtime_settings import load_settings
 from api.codex_oauth import codex_response
+from process_lock import exclusive_file_lock
 
 load_dotenv()
 
@@ -54,12 +54,8 @@ def local_inference_slot(provider: str | None = None):
         yield
         return
     with _LOCAL_INFERENCE_THREAD_LOCK:
-        with _LOCAL_INFERENCE_LOCK_PATH.open("a+") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with exclusive_file_lock(_LOCAL_INFERENCE_LOCK_PATH):
+            yield
 
 # 임베딩 벡터 차원 수(pgvector schema와 반드시 동일해야 하며, embedding model 변경 시 함께 수정)
 _embedding_dim_raw = os.getenv("EMBEDDING_DIM")
