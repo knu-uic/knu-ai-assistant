@@ -40,9 +40,9 @@ export async function exists(file) {
   try { await fs.access(file); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
 }
 
-export function run(command, args, { cwd = repoRoot, env = process.env, capture = false } = {}) {
+export function run(command, args, { cwd = repoRoot, env = process.env, capture = false, windowsVerbatimArguments = false } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env, stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit' });
+    const child = spawn(command, args, { cwd, env, windowsVerbatimArguments, stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit' });
     let output = '', errorOutput = '';
     if (capture) {
       child.stdout.on('data', bytes => output += bytes);

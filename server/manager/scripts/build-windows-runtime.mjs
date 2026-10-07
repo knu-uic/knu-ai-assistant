@@ -35,7 +35,10 @@ async function msvcEnvironment() {
     'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'], { capture: true });
   if (!installation) throw new Error('Install Microsoft C++ Build Tools with Desktop development with C++');
   const batch = path.join(installation, 'Common7/Tools/VsDevCmd.bat');
-  const output = await run('cmd.exe', ['/d', '/s', '/c', `""${batch}" -arch=x64 -host_arch=x64 >nul && set"`], { capture: true });
+  // cmd /s /c owns quoting; Node's extra argument escaping would turn this
+  // quoted local batch path into a spurious network path.
+  const output = await run('cmd.exe', ['/d', '/s', '/c', `""${batch}" -arch=x64 -host_arch=x64 >nul && set"`],
+    { capture: true, windowsVerbatimArguments: true });
   const env = { ...process.env };
   for (const line of output.split(/\r?\n/)) {
     const delimiter = line.indexOf('=');
