@@ -235,7 +235,7 @@ export async function setup(args = process.argv.slice(2)) {
     throw new Error('The runtime must include Node.js 22+ for the conversation context engine');
   }
   const pythonPath = await preparePython(runtimeRoot, requirements);
-  const pythonVersion = await run(pythonPath, ['-B', '-c', 'import sys; assert sys.version_info[:2] == (3,12); import importlib.metadata as m; [m.version(x) for x in ["fastapi","psycopg","arq","playwright"]]; print(sys.version.split()[0])'], { capture: true });
+  const pythonVersion = await run(pythonPath, ['-B', '-c', 'import sys; assert sys.version_info[:2] == (3,12); import importlib.metadata as m; [m.version(x) for x in ["fastapi","psycopg","arq","playwright"]+(["winloop"] if sys.platform=="win32" else [])]; print(sys.version.split()[0])'], { capture: true });
   console.log(`[setup] Portable Python ${pythonVersion}; host Python/DB/Redis are not used`);
   const hasPip = await run(pythonPath, ['-B', '-c', 'import importlib.util; print(bool(importlib.util.find_spec("pip")))'], { capture: true });
   if (hasPip === 'True') await run(pythonPath, ['-B', '-m', 'pip', 'check']);

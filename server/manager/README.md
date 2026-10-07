@@ -91,6 +91,8 @@ Manager 설정·로그는 **`server/manager/.dev/data/`**에 저장됩니다. �
 requirements 변경은 준비 명령을 다시 실행하고 Manager 개발 앱도 재시작합니다. 오래된 설정이나
 잘못된 OS 실행 도구는 시스템 Python으로 대체하지 않고 오류로 중지합니다.
 LLM/Ollama 모델과 연결 설정은 별도로 준비해야 합니다.
+처음 실행하는 Python 환경은 무거운 라이브러리 로딩이 오래 걸릴 수 있어 API 준비를 최대
+60초 기다립니다. 준비되면 즉시 진행하며 프로세스가 실패하면 즉시 오류를 표시합니다.
 
 직접 준비한 실행 도구 지정: `npm run setup:dev -- --runtime /absolute/path/to/runtime`.
 Intel Mac/Linux는 자동 다운로드할 공개 도구가 없으므로 해당 OS/CPU의 runtime을 지정해야 합니다.
@@ -106,11 +108,14 @@ Windows ARM64는 현재 자동 준비 대상이 아닙니다. requirements에 �
   공식 Redis Windows 배포본이 아니며 호환 DLL도 함께 둠. Docker/WSL은 사용하지 않음.
 - Node 22.23.1 공식 ZIP, Temurin JDK 21.0.12.1+1: 다운로드 SHA-256 고정.
 - Python 3.12: uv managed Python과 같은 requirements/Playwright/OCR 준비 절차.
+- Winloop 0.6.1(MIT): Windows의 비동기 PostgreSQL 조회와 Node 맥락 엔진의 subprocess
+  입출력을 같은 API 프로세스에서 지원. Manager가 Windows에서만 자동 선택.
 
 Redis/포트 라이선스와 출처를 보관합니다. Cygwin 및 동봉 DLL의 추가 라이선스·소스 제공 의무는
 **공개 Windows 앱 재배포 전에 별도 검토**해야 합니다. 이번 준비 경로는 로컬 개발용이고
 공개 Windows 릴리스를 자동 게시하지 않습니다. `.github/workflows/knu-native-development.yml`로
-Windows/macOS 준비·단위 테스트·빈 DB에서 Manager 시작/종료를 검증합니다. 해당 Windows 작업의
+Windows/macOS 준비·단위 테스트·빈 DB에서 Manager 시작/종료, 비동기 DB 조회와 Node 맥락 엔진
+실행을 검증합니다. 해당 Windows 작업의
 성공 전에는 Windows 실행 검증 완료로 간주하지 않습니다.
 PostgreSQL의 보안 정책에 따라 Windows 개발 앱/터미널은 관리자 권한이 아닌 일반 권한으로
 실행합니다. GitHub Windows runner는 기본적으로 관리자이므로 시작/종료 테스트만 임시 일반

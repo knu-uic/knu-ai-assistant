@@ -514,7 +514,10 @@ fn api_is_listening(port: u16) -> bool {
 }
 
 fn wait_for_api(child: &mut Child, port: u16) -> Result<(), String> {
-    for _ in 0..80 {
+    // Fresh portable environments need time for their first heavy imports.
+    // Poll readiness instead of sleeping for the whole startup allowance.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < deadline {
         if let Ok(Some(status)) = child.try_wait() {
             return Err(format!(
                 "KNU API가 시작 중 종료되었습니다 ({status}). 서버 로그를 확인하세요."
@@ -525,7 +528,7 @@ fn wait_for_api(child: &mut Child, port: u16) -> Result<(), String> {
         }
         thread::sleep(Duration::from_millis(100));
     }
-    Err("KNU API가 8초 안에 준비되지 않았습니다. 서버 로그를 확인하세요.".into())
+    Err("KNU API가 60초 안에 준비되지 않았습니다. 서버 로그를 확인하세요.".into())
 }
 
 #[tauri::command]
@@ -867,17 +870,18 @@ pub(crate) fn start_managed_server(state: &ManagerState) -> Result<(), String> {
             ));
         }
         let api_port_string = api_port.to_string();
+        #[allow(unused_mut)] // Only Windows appends its compatible event loop.
+        let mut api_args = vec![
+            "-m", "uvicorn", "api.main:app", "--host", "127.0.0.1", "--port", &api_port_string,
+        ];
+        // Psycopg needs add_reader(), while the Node context bridge needs
+        // subprocess pipes. Windows' default Proactor/Selector loops each lack
+        // one of these; Winloop supports both without changing the engine.
+        #[cfg(target_os = "windows")]
+        api_args.extend(["--loop", "winloop:new_event_loop"]);
         let api = spawn_python(
             state,
-            &[
-                "-m",
-                "uvicorn",
-                "api.main:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                &api_port_string,
-            ],
+            &api_args,
             "api",
         )?;
         p.api = Some(api);
@@ -984,7 +988,41 @@ mod tests {
             runtime.configure_command(&mut command);
             let probe = command.current_dir(root.join("server/api"))
                 .args(["-B", "-c", &format!(
-                    "import sys,pathlib,urllib.request,json; import api.main; from db.schema import DB_URL; import psycopg; assert pathlib.Path(api.main.__file__).resolve() == pathlib.Path('api/main.py').resolve(); assert '.venv' not in sys.executable; h=json.load(urllib.request.urlopen('http://127.0.0.1:{port}/api/health',timeout=10)); print('Health:',h); c=psycopg.connect(DB_URL); assert c.execute('SELECT count(*) FROM schema_migrations').fetchone()[0] >= 19; assert c.execute('SELECT count(*) FROM users').fetchone()[0] == 0; assert c.execute('SELECT count(*) FROM content').fetchone()[0] == 0; c.close(); import redis,os,time; r=redis.Redis.from_url(os.environ['REDIS_URL'],socket_timeout=5); deadline=time.monotonic()+30\nwhile not r.get('arq:queue:health-check') and time.monotonic()<deadline: time.sleep(0.1)\nassert r.get('arq:queue:health-check'), 'Worker health check was not ready'; print('LIVE_SOURCE_AND_FRESH_DATABASE_AND_WORKER_OK')"
+                    r#"import asyncio, json, os, pathlib, sys, time, urllib.request
+import api.main
+import psycopg
+import redis
+from db.schema import DB_URL
+from api.context_engine import estimate_request
+assert pathlib.Path(api.main.__file__).resolve() == pathlib.Path('api/main.py').resolve()
+assert '.venv' not in sys.executable
+base = 'http://127.0.0.1:{port}'
+health = json.load(urllib.request.urlopen(base + '/api/health', timeout=10))
+print('Health:', health)
+request = urllib.request.Request(base + '/api/admin/status', headers={{'Authorization': 'Bearer native-smoke-test-only'}})
+status = json.load(urllib.request.urlopen(request, timeout=15))
+assert status['status'] == 'ok'
+assert status['notice_count'] == status['account_count'] == status['review_count'] == 0
+print('ASYNC_DATABASE_QUERY_OK')
+with psycopg.connect(DB_URL) as connection:
+    assert connection.execute('SELECT count(*) FROM schema_migrations').fetchone()[0] >= 19
+    assert connection.execute('SELECT count(*) FROM users').fetchone()[0] == 0
+    assert connection.execute('SELECT count(*) FROM content').fetchone()[0] == 0
+loop_factory = asyncio.new_event_loop
+if sys.platform == 'win32':
+    import winloop
+    loop_factory = winloop.new_event_loop
+with asyncio.Runner(loop_factory=loop_factory) as runner:
+    estimate = runner.run(estimate_request([{{'role': 'user', 'content': '테스트'}}], 'mock', 8000))
+assert estimate['tokens'] > 0 and estimate['budget']['inputBudget'] > 0
+print('ASYNC_NODE_CONTEXT_ENGINE_OK')
+client = redis.Redis.from_url(os.environ['REDIS_URL'], socket_timeout=5)
+deadline = time.monotonic() + 30
+while not client.get('arq:queue:health-check') and time.monotonic() < deadline:
+    time.sleep(0.1)
+assert client.get('arq:queue:health-check'), 'Worker health check was not ready'
+print('LIVE_SOURCE_AND_FRESH_DATABASE_AND_WORKER_OK')
+"#
                 )]).output().map_err(|error| error.to_string())?;
             if !probe.status.success() {
                 return Err(String::from_utf8_lossy(&probe.stderr).into_owned());
