@@ -37,7 +37,8 @@ jobs:
           workspaces: server/manager/src-tauri
       - name: Restore pinned Windows native tools
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        id: windows-native
+        uses: actions/cache/restore@v4
         with:
           path: server/manager/native-runtime/win32-x64
           key: knu-native-windows-v1-${{ hashFiles('server/manager/scripts/build-windows-runtime.mjs') }}
@@ -45,9 +46,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: npm run setup:dev
-      - name: Unit and TypeScript tests
-        run: npm run check
+      - name: Cache verified Windows native tools
+        if: runner.os == 'Windows' && steps.windows-native.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: server/manager/native-runtime/win32-x64
+          key: ${{ steps.windows-native.outputs.cache-primary-key }}
       - name: Cross-process Python inference lock
         run: npm run check:python-native
+      - name: Unit and TypeScript tests
+        run: npm run check
       - name: Fresh database, live source, packaged tools, clean shutdown
         run: cargo test --manifest-path src-tauri/Cargo.toml native_development_smoke -- --ignored --nocapture
